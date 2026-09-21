@@ -1,0 +1,5 @@
+<Project>
+  <PropertyGroup>
+    <Phase0BuildBothProps>true</Phase0BuildBothProps>
+  </PropertyGroup>
+</Project>

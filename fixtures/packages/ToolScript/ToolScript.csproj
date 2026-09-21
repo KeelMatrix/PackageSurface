@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <PackageId>KeelMatrix.Phase0.ToolScript</PackageId>
+    <PackageVersion>1.0.0</PackageVersion>
+    <PackageDescription>Phase 0 tool inventory fixture.</PackageDescription>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <NoWarn>$(NoWarn);NU5111;NU5128</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="content/tools/phase0-tool.ps1" Pack="true" PackagePath="tools/phase0-tool.ps1" />
+  </ItemGroup>
+</Project>

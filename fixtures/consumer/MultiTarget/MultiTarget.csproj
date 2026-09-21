@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net8.0-windows</TargetFrameworks>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <AssemblyName>Phase0.MultiTarget</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="KeelMatrix.Phase0.BuildMultiTargeting" Version="1.0.0" />
+    <PackageReference Include="KeelMatrix.Phase0.ContentInjection" Version="1.0.0" />
+    <PackageReference Include="KeelMatrix.Phase0.CompilerExtension" Version="1.0.0" />
+    <PackageReference Include="KeelMatrix.Phase0.OrdinaryLibrary" Version="1.0.0" />
+  </ItemGroup>
+</Project>

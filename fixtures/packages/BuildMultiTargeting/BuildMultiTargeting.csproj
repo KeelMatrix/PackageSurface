@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <PackageId>KeelMatrix.Phase0.BuildMultiTargeting</PackageId>
+    <PackageVersion>1.0.0</PackageVersion>
+    <PackageDescription>Phase 0 multi-targeting build fixture.</PackageDescription>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="content/buildMultiTargeting/KeelMatrix.Phase0.BuildMultiTargeting.targets" Pack="true" PackagePath="buildMultiTargeting/KeelMatrix.Phase0.BuildMultiTargeting.targets" />
+  </ItemGroup>
+</Project>

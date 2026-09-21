@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>KeelMatrix.Phase0.OrdinaryLibrary</AssemblyName>
+    <PackageId>KeelMatrix.Phase0.OrdinaryLibrary</PackageId>
+    <PackageVersion>1.0.0</PackageVersion>
+    <PackageDescription>Phase 0 ordinary library fixture.</PackageDescription>
+  </PropertyGroup>
+</Project>

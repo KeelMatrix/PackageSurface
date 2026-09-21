@@ -1,0 +1,3 @@
+<Project>
+  <Target Name="Phase0BuildTargets" BeforeTargets="CoreCompile" />
+</Project>

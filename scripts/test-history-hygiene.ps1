@@ -131,6 +131,6 @@ try {
     exit 0
 }
 catch {
-    Write-Error ('FAIL: repository hygiene could not be proven. ' + $_.Exception.Message)
+    [Console]::Error.WriteLine('FAIL: repository hygiene could not be proven. ' + $_.Exception.Message)
     exit 1
 }

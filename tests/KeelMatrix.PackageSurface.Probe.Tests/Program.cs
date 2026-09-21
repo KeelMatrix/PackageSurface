@@ -222,7 +222,7 @@ static void RunGeneratedImportConditionRegression(string baselineAssets)
             RedirectStandardError = true,
             UseShellExecute = false
         };
-        startInfo.ArgumentList.Add(typeof(ResolvedGraphClassifier).Assembly.Location);
+        startInfo.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "KeelMatrix.PackageSurface.Probe.dll"));
         startInfo.ArgumentList.Add(Path.Combine(projectRoot, "obj", "project.assets.json"));
         startInfo.ArgumentList.Add(projectRoot);
         using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start the probe process.");

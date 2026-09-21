@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>KeelMatrix.PackageSurface</AssemblyName>
+    <RootNamespace>KeelMatrix.PackageSurface</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>package-surface</ToolCommandName>
+    <PackageId>KeelMatrix.PackageSurface</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>KeelMatrix</Authors>
+    <Description>Baselines the execution-capable surface of resolved NuGet dependencies. Detects new or changed MSBuild, compiler-extension, source/content, and native package assets.</Description>
+    <PackageTags>nuget;supply-chain;msbuild;buildTransitive;analyzers;source-generators;package-security;dependencies;ci;dotnet-tool</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageProjectUrl>https://github.com/KeelMatrix/PackageSurface</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/KeelMatrix/PackageSurface</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <DebugType>embedded</DebugType>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);NU5100</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\KeelMatrix.PackageSurface.Core\KeelMatrix.PackageSurface.Core.csproj" />
+    <PackageReference Include="KeelMatrix.Telemetry" Version="0.1.1" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.401" PrivateAssets="All" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="" />
+    <None Include="..\..\LICENSE" Pack="true" PackagePath="LICENSE" Link="LICENSE" />
+    <None Include="..\..\icon.png" Pack="true" PackagePath="icon.png" Link="icon.png" Condition="Exists('..\..\icon.png')" />
+  </ItemGroup>
+  <PropertyGroup Condition="Exists('..\..\icon.png')">
+    <PackageIcon>icon.png</PackageIcon>
+  </PropertyGroup>
+</Project>

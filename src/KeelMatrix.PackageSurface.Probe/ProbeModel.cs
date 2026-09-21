@@ -31,11 +31,13 @@ public sealed record SurfaceEntry(
     bool Active,
     string? Sha256,
     bool Incomplete,
-    string? IncompleteReason);
+    string? IncompleteReason,
+    string? Project = null);
 
 public sealed record ProbeResult(
     IReadOnlyList<SurfaceEntry> Entries,
-    IReadOnlyList<string> IncompleteReasons)
+    IReadOnlyList<string> IncompleteReasons,
+    int ResolvedPackageCount = 0)
 {
     public bool IsComplete => IncompleteReasons.Count == 0 && Entries.All(entry => !entry.Incomplete);
 }

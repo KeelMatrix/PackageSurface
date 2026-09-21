@@ -1,6 +1,6 @@
 # Platform and package validation
 
-This file records the cache-invariant cross-platform local gate for candidate commit `051e5b5cca6cbf0f3d2773f466ee0c773e66a61f`. Validation used fresh isolated package caches for every restore. No remote CI, publish, tag, release, or visibility action was performed.
+This file records the cache-invariant cross-platform local gate for the `main` HEAD commit that contains this file (release `0.1.0`). Validation uses fresh isolated package caches for every restore. The exact final commit, commands, exit codes, and durations for the candidate run are recorded in the engineering handoff. No remote CI, publish, tag, release, or visibility action was performed.
 
 ## Windows
 
@@ -77,7 +77,7 @@ The gate restores the shipping solution into a unique run-owned `shipping-packag
 
 All three platform gate runs inspected one `KeelMatrix.PackageSurface.0.1.0.nupkg` and one `.snupkg`. The package contained the intended tool payload, README, MIT license, repository metadata, and root `icon.png`; the symbols archive contained the expected PDB. The isolated tool smoke passed `scan`, deterministic `baseline`, passing `check`, the deliberate surface-change check with exit `1`, incomplete restore with exit `2`, and the no-network scan.
 
-The pack configuration resolves exactly one required physical icon path: the repository-root `icon.png`, packed as package-root `icon.png`. The founder-provided icon from commit `70f0d9217aaec37795ba88ae786f5dbc55a1111d` remains unchanged; its SHA-256 is `48415f8f6f3dc514169577960f526f97453a91a877cfd49736183276e9e7a214`, and the embedded package icon has the same hash. The successful icon-present pack and metadata are verified. The fail-closed missing-icon rule remains enforced by `ValidatePackageIcon` and the local gate; no founder icon file was removed or altered for this validation.
+The pack configuration resolves exactly one required physical icon path: the repository-root `icon.png`, packed as package-root `icon.png`. The founder-provided icon remains unchanged; its SHA-256 is `48415f8f6f3dc514169577960f526f97453a91a877cfd49736183276e9e7a214`, and the embedded package icon has the same hash. The successful icon-present pack and metadata are verified. The fail-closed missing-icon rule remains enforced by `ValidatePackageIcon` and the local gate; no founder icon file was removed or altered for this validation.
 
 ## macOS residual
 

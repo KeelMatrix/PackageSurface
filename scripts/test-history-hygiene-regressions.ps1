@@ -97,9 +97,12 @@ function Invoke-Gate {
 function Assert-ExpectedFailure {
     param([string] $Name, [string] $Path, [string] $ExpectedText, [string] $PathPrefix, [string] $Scenario)
 
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     $result = Invoke-Gate $Path $PathPrefix $Scenario
+    $stopwatch.Stop()
     Write-Output "CASE: $Name"
     Write-Output "EXIT_CODE: $($result.ExitCode)"
+    Write-Output "DURATION_MS: $($stopwatch.ElapsedMilliseconds)"
     if ($result.ExitCode -eq 0) {
         throw "$Name unexpectedly passed."
     }

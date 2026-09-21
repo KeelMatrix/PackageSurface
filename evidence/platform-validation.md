@@ -41,15 +41,16 @@ Windows gate step results:
 ## Linux
 
 Environment: Ubuntu 24.04.1 under WSL2, x64, .NET SDK `8.0.425`, PowerShell 7.6.6.
+The exact-SHA recheck below ran at `1808bc116aebf163f14a1c358ac13d9c2317df7c` immediately before this evidence-only update; the implementation, package inputs, and gate script were unchanged by the update.
 
 ```text
-COMMAND: export PATH="/home/rdime/.dotnet:/home/rdime/bin:$PATH"; unset DOTNET_ROOT; dotnet restore KeelMatrix.PackageSurface.sln --configfile NuGet.config --packages <run-scratch>/linux-qa-recheck-3/packages --no-cache --force
+COMMAND: export PATH="/home/rdime/.dotnet:/home/rdime/bin:$PATH"; unset DOTNET_ROOT; dotnet restore KeelMatrix.PackageSurface.sln --configfile NuGet.config --packages <run-scratch>/linux-final-qa-1808/packages --no-cache --force
 EXIT_CODE: 0
-DURATION_MS: 5347
+DURATION_MS: 5858
 
 COMMAND: export PATH="/home/rdime/.dotnet:/home/rdime/bin:$PATH"; unset DOTNET_ROOT; pwsh -NoLogo -NoProfile -File scripts/run-local-gate.ps1
 EXIT_CODE: 0
-DURATION_MS: 310025 (committed gate-reported duration; 296287 ms outer WSL wall duration)
+DURATION_MS: 293655 (committed gate-reported duration; 279692 ms outer WSL wall duration)
 RESULT: PASS. A fresh isolated Linux recheck completed the same validation sequence as Windows, including successful Linux tool installation and consumer smoke. The gate derived `DOTNET_ROOT` from the Linux `dotnet` executable because the environment did not provide it; no manual environment mutation was required by the documented command.
 ```
 
@@ -57,22 +58,22 @@ Linux gate step results:
 
 | Step | Exit code | Duration (ms) |
 | --- | ---: | ---: |
-| Controlled restore and permanent fixture suite | 0 | 277260 |
-| Format verification | 0 | 17843 |
-| Release build | 0 | 5996 |
-| No-code-execution proof | 0 | 6445 |
-| CLI contract and resource tests | 0 | 1588 |
-| Package build and archive inspection | 0 | 5500 |
-| Dependency vulnerability audit | 0 | 2447 |
-| Isolated tool install | 0 | 501 |
-| Installed tool version | 0 | 54 |
-| Installed tool scan | 0 | 1218 |
-| Installed tool baseline | 0 | 1613 |
-| Deterministic baseline repeat | 0 | 1527 |
-| Installed tool passing check | 0 | 1703 |
-| Deliberate capability difference | 1 (expected) | 2114 |
-| Incomplete restore fail-closed | 2 (expected) | 134 |
-| No-network scan with disabled telemetry | 0 | 1847 |
+| Controlled restore and permanent fixture suite | 0 | 249050 |
+| Format verification | 0 | 15673 |
+| Release build | 0 | 5281 |
+| No-code-execution proof | 0 | 4169 |
+| CLI contract and resource tests | 0 | 1260 |
+| Package build and archive inspection | 0 | 4636 |
+| Dependency vulnerability audit | 0 | 1576 |
+| Isolated tool install | 0 | 449 |
+| Installed tool version | 0 | 69 |
+| Installed tool scan | 0 | 1268 |
+| Installed tool baseline | 0 | 1560 |
+| Deterministic baseline repeat | 0 | 1599 |
+| Installed tool passing check | 0 | 1669 |
+| Deliberate capability difference | 1 (expected) | 1612 |
+| Incomplete restore fail-closed | 2 (expected) | 96 |
+| No-network scan with disabled telemetry | 0 | 1123 |
 
 ## Restore mapping
 
@@ -88,7 +89,7 @@ _rels/.rels
 icon.png
 KeelMatrix.PackageSurface.nuspec
 LICENSE/LICENSE
-package/services/metadata/core-properties/e7dfbf6870f849de9c27763ce0e582ef.psmdcp
+package/services/metadata/core-properties/bd90da3a4b0e40cfbc10161a196a539a.psmdcp
 README.md
 tools/net8.0/any/DotnetToolSettings.xml
 tools/net8.0/any/KeelMatrix.PackageSurface.Core.dll
@@ -105,7 +106,7 @@ The symbols archive `KeelMatrix.PackageSurface.0.1.0.snupkg` contained exactly t
 _rels/.rels
 [Content_Types].xml
 KeelMatrix.PackageSurface.nuspec
-package/services/metadata/core-properties/ad2008ac02004ab9a5c110d77e8dbf45.psmdcp
+package/services/metadata/core-properties/0be2c78d005c435b8bef11a8a29e6f2e.psmdcp
 tools/net8.0/any/KeelMatrix.PackageSurface.Core.pdb
 ```
 

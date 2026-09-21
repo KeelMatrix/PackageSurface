@@ -100,7 +100,7 @@ try {
         if ($unexpected.Count -gt 0) { throw ('Unexpected package files: ' + ($unexpected -join ', ')) }
         $icon = $package.GetEntry('icon.png')
         if ($null -eq $icon) {
-            Write-Output 'ICON_GATE=UNVERIFIED repository-root icon.png is not yet present; the pack item is conditional until founder placement.'
+            Write-Output 'ICON_GATE=UNVERIFIED package-root icon.png is absent; package icon verification remains incomplete.'
         }
     }
     finally { $package.Dispose() }

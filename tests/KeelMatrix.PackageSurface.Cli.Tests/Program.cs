@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using KeelMatrix.PackageSurface;
@@ -70,6 +71,25 @@ static void RunClassifierHardeningTests()
         Require(!dtdResult.IsComplete, "DTD input was not rejected as incomplete.");
 
         File.WriteAllText(Path.Combine(obj, "project.nuget.g.props"), "<Project />");
+        var deepXml = new StringBuilder("<Project>");
+        for (var depth = 0; depth < 80; depth++)
+        {
+            deepXml.Append("<ImportGroup>");
+        }
+        deepXml.Append("<Import Project=\"unused.props\" />");
+        for (var depth = 0; depth < 80; depth++)
+        {
+            deepXml.Append("</ImportGroup>");
+        }
+        deepXml.Append("</Project>");
+        File.WriteAllText(Path.Combine(obj, "project.nuget.g.props"), deepXml.ToString());
+        var deepXmlResult = ResolvedGraphClassifier.Analyze(assets, scratch, strictContent: false);
+        Require(!deepXmlResult.IsComplete && deepXmlResult.IncompleteReasons.Any(reason => reason.Contains("XML depth", StringComparison.OrdinalIgnoreCase)),
+            "Deep XML nesting was not bounded during parsing.");
+        File.WriteAllText(Path.Combine(obj, "project.nuget.g.props"), "<Project />");
+        RunAnalyzerExclusionRegression(scratch, cache, obj);
+        RunMalformedAssetsShapeRegression(assets, scratch);
+
         var traversalAssets = Path.Combine(obj, "traversal.assets.json");
         var traversalFiles = new[] { "../escape.props" };
         WriteAssets(traversalAssets, cache, "TraversalPackage", traversalFiles);
@@ -108,6 +128,60 @@ static void RunClassifierHardeningTests()
     }
 }
 
+static void RunAnalyzerExclusionRegression(string scratch, string cache, string obj)
+{
+    var analyzerRelativePath = "analyzers/dotnet/cs/valid.dll";
+    var directAssets = Path.Combine(obj, "analyzer-excluded-direct.assets.json");
+    WriteAnalyzerAssets(directAssets, cache, direct: true, analyzerRelativePath);
+    var directResult = ResolvedGraphClassifier.Analyze(directAssets, scratch, strictContent: false);
+    Require(directResult.IsComplete && directResult.Entries.Single(entry => entry.Capability == CapabilityKind.CompilerExtension).Active == false,
+        "Direct ExcludeAssets=analyzers was not honored.");
+
+    var transitiveAssets = Path.Combine(obj, "analyzer-excluded-transitive.assets.json");
+    WriteAnalyzerAssets(transitiveAssets, cache, direct: false, analyzerRelativePath);
+    var transitiveResult = ResolvedGraphClassifier.Analyze(transitiveAssets, scratch, strictContent: false);
+    Require(transitiveResult.IsComplete && transitiveResult.Entries.Single(entry => entry.Capability == CapabilityKind.CompilerExtension).Active == false,
+        "Transitive ExcludeAssets=analyzers was not honored.");
+}
+
+static void RunMalformedAssetsShapeRegression(string assets, string scratch)
+{
+    var malformedShapes = new (string Name, Action<JsonObject> Mutate)[]
+    {
+        ("packageFolders-array", root => root["packageFolders"] = new JsonArray()),
+        ("targets-array", root => root["targets"] = new JsonArray()),
+        ("target-array", root => root["targets"]!["net8.0"] = new JsonArray()),
+        ("libraries-array", root => root["libraries"] = new JsonArray()),
+        ("frameworks-array", root => root["project"]!["frameworks"] = new JsonArray()),
+        ("package-path-number", root => root["libraries"]!["XmlPackage/1.0.0"]!["path"] = 7)
+    };
+
+    foreach (var (name, mutate) in malformedShapes)
+    {
+        var path = Path.Combine(Path.GetDirectoryName(assets)!, name + ".assets.json");
+        var root = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
+        mutate(root);
+        File.WriteAllText(path, root.ToJsonString());
+        try
+        {
+            var result = ResolvedGraphClassifier.Analyze(path, scratch, strictContent: false);
+            Require(!result.IsComplete, $"Malformed assets shape '{name}' was not fail-closed.");
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    var cliAssets = Path.Combine(Path.GetDirectoryName(assets)!, "packageFolders-cli.assets.json");
+    var cliRoot = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
+    cliRoot["packageFolders"] = new JsonArray();
+    File.WriteAllText(cliAssets, cliRoot.ToJsonString());
+    var cliExitCode = CommandLine.Run(new[] { "scan", cliAssets, "--no-telemetry" });
+    File.Delete(cliAssets);
+    Require(cliExitCode == 2, $"Malformed assets CLI invocation returned {cliExitCode}, expected 2.");
+}
+
 static void WriteAssets(string path, string cache, string packageId, IReadOnlyList<string> files)
 {
     var packageKey = packageId + "/1.0.0";
@@ -136,6 +210,55 @@ static void WriteAssets(string path, string cache, string packageId, IReadOnlyLi
         ["targets"] = targets,
         ["libraries"] = libraries,
         ["packageFolders"] = packageFolders,
+        ["project"] = new JsonObject { ["frameworks"] = frameworks }
+    };
+    File.WriteAllText(path, root.ToJsonString());
+}
+
+static void WriteAnalyzerAssets(string path, string cache, bool direct, string analyzerRelativePath)
+{
+    const string compilerId = "CompilerPackage";
+    const string rootId = "RootPackage";
+    const string version = "1.0.0";
+    var compilerKey = compilerId + "/" + version;
+    var rootKey = rootId + "/" + version;
+    var target = new JsonObject();
+    var libraries = new JsonObject();
+    var compilerFiles = new JsonArray();
+    compilerFiles.Add(analyzerRelativePath);
+    target[compilerKey] = new JsonObject { ["type"] = "package" };
+    libraries[compilerKey] = new JsonObject { ["type"] = "package", ["path"] = compilerKey, ["files"] = compilerFiles };
+    var directPackageId = compilerId;
+    if (!direct)
+    {
+        target[rootKey] = new JsonObject
+        {
+            ["type"] = "package",
+            ["dependencies"] = new JsonObject { [compilerId] = version }
+        };
+        libraries[rootKey] = new JsonObject
+        {
+            ["type"] = "package",
+            ["path"] = rootKey,
+            ["files"] = new JsonArray()
+        };
+        directPackageId = rootId;
+    }
+
+    var packageRoot = Path.Combine(cache, compilerId, version, "analyzers", "dotnet", "cs");
+    Directory.CreateDirectory(packageRoot);
+    File.Copy(typeof(ResolvedGraphClassifier).Assembly.Location, Path.Combine(packageRoot, "valid.dll"), overwrite: true);
+    Directory.CreateDirectory(Path.Combine(cache, rootId, version));
+    var dependency = new JsonObject { ["include"] = "Runtime, Compile, Build, Native, ContentFiles, BuildTransitive" };
+    var frameworks = new JsonObject
+    {
+        ["net8.0"] = new JsonObject { ["dependencies"] = new JsonObject { [directPackageId] = dependency } }
+    };
+    var root = new JsonObject
+    {
+        ["targets"] = new JsonObject { ["net8.0"] = target },
+        ["libraries"] = libraries,
+        ["packageFolders"] = new JsonObject { [cache] = new JsonObject() },
         ["project"] = new JsonObject { ["frameworks"] = frameworks }
     };
     File.WriteAllText(path, root.ToJsonString());

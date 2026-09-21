@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>KeelMatrix.PackageSurface.Probe.Tests</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/KeelMatrix.PackageSurface.Probe/KeelMatrix.PackageSurface.Probe.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>KeelMatrix.Phase0.ManagedRuntime</AssemblyName>
+    <PackageId>KeelMatrix.Phase0.ManagedRuntime</PackageId>
+    <PackageVersion>1.0.0</PackageVersion>
+    <PackageDescription>Phase 0 managed runtime fixture.</PackageDescription>
+    <PackageTags>phase0</PackageTags>
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="$(TargetPath)" Pack="true" PackagePath="lib/net9.0/KeelMatrix.Phase0.ManagedRuntime.Inactive.dll" Visible="false" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,45 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{79AEDFFB-9A37-47BF-A828-6233D5065E33}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KeelMatrix.PackageSurface.Probe", "src\KeelMatrix.PackageSurface.Probe\KeelMatrix.PackageSurface.Probe.csproj", "{1E951850-367A-4B9B-802B-2A4E566363BB}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{7D372FC9-7829-4D09-96EE-86C91DA11D2B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "KeelMatrix.PackageSurface.Probe.Tests", "tests\KeelMatrix.PackageSurface.Probe.Tests\KeelMatrix.PackageSurface.Probe.Tests.csproj", "{D403EAB4-BBD0-42B4-93DB-D6E48E386154}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tools", "tools", "{01695DA7-63A8-49E9-BC12-5A949CAD88AA}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NoExecutionProof", "tools\NoExecutionProof\NoExecutionProof.csproj", "{6987D374-C88B-4EE5-A99F-7017A2B326A6}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{1E951850-367A-4B9B-802B-2A4E566363BB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1E951850-367A-4B9B-802B-2A4E566363BB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1E951850-367A-4B9B-802B-2A4E566363BB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1E951850-367A-4B9B-802B-2A4E566363BB}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D403EAB4-BBD0-42B4-93DB-D6E48E386154}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D403EAB4-BBD0-42B4-93DB-D6E48E386154}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D403EAB4-BBD0-42B4-93DB-D6E48E386154}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D403EAB4-BBD0-42B4-93DB-D6E48E386154}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6987D374-C88B-4EE5-A99F-7017A2B326A6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6987D374-C88B-4EE5-A99F-7017A2B326A6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6987D374-C88B-4EE5-A99F-7017A2B326A6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6987D374-C88B-4EE5-A99F-7017A2B326A6}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{1E951850-367A-4B9B-802B-2A4E566363BB} = {79AEDFFB-9A37-47BF-A828-6233D5065E33}
+		{D403EAB4-BBD0-42B4-93DB-D6E48E386154} = {7D372FC9-7829-4D09-96EE-86C91DA11D2B}
+		{6987D374-C88B-4EE5-A99F-7017A2B326A6} = {01695DA7-63A8-49E9-BC12-5A949CAD88AA}
+	EndGlobalSection
+EndGlobal

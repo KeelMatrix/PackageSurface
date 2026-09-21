@@ -1,0 +1,3 @@
+<Project>
+  <Target Name="Phase0BuildMultiTargeting" BeforeTargets="Build" />
+</Project>

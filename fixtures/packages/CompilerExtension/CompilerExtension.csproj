@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>KeelMatrix.Phase0.SourceGeneratorStyle</AssemblyName>
+    <PackageId>KeelMatrix.Phase0.CompilerExtension</PackageId>
+    <PackageVersion>1.0.0</PackageVersion>
+    <PackageDescription>Phase 0 compiler extension fixture.</PackageDescription>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="$(TargetPath)" Pack="true" PackagePath="analyzers/dotnet/cs/KeelMatrix.Phase0.SourceGeneratorStyle.dll" Visible="false" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <PackageId>KeelMatrix.Phase0.BuildBoth</PackageId>
+    <PackageVersion>1.0.0</PackageVersion>
+    <PackageDescription>Phase 0 props and targets fixture.</PackageDescription>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="content/build/KeelMatrix.Phase0.BuildBoth.props" Pack="true" PackagePath="build/KeelMatrix.Phase0.BuildBoth.props" />
+    <None Include="content/build/KeelMatrix.Phase0.BuildBoth.targets" Pack="true" PackagePath="build/KeelMatrix.Phase0.BuildBoth.targets" />
+  </ItemGroup>
+</Project>

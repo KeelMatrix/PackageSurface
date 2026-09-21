@@ -1,0 +1,12 @@
+bin/
+obj/
+.nuget/
+.phase0/
+artifacts/
+*.user
+*.suo
+*.nupkg
+*.snupkg
+*.cache
+.phase0/packages/
+evidence/generated/

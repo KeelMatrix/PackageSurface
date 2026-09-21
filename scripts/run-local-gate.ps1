@@ -136,7 +136,8 @@ try {
     Invoke-GateStep 'isolated tool install' {
         & dotnet tool install --tool-path $toolRoot --configfile $toolConfig --no-cache KeelMatrix.PackageSurface --version 0.1.0
     }
-    $tool = Join-Path $toolRoot 'package-surface.exe'
+    $toolName = if ($IsWindows) { 'package-surface.exe' } else { 'package-surface' }
+    $tool = Join-Path $toolRoot $toolName
     if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) { throw 'The isolated tool command was not installed.' }
     Invoke-GateStep 'installed tool version' { & $tool --version }
     Invoke-GateStep 'installed tool scan' { & $tool scan $singleProject --format json --no-telemetry }

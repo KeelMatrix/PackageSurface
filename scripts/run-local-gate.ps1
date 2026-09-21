@@ -87,6 +87,7 @@ try {
         try { [xml] $nuspec = $reader.ReadToEnd() } finally { $reader.Dispose() }
         if ($nuspec.package.metadata.id -ne 'KeelMatrix.PackageSurface' -or $nuspec.package.metadata.packageTypes.packageType.name -ne 'DotnetTool') { throw 'Package identity or type is incorrect.' }
         if ($nuspec.package.metadata.readme -ne 'README.md' -or $nuspec.package.metadata.license.type -ne 'expression' -or $nuspec.package.metadata.license.'#text' -ne 'MIT') { throw 'README or license metadata is incorrect.' }
+        if ($nuspec.package.metadata.icon -ne 'icon.png') { throw 'Package icon metadata must point to icon.png.' }
         if ($nuspec.package.metadata.repository.url -ne 'https://github.com/KeelMatrix/PackageSurface') { throw 'Repository metadata is incorrect.' }
         $unwanted = @($names | Where-Object { $_ -match '(^|/)(fixtures|tests|research|\.env|obj|bin|\.phase0|nonshipping)' })
         if ($unwanted.Count -gt 0) { throw ('Unwanted package files: ' + ($unwanted -join ', ')) }
@@ -100,7 +101,7 @@ try {
         if ($unexpected.Count -gt 0) { throw ('Unexpected package files: ' + ($unexpected -join ', ')) }
         $icon = $package.GetEntry('icon.png')
         if ($null -eq $icon) {
-            Write-Output 'ICON_GATE=UNVERIFIED package-root icon.png is absent; package icon verification remains incomplete.'
+            throw 'Package icon asset icon.png is missing.'
         }
     }
     finally { $package.Dispose() }

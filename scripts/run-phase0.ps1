@@ -252,6 +252,14 @@ foreach ($category in $requiredCategories) {
         if (@($categoryRows | Where-Object { $_.seededState -ne 'inactive' }).Count -gt 0) { $disagreements.Add('ToolOrScriptPresent matrix contains an active row') }
         continue
     }
+    if ($category -eq 'BuildMultiTargeting') {
+        if (@($categoryRows | Where-Object { $_.relationship -eq 'direct' -and $_.seededState -eq 'active' }).Count -eq 0 -or
+            @($categoryRows | Where-Object { $_.relationship -eq 'direct' -and $_.seededState -eq 'inactive' }).Count -eq 0 -or
+            @($categoryRows | Where-Object { $_.relationship -eq 'transitive' -and $_.seededState -eq 'inactive' }).Count -eq 0) {
+            $disagreements.Add('BuildMultiTargeting matrix is missing direct active/inactive or transitive inactive evidence')
+        }
+        continue
+    }
     foreach ($relationship in @('direct', 'transitive')) {
         foreach ($state in @('active', 'inactive')) {
             if (@($categoryRows | Where-Object { $_.relationship -eq $relationship -and $_.seededState -eq $state }).Count -eq 0) {
@@ -264,7 +272,7 @@ foreach ($category in $requiredCategories) {
 $matrix = [System.Collections.Generic.List[string]]::new()
 $matrix.Add('# Phase 0 corpus matrix')
 $matrix.Add('')
-$matrix.Add('Each supported capability has direct and transitive active/inactive evidence. `ToolOrScriptPresent` is intentionally informational and inactive in every row.')
+$matrix.Add('Each supported capability has direct and transitive active/inactive evidence. `ToolOrScriptPresent` is intentionally informational and inactive in every row. `BuildMultiTargeting` is project-level: the generated outer-target import is direct-only under this NuGet convention, so its transitive fixture is explicitly present/inactive.')
 $matrix.Add('')
 $matrix.Add('| Capability | Relationship | State | Context | TFM/RID | Fixture |')
 $matrix.Add('|---|---|---|---|---|---|')

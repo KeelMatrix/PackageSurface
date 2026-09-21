@@ -6,6 +6,6 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="KeelMatrix.Phase0.NativeRuntime" Version="1.0.0" />
-    <PackageReference Include="KeelMatrix.Phase0.TransitiveBundle" Version="1.0.0" />
+    <PackageReference Include="KeelMatrix.Phase0.TransitiveRoot" Version="1.0.0" />
   </ItemGroup>
 </Project>

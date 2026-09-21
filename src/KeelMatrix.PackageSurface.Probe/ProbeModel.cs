@@ -12,9 +12,16 @@ public enum CapabilityKind
     ToolOrScriptPresent
 }
 
+public enum SurfaceContextKind
+{
+    Target,
+    Project
+}
+
 public sealed record SurfaceEntry(
-    string TargetFramework,
+    string? TargetFramework,
     string? RuntimeIdentifier,
+    SurfaceContextKind Context,
     string PackageId,
     string Version,
     string Relationship,

@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Xml;
 using System.Xml.Linq;
 
@@ -7,7 +8,9 @@ namespace KeelMatrix.PackageSurface.Probe;
 
 public static class ResolvedGraphClassifier
 {
-    private static readonly StringComparer PathComparer = StringComparer.OrdinalIgnoreCase;
+    private static readonly Regex TargetFrameworkCondition = new(
+        "['\\\"]?\\$\\(\\s*TargetFramework\\s*\\)['\\\"]?\\s*(?<operator>==|!=)\\s*['\\\"](?<value>[^'\\\"]*)['\\\"]",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     public static ProbeResult Analyze(string assetsFile, string projectRoot)
     {
@@ -22,8 +25,10 @@ public static class ResolvedGraphClassifier
                 ? librariesElement
                 : throw new InvalidDataException("project.assets.json has no libraries object.");
             var directPackages = ReadDirectPackages(root);
+            var targetAliases = ReadTargetAliases(root);
             var generatedImports = ReadGeneratedImports(projectRoot, incomplete);
             var entries = new List<SurfaceEntry>();
+            var projectEntries = new Dictionary<string, SurfaceEntry>(StringComparer.OrdinalIgnoreCase);
 
             if (!root.TryGetProperty("targets", out var targets))
             {
@@ -33,6 +38,7 @@ public static class ResolvedGraphClassifier
             foreach (var target in targets.EnumerateObject())
             {
                 var (tfm, rid) = SplitTarget(target.Name);
+                var targetAlias = targetAliases.TryGetValue(target.Name, out var alias) ? alias : tfm;
                 foreach (var package in target.Value.EnumerateObject())
                 {
                     var (packageId, version) = SplitPackageKey(package.Name);
@@ -67,11 +73,15 @@ public static class ResolvedGraphClassifier
                             incomplete.Add($"{libraryKey}: {reason}");
                         }
 
-                        var active = IsActive(capability, relativePath, packageRoot, targetAssets, generatedImports);
+                        var context = capability == CapabilityKind.BuildMultiTargeting
+                            ? SurfaceContextKind.Project
+                            : SurfaceContextKind.Target;
+                        var active = IsActive(capability, relativePath, packageRoot, targetAssets, context, targetAlias, generatedImports);
                         var sha = present ? ComputeSha256(physicalPath) : null;
-                        entries.Add(new SurfaceEntry(
-                            tfm,
-                            rid,
+                        var entry = new SurfaceEntry(
+                            context == SurfaceContextKind.Project ? null : tfm,
+                            context == SurfaceContextKind.Project ? null : rid,
+                            context,
                             packageId,
                             version,
                             directPackages.Contains(packageId) ? "direct" : "transitive",
@@ -81,11 +91,21 @@ public static class ResolvedGraphClassifier
                             active,
                             sha,
                             !present,
-                            reason));
+                            reason);
+                        if (context == SurfaceContextKind.Project)
+                        {
+                            var key = string.Join("|", entry.PackageId, entry.Version, entry.Capability, entry.PackageRelativePath);
+                            projectEntries[key] = entry;
+                        }
+                        else
+                        {
+                            entries.Add(entry);
+                        }
                     }
                 }
             }
 
+            entries.AddRange(projectEntries.Values);
             return new ProbeResult(Deduplicate(entries), incomplete.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray());
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidDataException)
@@ -96,9 +116,10 @@ public static class ResolvedGraphClassifier
     }
 
     private static SurfaceEntry[] Deduplicate(IEnumerable<SurfaceEntry> entries) => entries
-        .GroupBy(entry => string.Join("|", entry.TargetFramework, entry.RuntimeIdentifier, entry.PackageId, entry.Version, entry.Capability, entry.PackageRelativePath), StringComparer.OrdinalIgnoreCase)
+        .GroupBy(entry => string.Join("|", entry.Context, entry.TargetFramework, entry.RuntimeIdentifier, entry.PackageId, entry.Version, entry.Capability, entry.PackageRelativePath), StringComparer.OrdinalIgnoreCase)
         .Select(group => group.OrderByDescending(entry => entry.Active).First())
-        .OrderBy(entry => entry.TargetFramework, StringComparer.Ordinal)
+        .OrderBy(entry => entry.Context)
+        .ThenBy(entry => entry.TargetFramework, StringComparer.Ordinal)
         .ThenBy(entry => entry.RuntimeIdentifier, StringComparer.Ordinal)
         .ThenBy(entry => entry.PackageId, StringComparer.OrdinalIgnoreCase)
         .ThenBy(entry => entry.Capability)
@@ -123,6 +144,26 @@ public static class ResolvedGraphClassifier
             foreach (var dependency in dependencies.EnumerateObject())
             {
                 result.Add(dependency.Name);
+            }
+        }
+
+        return result;
+    }
+
+    private static Dictionary<string, string> ReadTargetAliases(JsonElement root)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (!root.TryGetProperty("project", out var project) || !project.TryGetProperty("frameworks", out var frameworks))
+        {
+            return result;
+        }
+
+        foreach (var framework in frameworks.EnumerateObject())
+        {
+            if (framework.Value.TryGetProperty("targetAlias", out var alias) && alias.ValueKind == JsonValueKind.String)
+            {
+                var targetKey = framework.Name;
+                result[targetKey] = alias.GetString()!;
             }
         }
 
@@ -185,9 +226,9 @@ public static class ResolvedGraphClassifier
         return Path.GetFullPath(Path.Combine(firstFolder, normalizedLibraryPath.Replace('/', Path.DirectorySeparatorChar)));
     }
 
-    private static Dictionary<string, List<string>> ReadGeneratedImports(string projectRoot, List<string> incomplete)
+    private static List<GeneratedImport> ReadGeneratedImports(string projectRoot, List<string> incomplete)
     {
-        var result = new Dictionary<string, List<string>>(PathComparer);
+        var result = new List<GeneratedImport>();
         foreach (var file in Directory.EnumerateFiles(projectRoot, "*.nuget.g.*", SearchOption.AllDirectories))
         {
             if (!file.EndsWith(".props", StringComparison.OrdinalIgnoreCase) && !file.EndsWith(".targets", StringComparison.OrdinalIgnoreCase))
@@ -205,7 +246,18 @@ public static class ResolvedGraphClassifier
                     var project = import.Attribute("Project")?.Value;
                     if (project is not null)
                     {
-                        result.GetOrAdd(Path.GetFileName(file), _ => new List<string>()).Add(project);
+                        var conditions = import.AncestorsAndSelf()
+                            .Select(element => element.Attribute("Condition")?.Value)
+                            .Where(value => !string.IsNullOrWhiteSpace(value))
+                            .Cast<string>()
+                            .ToArray();
+                        var applicability = DetermineApplicability(conditions, out var targetFramework);
+                        if (applicability == ImportApplicability.Unknown)
+                        {
+                            incomplete.Add($"Generated import {Path.GetFileName(file)} has a TargetFramework condition that cannot be proven: {string.Join(" AND ", conditions)}.");
+                        }
+
+                        result.Add(new GeneratedImport(Path.GetFileName(file), project, applicability, targetFramework));
                     }
                 }
             }
@@ -218,7 +270,14 @@ public static class ResolvedGraphClassifier
         return result;
     }
 
-    private static bool IsActive(CapabilityKind capability, string relativePath, string packageRoot, JsonElement targetAssets, Dictionary<string, List<string>> generatedImports)
+    private static bool IsActive(
+        CapabilityKind capability,
+        string relativePath,
+        string packageRoot,
+        JsonElement targetAssets,
+        SurfaceContextKind context,
+        string targetFramework,
+        IReadOnlyList<GeneratedImport> generatedImports)
     {
         if (capability == CapabilityKind.ToolOrScriptPresent)
         {
@@ -228,12 +287,13 @@ public static class ResolvedGraphClassifier
         if (capability is CapabilityKind.BuildProps or CapabilityKind.BuildTargets or CapabilityKind.BuildTransitive or CapabilityKind.BuildMultiTargeting)
         {
             var fullAsset = NormalizeText(Path.Combine(packageRoot, relativePath.Replace('/', Path.DirectorySeparatorChar)));
-            return generatedImports.Values.SelectMany(values => values).Any(import =>
+            return generatedImports.Any(import =>
             {
-                var normalizedImport = NormalizeText(import);
-                return normalizedImport.Contains(fullAsset, StringComparison.OrdinalIgnoreCase) ||
-                       normalizedImport.EndsWith('/' + relativePath, StringComparison.OrdinalIgnoreCase) ||
-                       normalizedImport.EndsWith('\\' + relativePath.Replace('/', '\\'), StringComparison.OrdinalIgnoreCase);
+                var normalizedImport = NormalizeText(import.Project);
+                return (normalizedImport.Contains(fullAsset, StringComparison.OrdinalIgnoreCase) ||
+                        normalizedImport.EndsWith('/' + relativePath, StringComparison.OrdinalIgnoreCase) ||
+                        normalizedImport.EndsWith('\\' + relativePath.Replace('/', '\\'), StringComparison.OrdinalIgnoreCase)) &&
+                       import.AppliesTo(context, targetFramework, capability == CapabilityKind.BuildMultiTargeting);
             });
         }
 
@@ -371,6 +431,33 @@ public static class ResolvedGraphClassifier
 
     private static string NormalizeText(string value) => value.Replace('\\', '/').Trim();
 
+    private static ImportApplicability DetermineApplicability(IReadOnlyList<string> conditions, out string? targetFramework)
+    {
+        targetFramework = null;
+        var combined = string.Join(" AND ", conditions);
+        var matches = TargetFrameworkCondition.Matches(combined).Cast<Match>().ToArray();
+        if (matches.Length == 0)
+        {
+            return combined.Contains("TargetFramework", StringComparison.OrdinalIgnoreCase)
+                ? ImportApplicability.Unknown
+                : ImportApplicability.AllTargets;
+        }
+
+        if (matches.Length != 1)
+        {
+            return ImportApplicability.Unknown;
+        }
+
+        var match = matches[0];
+        targetFramework = match.Groups["value"].Value;
+        return match.Groups["operator"].Value switch
+        {
+            "==" when targetFramework.Length == 0 => ImportApplicability.Project,
+            "==" => ImportApplicability.TargetFramework,
+            _ => ImportApplicability.Unknown
+        };
+    }
+
     private static string ComputeSha256(string path)
     {
         using var stream = File.OpenRead(path);
@@ -380,14 +467,26 @@ public static class ResolvedGraphClassifier
     private static string? GetString(this JsonElement element, string propertyName) =>
         element.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
-    private static TValue GetOrAdd<TKey, TValue>(this Dictionary<TKey, TValue> dictionary, TKey key, Func<TKey, TValue> factory) where TKey : notnull
+    private enum ImportApplicability
     {
-        if (!dictionary.TryGetValue(key, out var value))
-        {
-            value = factory(key);
-            dictionary.Add(key, value);
-        }
+        AllTargets,
+        TargetFramework,
+        Project,
+        Unknown
+    }
 
-        return value;
+    private sealed record GeneratedImport(
+        string SourceFile,
+        string Project,
+        ImportApplicability Applicability,
+        string? TargetFramework)
+    {
+        public bool AppliesTo(SurfaceContextKind context, string targetFramework, bool projectLevelCapability) =>
+            projectLevelCapability
+                ? context == SurfaceContextKind.Project && Applicability == ImportApplicability.Project
+                : context == SurfaceContextKind.Target &&
+                  (Applicability == ImportApplicability.AllTargets ||
+                   Applicability == ImportApplicability.TargetFramework &&
+                   string.Equals(TargetFramework, targetFramework, StringComparison.OrdinalIgnoreCase));
     }
 }

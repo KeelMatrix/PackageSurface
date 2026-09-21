@@ -10,5 +10,7 @@
   </PropertyGroup>
   <ItemGroup>
     <None Include="content/build/KeelMatrix.Phase0.BuildProps.props" Pack="true" PackagePath="build/KeelMatrix.Phase0.BuildProps.props" />
+    <None Include="content/build/net9.0/KeelMatrix.Phase0.BuildProps.props" Pack="true" PackagePath="build/net9.0/KeelMatrix.Phase0.BuildProps.props" />
+    <None Include="content/lib/net9.0/_._" Pack="true" PackagePath="lib/net9.0/_._" />
   </ItemGroup>
 </Project>

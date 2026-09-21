@@ -47,7 +47,8 @@ public static class ResolvedGraphClassifier
             {
                 throw new InvalidDataException("project.assets.json contains too many resolved libraries.");
             }
-            var directPackages = ReadDirectPackages(root);
+            var directAssetRules = ReadDirectPackageAssetRules(root);
+            var directPackages = directAssetRules.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
             var targetAliases = ReadTargetAliases(root);
             var generatedImports = ReadGeneratedImports(projectRoot, incomplete, budget);
             var entries = new List<SurfaceEntry>();
@@ -66,8 +67,14 @@ public static class ResolvedGraphClassifier
 
             foreach (var target in targets.EnumerateObject())
             {
+                if (target.Value.ValueKind != JsonValueKind.Object)
+                {
+                    throw new InvalidDataException($"Target {target.Name} is not an object.");
+                }
+
                 var (tfm, rid) = SplitTarget(target.Name);
                 var targetAlias = targetAliases.TryGetValue(target.Name, out var alias) ? alias : tfm;
+                var analyzerPackages = DetermineAnalyzerPackages(target.Value, directAssetRules);
                 foreach (var package in target.Value.EnumerateObject())
                 {
                     var (packageId, version) = SplitPackageKey(package.Name);
@@ -82,6 +89,12 @@ public static class ResolvedGraphClassifier
                     if (!library.TryGetProperty("path", out var pathElement))
                     {
                         incomplete.Add($"Library {libraryKey} has no package path.");
+                        continue;
+                    }
+
+                    if (pathElement.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(pathElement.GetString()))
+                    {
+                        incomplete.Add($"Library {libraryKey} has an invalid package path.");
                         continue;
                     }
 
@@ -120,7 +133,7 @@ public static class ResolvedGraphClassifier
                             reason = $"Compiler extension metadata is invalid: {relativePath}.";
                         }
 
-                        var active = IsActive(capability, relativePath, packageRoot, targetAssets, context, targetAlias, generatedImports);
+                        var active = IsActive(capability, relativePath, packageId, analyzerPackages, packageRoot, targetAssets, context, targetAlias, generatedImports);
                         var sha = present && strictContent ? ComputeSha256(physicalPath, budget) : null;
                         var entry = new SurfaceEntry(
                             context == SurfaceContextKind.Project ? null : tfm,
@@ -153,7 +166,7 @@ public static class ResolvedGraphClassifier
             entries.AddRange(projectEntries.Values);
             return new ProbeResult(Deduplicate(entries), incomplete.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray(), resolvedPackages.Count);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidDataException or NotSupportedException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidDataException or NotSupportedException or InvalidOperationException or ArgumentException or FormatException or OverflowException or KeyNotFoundException)
         {
             incomplete.Add(ex.Message);
             return new ProbeResult(Array.Empty<SurfaceEntry>(), incomplete.Distinct(StringComparer.Ordinal).ToArray());
@@ -171,28 +184,140 @@ public static class ResolvedGraphClassifier
         .ThenBy(entry => entry.PackageRelativePath, StringComparer.OrdinalIgnoreCase)
         .ToArray();
 
-    private static HashSet<string> ReadDirectPackages(JsonElement root)
+    private static Dictionary<string, PackageAssetRule> ReadDirectPackageAssetRules(JsonElement root)
     {
-        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (!root.TryGetProperty("project", out var project) || !project.TryGetProperty("frameworks", out var frameworks))
+        if (!root.TryGetProperty("project", out var project) || project.ValueKind != JsonValueKind.Object ||
+            !project.TryGetProperty("frameworks", out var frameworks) || frameworks.ValueKind != JsonValueKind.Object)
         {
-            return result;
+            throw new InvalidDataException("project.assets.json has no frameworks object.");
         }
 
+        var result = new Dictionary<string, PackageAssetRule>(StringComparer.OrdinalIgnoreCase);
         foreach (var framework in frameworks.EnumerateObject())
         {
+            if (framework.Value.ValueKind != JsonValueKind.Object)
+            {
+                throw new InvalidDataException($"Framework {framework.Name} is not an object.");
+            }
+
             if (!framework.Value.TryGetProperty("dependencies", out var dependencies))
             {
                 continue;
             }
 
+            if (dependencies.ValueKind != JsonValueKind.Object)
+            {
+                throw new InvalidDataException($"Framework {framework.Name} has an invalid dependencies object.");
+            }
+
             foreach (var dependency in dependencies.EnumerateObject())
             {
-                result.Add(dependency.Name);
+                if (dependency.Value.ValueKind != JsonValueKind.Object)
+                {
+                    throw new InvalidDataException($"Dependency {dependency.Name} has an invalid metadata object.");
+                }
+
+                result[dependency.Name] = new PackageAssetRule(ReadAnalyzersIncluded(dependency.Value, dependency.Name));
             }
         }
 
         return result;
+    }
+
+    private static bool ReadAnalyzersIncluded(JsonElement dependency, string packageId)
+    {
+        var included = true;
+        if (dependency.TryGetProperty("include", out var include))
+        {
+            if (include.ValueKind != JsonValueKind.String)
+            {
+                throw new InvalidDataException($"Dependency {packageId} has a non-string include selector.");
+            }
+
+            included = AssetSelectorContains(include.GetString(), "all") || AssetSelectorContains(include.GetString(), "analyzers");
+        }
+
+        if (dependency.TryGetProperty("exclude", out var exclude))
+        {
+            if (exclude.ValueKind != JsonValueKind.String)
+            {
+                throw new InvalidDataException($"Dependency {packageId} has a non-string exclude selector.");
+            }
+
+            if (AssetSelectorContains(exclude.GetString(), "all") || AssetSelectorContains(exclude.GetString(), "analyzers"))
+            {
+                included = false;
+            }
+        }
+
+        return included;
+    }
+
+    private static bool AssetSelectorContains(string? selector, string expected) =>
+        selector?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Any(value => value.Equals(expected, StringComparison.OrdinalIgnoreCase)) == true;
+
+    private static HashSet<string> DetermineAnalyzerPackages(JsonElement targetAssets, IReadOnlyDictionary<string, PackageAssetRule> directAssetRules)
+    {
+        var packageProperties = targetAssets.EnumerateObject().ToArray();
+        var packageKeysById = packageProperties
+            .Select(package => (Key: package.Name, Id: SplitPackageKey(package.Name).Id))
+            .GroupBy(item => item.Id, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Select(item => item.Key).ToArray(), StringComparer.OrdinalIgnoreCase);
+        var active = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var direct in directAssetRules)
+        {
+            if (!direct.Value.AnalyzersIncluded || !packageKeysById.TryGetValue(direct.Key, out var roots))
+            {
+                continue;
+            }
+
+            foreach (var root in roots)
+            {
+                Visit(root);
+            }
+        }
+
+        return active;
+
+        void Visit(string packageKey)
+        {
+            if (!visited.Add(packageKey))
+            {
+                return;
+            }
+
+            if (!targetAssets.TryGetProperty(packageKey, out var package) || package.ValueKind != JsonValueKind.Object)
+            {
+                throw new InvalidDataException($"Target package {packageKey} is not an object.");
+            }
+
+            active.Add(SplitPackageKey(packageKey).Id);
+            if (!package.TryGetProperty("dependencies", out var dependencies))
+            {
+                return;
+            }
+
+            if (dependencies.ValueKind != JsonValueKind.Object)
+            {
+                throw new InvalidDataException($"Target package {packageKey} has an invalid dependencies object.");
+            }
+
+            foreach (var dependency in dependencies.EnumerateObject())
+            {
+                if (!packageKeysById.TryGetValue(dependency.Name, out var dependencyKeys))
+                {
+                    throw new InvalidDataException($"Target package {packageKey} refers to missing dependency {dependency.Name}.");
+                }
+
+                foreach (var dependencyKey in dependencyKeys)
+                {
+                    Visit(dependencyKey);
+                }
+            }
+        }
     }
 
     private static Dictionary<string, string> ReadTargetAliases(JsonElement root)
@@ -200,11 +325,21 @@ public static class ResolvedGraphClassifier
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (!root.TryGetProperty("project", out var project) || !project.TryGetProperty("frameworks", out var frameworks))
         {
-            return result;
+            throw new InvalidDataException("project.assets.json has no frameworks object.");
+        }
+
+        if (project.ValueKind != JsonValueKind.Object || frameworks.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidDataException("project.assets.json has an invalid frameworks object.");
         }
 
         foreach (var framework in frameworks.EnumerateObject())
         {
+            if (framework.Value.ValueKind != JsonValueKind.Object)
+            {
+                throw new InvalidDataException($"Framework {framework.Name} is not an object.");
+            }
+
             if (framework.Value.TryGetProperty("targetAlias", out var alias) && alias.ValueKind == JsonValueKind.String)
             {
                 var targetKey = framework.Name;
@@ -219,11 +354,21 @@ public static class ResolvedGraphClassifier
     {
         if (!root.TryGetProperty("packageFolders", out var folders))
         {
-            incomplete.Add("project.assets.json has no packageFolders object.");
-            return Array.Empty<string>();
+            throw new InvalidDataException("project.assets.json has no packageFolders object.");
         }
 
-        return folders.EnumerateObject().Select(folder => folder.Name).ToArray();
+        if (folders.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidDataException("project.assets.json has an invalid packageFolders object.");
+        }
+
+        var result = folders.EnumerateObject().Select(folder => folder.Name).Where(folder => !string.IsNullOrWhiteSpace(folder)).ToArray();
+        if (result.Length == 0)
+        {
+            throw new InvalidDataException("project.assets.json has no resolved package folder.");
+        }
+
+        return result;
     }
 
     private static IReadOnlyList<string> ReadLibraryFiles(JsonElement library, string libraryKey, List<string> incomplete)
@@ -321,36 +466,58 @@ public static class ResolvedGraphClassifier
                     IgnoreWhitespace = true
                 };
                 using var reader = XmlReader.Create(file, settings);
-                var xml = XDocument.Load(reader, LoadOptions.None);
-                if (xml.Descendants().Any(element => element.Ancestors().Count() > MaxXmlDepth))
+                var conditionStack = new List<ConditionClause>();
+                var exceededDepth = false;
+                while (reader.Read())
                 {
-                    incomplete.Add($"Generated import file {Path.GetFileName(file)} exceeds the supported XML depth.");
-                    continue;
-                }
-                foreach (var import in xml.Descendants().Where(element => element.Name.LocalName == "Import"))
-                {
-                    var project = import.Attribute("Project")?.Value;
-                    if (project is not null)
+                    if (reader.NodeType == XmlNodeType.Element)
                     {
-                        var conditions = import.AncestorsAndSelf()
-                            .Select(element => new ConditionClause(
-                                element.Name.LocalName,
-                                element.Attribute("Condition")?.Value))
-                            .Where(clause => !string.IsNullOrWhiteSpace(clause.Expression))
-                            .ToArray();
-                        var applicability = DetermineApplicability(conditions, project, out var reason);
-                        if (!applicability.IsKnown)
+                        if (reader.Depth > MaxXmlDepth)
                         {
-                            incomplete.Add($"Generated import {Path.GetFileName(file)} has an unproven condition on {reason!.Owner}: {reason.Message}");
+                            exceededDepth = true;
+                            break;
                         }
 
-                        result.Add(new GeneratedImport(Path.GetFileName(file), project, applicability));
+                        var elementName = reader.LocalName;
+                        var condition = reader.GetAttribute("Condition");
+                        if (elementName.Equals("Import", StringComparison.Ordinal) && reader.GetAttribute("Project") is string project)
+                        {
+                            var conditions = conditionStack
+                                .Append(new ConditionClause(elementName, condition))
+                                .Where(clause => !string.IsNullOrWhiteSpace(clause.Expression))
+                                .ToArray();
+                            var applicability = DetermineApplicability(conditions, project, out var reason);
+                            if (!applicability.IsKnown)
+                            {
+                                incomplete.Add($"Generated import file {Path.GetFileName(file)} has an unproven condition on {reason!.Owner}: {reason.Message}");
+                            }
+
+                            result.Add(new GeneratedImport(Path.GetFileName(file), project, applicability));
+                        }
+
+                        if (!reader.IsEmptyElement)
+                        {
+                            conditionStack.Add(new ConditionClause(elementName, condition));
+                        }
                     }
+                    else if (reader.NodeType == XmlNodeType.EndElement && conditionStack.Count > 0)
+                    {
+                        conditionStack.RemoveAt(conditionStack.Count - 1);
+                    }
+                }
+
+                if (exceededDepth)
+                {
+                    incomplete.Add($"Generated import file {Path.GetFileName(file)} exceeds the supported XML depth.");
                 }
             }
             catch (XmlException ex)
             {
                 incomplete.Add($"Generated import file {Path.GetFileName(file)} is malformed: {ex.Message}");
+            }
+            catch (InvalidOperationException ex)
+            {
+                incomplete.Add($"Generated import file {Path.GetFileName(file)} is unsupported: {ex.Message}");
             }
             catch (IOException ex)
             {
@@ -364,6 +531,8 @@ public static class ResolvedGraphClassifier
     private static bool IsActive(
         CapabilityKind capability,
         string relativePath,
+        string packageId,
+        HashSet<string> analyzerPackages,
         string packageRoot,
         JsonElement targetAssets,
         SurfaceContextKind context,
@@ -391,7 +560,7 @@ public static class ResolvedGraphClassifier
         var assetName = relativePath.Replace('\\', '/');
         return capability switch
         {
-            CapabilityKind.CompilerExtension => IsConventionalAnalyzerPath(assetName) && IsReachablePackage(targetAssets),
+            CapabilityKind.CompilerExtension => IsConventionalAnalyzerPath(assetName) && analyzerPackages.Contains(packageId),
             CapabilityKind.CompileSourceInjection => ContainsAsset(targetAssets, "contentFiles", assetName),
             CapabilityKind.NativeRuntime => ContainsAsset(targetAssets, "native", assetName) || ContainsAsset(targetAssets, "runtime", assetName),
             _ => false
@@ -414,8 +583,6 @@ public static class ResolvedGraphClassifier
         path.StartsWith("analyzers/dotnet/cs/", StringComparison.OrdinalIgnoreCase) ||
         path.StartsWith("analyzers/dotnet/vb/", StringComparison.OrdinalIgnoreCase) ||
         path.StartsWith("analyzers/dotnet/", StringComparison.OrdinalIgnoreCase) && path.Count(character => character == '/') == 2;
-
-    private static bool IsReachablePackage(JsonElement targetAssets) => targetAssets.ValueKind == JsonValueKind.Object;
 
     private static IEnumerable<string> EnumerateStrings(JsonElement element)
     {
@@ -925,6 +1092,8 @@ public static class ResolvedGraphClassifier
 
     private static string? GetString(this JsonElement element, string propertyName) =>
         element.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+
+    private sealed record PackageAssetRule(bool AnalyzersIncluded);
 
     private sealed record GeneratedImport(
         string SourceFile,

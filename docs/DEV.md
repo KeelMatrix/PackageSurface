@@ -18,7 +18,7 @@ dotnet run --project tests/KeelMatrix.PackageSurface.Probe.Tests/KeelMatrix.Pack
 pwsh -NoProfile -File scripts/run-local-gate.ps1
 ```
 
-The gate performs the controlled fixture restore, Release build, permanent corpus checks, hostile-input checks, no-code-execution and no-network proofs, package inspection, dependency audit, isolated tool smoke, and telemetry suppression checks. The exact command, duration, exit code, and result are recorded in the handoff issue for each completed candidate.
+The gate performs the controlled fixture restore, Release build, permanent corpus checks, hostile-input checks, no-code-execution and no-network proofs, package inspection, dependency audit, isolated tool smoke, and telemetry suppression checks. Record the exact command, duration, exit code, and result with the validation evidence for each completed candidate.
 
 ## Project roles
 

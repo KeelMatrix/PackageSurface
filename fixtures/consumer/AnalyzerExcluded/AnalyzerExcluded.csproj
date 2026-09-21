@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>Phase0.AnalyzerExcluded</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="KeelMatrix.Phase0.CompilerExtension" Version="1.0.0" ExcludeAssets="analyzers" />
+  </ItemGroup>
+</Project>

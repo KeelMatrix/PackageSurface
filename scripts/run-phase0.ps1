@@ -8,13 +8,20 @@ if (Test-Path (Join-Path $root '.phase0')) { Remove-Item -LiteralPath (Join-Path
 New-Item -ItemType Directory -Force -Path $env:NUGET_PACKAGES, $feed, $generated | Out-Null
 
 $evidence = [System.Collections.Generic.List[string]]::new()
+function Convert-ToPortableText {
+    param([AllowNull()] [string] $Text)
+    if ($null -eq $Text) { return $Text }
+    $portable = $Text.Replace($root, '.').Replace($root.Replace('\', '/'), '.')
+    return $portable
+}
+
 function Invoke-Recorded {
     param([string]$Command, [scriptblock]$Action, [switch]$AllowFailure)
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
     $output = (& $Action 2>&1 | Out-String).TrimEnd()
     $exitCode = $LASTEXITCODE
     $watch.Stop()
-    $evidence.Add("COMMAND: $Command`nDURATION_MS: $($watch.ElapsedMilliseconds)`nEXIT_CODE: $exitCode`nOUTPUT:`n$output")
+    $evidence.Add("COMMAND: $(Convert-ToPortableText $Command)`nDURATION_MS: $($watch.ElapsedMilliseconds)`nEXIT_CODE: $exitCode`nOUTPUT:`n$(Convert-ToPortableText $output)")
     if ($exitCode -ne 0 -and -not $AllowFailure) { throw "Command failed: $Command`n$output" }
     return [pscustomobject]@{ Output = $output; ExitCode = $exitCode }
 }
@@ -53,6 +60,11 @@ foreach ($consumer in $consumers) {
     $project = Join-Path $root "fixtures/consumer/$consumer/$consumer.csproj"
     Invoke-Recorded "dotnet restore $project --configfile $root/NuGet.config --force-evaluate" { dotnet restore $project --configfile (Join-Path $root 'NuGet.config') --force-evaluate }
 }
+$exclusionConsumers = @('AnalyzerExcluded', 'AnalyzerExcludedTransitive')
+foreach ($consumer in $exclusionConsumers) {
+    $project = Join-Path $root "fixtures/consumer/$consumer/$consumer.csproj"
+    Invoke-Recorded "dotnet restore $project --configfile $root/NuGet.config --force-evaluate" { dotnet restore $project --configfile (Join-Path $root 'NuGet.config') --force-evaluate }
+}
 
 $testProject = Join-Path $root 'tests/KeelMatrix.PackageSurface.Probe.Tests/KeelMatrix.PackageSurface.Probe.Tests.csproj'
 Invoke-Recorded "dotnet build $testProject --configuration Release" { dotnet build $testProject --configuration Release }
@@ -69,6 +81,15 @@ foreach ($consumer in $consumers) {
     $probeOutput = Invoke-Recorded "dotnet run --project $probe --configuration Release --no-build -- $assets $consumerRoot" { dotnet run --project $probe --configuration Release --no-build -- $assets $consumerRoot }
     [IO.File]::WriteAllText($jsonPath, $probeOutput.Output.Trim() + [Environment]::NewLine)
     Invoke-Recorded "dotnet run --project $testProject --configuration Release --no-build -- $assets $($testCapabilities[$consumer])" { dotnet run --project $testProject --configuration Release --no-build -- $assets $($testCapabilities[$consumer]) }
+}
+foreach ($consumer in $exclusionConsumers) {
+    $assets = Join-Path $root "fixtures/consumer/$consumer/obj/project.assets.json"
+    $consumerRoot = Join-Path $root "fixtures/consumer/$consumer"
+    $probeOutput = Invoke-Recorded "dotnet run --project $probe --configuration Release --no-build -- $assets $consumerRoot" { dotnet run --project $probe --configuration Release --no-build -- $assets $consumerRoot }
+    $excluded = $probeOutput.Output.Trim() | ConvertFrom-Json
+    if (-not $excluded.IsComplete -or @($excluded.Entries | Where-Object { $_.Capability -eq 'CompilerExtension' -and $_.Active }).Count -gt 0) {
+        throw "$consumer analyzer exclusion regression failed."
+    }
 }
 
 $proofScript = Join-Path $root 'scripts/verify-no-execution.ps1'

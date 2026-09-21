@@ -1,9 +1,11 @@
+using System.Diagnostics;
 using System.Text.Json;
+using System.Xml.Linq;
 using KeelMatrix.PackageSurface.Probe;
 
 if (args.Length != 2)
 {
-    Console.Error.WriteLine("Usage: probe-tests <project.assets.json>");
+    Console.Error.WriteLine("Usage: probe-tests <project.assets.json> <capabilities>");
     return 2;
 }
 
@@ -70,6 +72,8 @@ if (result.Entries.Any(entry => entry.Capability == CapabilityKind.ToolOrScriptP
     return 1;
 }
 
+RunGeneratedImportConditionRegression(assets);
+
 var malformed = Path.Combine(Path.GetTempPath(), "packagesurface-malformed-assets.json");
 try
 {
@@ -91,3 +95,144 @@ finally
 
 Console.WriteLine(JsonSerializer.Serialize(new { entries = result.Entries.Count, complete = result.IsComplete }));
 return 0;
+
+static void RunGeneratedImportConditionRegression(string baselineAssets)
+{
+    using var document = JsonDocument.Parse(File.ReadAllText(baselineAssets));
+    var root = document.RootElement;
+    var targetFrameworks = root.GetProperty("targets").EnumerateObject().Select(target => target.Name.Split('/', 2)[0]).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    var allTargetFrameworks = string.Join(',', targetFrameworks);
+    var nonNet8TargetFrameworks = string.Join(',', targetFrameworks.Where(target => !target.Equals("net8.0", StringComparison.OrdinalIgnoreCase)));
+    var targetAliases = root.GetProperty("project").GetProperty("frameworks").EnumerateObject()
+        .Select(framework => framework.Value.TryGetProperty("targetAlias", out var alias) ? alias.GetString()! : framework.Name)
+        .ToArray();
+    var alternateTargetFramework = targetAliases.FirstOrDefault(target => !target.Equals("net8.0", StringComparison.OrdinalIgnoreCase)) ?? "net8.0";
+    var packageFolder = root.GetProperty("packageFolders").EnumerateObject().Select(property => property.Name).First();
+    var buildPropsLibrary = root.GetProperty("libraries").GetProperty("KeelMatrix.Phase0.BuildProps/1.0.0");
+    var buildPropsRoot = Path.Combine(packageFolder, buildPropsLibrary.GetProperty("path").GetString()!.Replace('/', Path.DirectorySeparatorChar));
+    var buildPropsPath = "build/KeelMatrix.Phase0.BuildProps.props";
+    var buildPropsImport = Path.Combine(buildPropsRoot, buildPropsPath.Replace('/', Path.DirectorySeparatorChar));
+    var buildPropsMacroPath = "$(NuGetPackageRoot)/" + buildPropsLibrary.GetProperty("path").GetString()!.Replace('/', '/') + "/" + buildPropsPath;
+
+    var buildMultiLibrary = root.GetProperty("libraries").GetProperty("KeelMatrix.Phase0.BuildMultiTargeting/1.0.0");
+    var buildMultiRoot = Path.Combine(packageFolder, buildMultiLibrary.GetProperty("path").GetString()!.Replace('/', Path.DirectorySeparatorChar));
+    var buildMultiPath = "buildMultiTargeting/KeelMatrix.Phase0.BuildMultiTargeting.targets";
+    var buildMultiImport = Path.Combine(buildMultiRoot, buildMultiPath.Replace('/', Path.DirectorySeparatorChar));
+
+    var scratch = Path.Combine(Path.GetTempPath(), "packagesurface-condition-tests-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(Path.Combine(scratch, "obj"));
+
+    try
+    {
+        File.Copy(baselineAssets, Path.Combine(scratch, "obj", "project.assets.json"));
+        AssertTarget("unconditional import", CreateImports(buildPropsImport, null, null), true, null, allTargetFrameworks);
+        AssertTarget("TFM equality", CreateImports(buildPropsImport, "'$(TargetFramework)' == 'net8.0'", null), true, null, "net8.0");
+        AssertTarget("TFM inequality", CreateImports(buildPropsImport, "'$(TargetFramework)' != 'net8.0'", null), true, null, nonNet8TargetFrameworks);
+        AssertTarget("empty string equality", CreateImports(buildPropsImport, "'$(TargetFramework)' == ''", null), true, null, string.Empty);
+        AssertTarget("non-empty string inequality", CreateImports(buildPropsImport, "'$(TargetFramework)' != ''", null), true, null, allTargetFrameworks);
+        AssertTarget("AND composition", CreateImports(buildPropsImport, "'$(TargetFramework)' == 'net8.0' AND '$(ExcludeRestorePackageImports)' != 'true'", null), true, null, "net8.0");
+        AssertTarget("repeated TFM comparisons", CreateImports(buildPropsImport, "'$(TargetFramework)' == 'net8.0' AND '$(TargetFramework)' == 'net8.0'", null), true, null, "net8.0");
+        AssertTarget("OR composition", CreateImports(buildPropsImport, $"'$(TargetFramework)' == 'net8.0' OR '$(TargetFramework)' == '{alternateTargetFramework}'", null), true, null, allTargetFrameworks);
+        AssertTarget("restore guard", CreateImports(buildPropsImport, "'$(ExcludeRestorePackageImports)' != 'true'", null), true, null, allTargetFrameworks);
+        AssertTarget("standard Exists guard", CreateImports(buildPropsImport, null, $"Exists('{buildPropsMacroPath}')"), true, null, allTargetFrameworks);
+        AssertTarget("ImportGroup and Import conditions", CreateImports(buildPropsImport, "'$(ExcludeRestorePackageImports)' != 'true'", "'$(TargetFramework)' == 'net8.0'"), true, null, "net8.0");
+        AssertTarget("nested groups", CreateImports(buildPropsImport, "'$(TargetFramework)' == 'net8.0'", "'$(ExcludeRestorePackageImports)' != 'true'", nested: true), true, null, "net8.0");
+        AssertTarget("arbitrary property", CreateImports(buildPropsImport, "'$(Configuration)' == 'Debug'", null), false, "Configuration", string.Empty);
+        AssertTarget("additional arbitrary clause", CreateImports(buildPropsImport, "'$(TargetFramework)' == 'net8.0' AND '$(Configuration)' == 'Debug'", null), false, "Configuration", string.Empty);
+        AssertTarget("nested arbitrary condition", CreateImports(buildPropsImport, "'$(Configuration)' == 'Debug'", null, nested: true), false, "Configuration", string.Empty);
+        AssertTarget("unproven Exists", CreateImports(buildPropsImport, null, "Exists('$(SomeRoot)/unknown.props')"), false, "Exists(...)", string.Empty);
+
+        AssertProject("empty TFM project context", CreateImports(buildMultiImport, "'$(TargetFramework)' == ''", null), complete: true, active: true, buildMultiPath);
+
+        CreateImports(buildPropsImport, "'$(TargetFramework)' == 'net8.0' AND '$(Configuration)' == 'Debug'", null).Save(Path.Combine(scratch, "conditions.nuget.g.props"));
+        AssertTargetExitCode(scratch, expected: 2);
+    }
+    finally
+    {
+        if (Directory.Exists(scratch))
+        {
+            Directory.Delete(scratch, recursive: true);
+        }
+    }
+
+    XDocument CreateImports(string importProject, string? groupCondition, string? importCondition, bool nested = false)
+    {
+        var import = new XElement("Import", new XAttribute("Project", importProject));
+        if (importCondition is not null)
+        {
+            import.SetAttributeValue("Condition", importCondition);
+        }
+
+        var group = new XElement("ImportGroup");
+        if (groupCondition is not null)
+        {
+            group.SetAttributeValue("Condition", groupCondition);
+        }
+
+        if (nested)
+        {
+            group.Add(new XElement("ImportGroup", new XAttribute("Condition", importCondition ?? string.Empty), import));
+        }
+        else
+        {
+            group.Add(import);
+        }
+
+        return new XDocument(new XElement("Project", group));
+    }
+
+    void AssertTarget(string scenario, XDocument generatedImports, bool complete, string? reason, string activeTargetFrameworks)
+    {
+        generatedImports.Save(Path.Combine(scratch, "conditions.nuget.g.props"));
+        var analyzed = ResolvedGraphClassifier.Analyze(Path.Combine(scratch, "obj", "project.assets.json"), scratch);
+        var entries = analyzed.Entries.Where(entry =>
+            entry.Context == SurfaceContextKind.Target &&
+            entry.PackageId.Equals("KeelMatrix.Phase0.BuildProps", StringComparison.OrdinalIgnoreCase) &&
+            entry.PackageRelativePath.Equals(buildPropsPath, StringComparison.OrdinalIgnoreCase)).ToArray();
+        var actualActive = entries.Where(entry => entry.Active).Select(entry => entry.TargetFramework!).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var expectedActive = activeTargetFrameworks.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        Console.WriteLine($"condition-case {scenario}: complete={analyzed.IsComplete}; active={string.Join(',', actualActive.Order(StringComparer.OrdinalIgnoreCase))}");
+        if (analyzed.IsComplete != complete || !actualActive.SetEquals(expectedActive) ||
+            (reason is not null && !analyzed.IncompleteReasons.Any(message => message.Contains(reason, StringComparison.OrdinalIgnoreCase))))
+        {
+            throw new InvalidOperationException($"Generated import condition regression failed for {scenario}: complete={analyzed.IsComplete}, active={string.Join(",", actualActive)}, reasons={string.Join("; ", analyzed.IncompleteReasons)}");
+        }
+    }
+
+    void AssertProject(string scenario, XDocument generatedImports, bool complete, bool active, string relativePath)
+    {
+        generatedImports.Save(Path.Combine(scratch, "conditions.nuget.g.props"));
+        var analyzed = ResolvedGraphClassifier.Analyze(Path.Combine(scratch, "obj", "project.assets.json"), scratch);
+        var entries = analyzed.Entries.Where(entry =>
+            entry.Context == SurfaceContextKind.Project &&
+            entry.PackageId.Equals("KeelMatrix.Phase0.BuildMultiTargeting", StringComparison.OrdinalIgnoreCase) &&
+            entry.PackageRelativePath.Equals(relativePath, StringComparison.OrdinalIgnoreCase)).ToArray();
+        Console.WriteLine($"condition-case {scenario}: complete={analyzed.IsComplete}; active={entries.FirstOrDefault()?.Active}");
+        if (analyzed.IsComplete != complete || entries.Length != 1 || entries[0].Active != active)
+        {
+            throw new InvalidOperationException($"Project import condition regression failed for {scenario}: complete={analyzed.IsComplete}, active={entries.FirstOrDefault()?.Active}, reasons={string.Join("; ", analyzed.IncompleteReasons)}");
+        }
+    }
+
+    void AssertTargetExitCode(string projectRoot, int expected)
+    {
+        var startInfo = new ProcessStartInfo("dotnet")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        startInfo.ArgumentList.Add(typeof(ResolvedGraphClassifier).Assembly.Location);
+        startInfo.ArgumentList.Add(Path.Combine(projectRoot, "obj", "project.assets.json"));
+        startInfo.ArgumentList.Add(projectRoot);
+        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start the probe process.");
+        process.StandardOutput.ReadToEnd();
+        process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        if (process.ExitCode != expected)
+        {
+            throw new InvalidOperationException($"Incomplete generated-import analysis exited {process.ExitCode}, expected {expected}.");
+        }
+        Console.WriteLine($"condition-exit incomplete analysis: {process.ExitCode}");
+    }
+}

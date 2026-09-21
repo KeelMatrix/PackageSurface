@@ -73,6 +73,8 @@ foreach ($consumer in $consumers) {
 
 $proofScript = Join-Path $root 'scripts/verify-no-execution.ps1'
 Invoke-Recorded "pwsh -NoProfile -File $proofScript" { pwsh -NoProfile -File $proofScript }
+$historyRegressionScript = Join-Path $root 'scripts/test-history-hygiene-regressions.ps1'
+Invoke-Recorded "pwsh -NoProfile -File $historyRegressionScript" { pwsh -NoProfile -File $historyRegressionScript }
 $historyScript = Join-Path $root 'scripts/test-history-hygiene.ps1'
 $historyResult = Invoke-Recorded "pwsh -NoProfile -File $historyScript" { pwsh -NoProfile -File $historyScript } -AllowFailure
 
@@ -151,8 +153,7 @@ function Get-PackageState($row, $assets) {
     if ($folder.Count -eq 0) { return 'missing (no resolved package folder)' }
     $path = Join-Path (Join-Path $folder[0] ([string]$library.path).Replace('/', '\')) ([string]$row.path.Replace('/', '\'))
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return 'missing (resolved package file is absent)' }
-    $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
-    return "proven (present; SHA-256=$hash)"
+    return 'proven (present; raw binary hash intentionally not recorded in Phase 0 evidence)'
 }
 
 function Get-ImportState($row, $consumerRoot, $source) {
@@ -305,6 +306,12 @@ foreach ($line in @(
     '', '## Reproducibility and safety environment', '', '`NUGET_PACKAGES=.phase0/packages`',
     'Controlled package source: `.phase0/feed`, configured by `NuGet.config`.',
     'The classifier receives already restored assets and generated import files. The phase script performs restore only to create fixture evidence.',
+    '', '## Generated-import condition grammar', '',
+    'The classifier proves unconditional imports, `$(TargetFramework)` equality/inequality comparisons including empty and non-empty string values, and boolean `AND`/`OR` composition with parentheses.',
+    'It proves the standard `$(ExcludeRestorePackageImports) != ''true''` restore guard and the standard `Exists(''$(NuGetPackageRoot)/<resolved-package-suffix>'')` package-file guard when the import path matches the reachable asset.',
+    'Conditions on `ImportGroup` and `Import` elements, including nested groups, are combined as a conjunction and evaluated for each target framework or project context.',
+    'Conditions on arbitrary properties such as `Configuration`, unsupported `Exists(...)` expressions, unknown functions, malformed expressions, and any other clause outside this grammar are unproven, carry a specific reason, and make analysis incomplete. Incomplete analysis exits 2 from the probe and cannot be a clean result.',
+    'Raw fixture binary hashes are intentionally not recorded: compiler/packaging outputs can vary with host and SDK details. Deterministic evidence is the pinned SDK, resolved package/file presence, package-relative paths, direct/transitive relationships, target/RID context, active/inactive state, generated-import comparison, and gate verdict.',
     '', '## Recorded commands', '', '```text', ($evidence -join ([Environment]::NewLine + [Environment]::NewLine)), '```',
     '', '## Residual uncertainty', '',
     'This is a bounded Phase 0 fixture, not a complete NuGet/MSBuild semantic implementation. The active rules are proven only for SDK-style PackageReference graphs represented by this corpus; broader hostile-input and cross-platform gates belong to the next implementation phase.'

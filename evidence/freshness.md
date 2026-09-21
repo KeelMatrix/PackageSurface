@@ -29,11 +29,11 @@ EXIT_CODE: 0
 OUTPUT:
 Package ID                                   Latest Version      Authors         Downloads      Verified
 --------------------------------------------------------------------------------------------------------
-microsoft.cst.attacksurfaceanalyzer.cli      2.3.331             Microsoft       211896         x       
-fs.gg.governance.fsharpsurfacecommand        1.12.1              FS-GG           2962           x       
-microsoft.cst.applicationinspector.cli       1.10.2              Microsoft       353752         x       
-dimonsmart.nugetmcpserver                    1.1.9               DimonSmart      2788           x       
-jvcode                                       0.1.1               jonv11          200                    
+microsoft.cst.attacksurfaceanalyzer.cli      2.3.331             Microsoft       211896         x
+fs.gg.governance.fsharpsurfacecommand        1.12.1              FS-GG           2962           x
+microsoft.cst.applicationinspector.cli       1.10.2              Microsoft       353752         x
+dimonsmart.nugetmcpserver                    1.1.9               DimonSmart      2788           x
+jvcode                                       0.1.1               jonv11          200
 
 COMMAND: gh search repos package-surface --limit 20 --json fullName --jq ".[].fullName"
 DURATION_MS: 1261

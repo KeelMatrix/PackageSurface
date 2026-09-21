@@ -27,6 +27,38 @@ function Invoke-GateStep {
     }
 }
 
+function Ensure-DotnetRootForInstalledTool {
+    if ($IsWindows -or -not [string]::IsNullOrWhiteSpace($env:DOTNET_ROOT)) {
+        return
+    }
+
+    $dotnetCommand = Get-Command dotnet -CommandType Application -ErrorAction Stop | Select-Object -First 1
+    $dotnetPath = $dotnetCommand.Source
+    try {
+        $dotnetPath = (Resolve-Path -LiteralPath $dotnetPath -ErrorAction Stop).Path
+    }
+    catch {
+        # The command path is still useful when the host exposes no resolvable symlink target.
+    }
+
+    $candidate = Split-Path -Parent $dotnetPath
+    while (-not [string]::IsNullOrWhiteSpace($candidate)) {
+        if (Test-Path -LiteralPath (Join-Path $candidate 'host/fxr') -PathType Container) {
+            $env:DOTNET_ROOT = $candidate
+            Write-Output "DOTNET_ROOT_FOR_TOOL: $candidate"
+            return
+        }
+
+        $parent = Split-Path -Parent $candidate
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $candidate) {
+            break
+        }
+        $candidate = $parent
+    }
+
+    throw "Unable to derive DOTNET_ROOT for the installed Linux tool from '$dotnetPath'. Set DOTNET_ROOT to the directory containing host/fxr and rerun the gate."
+}
+
 try {
     $env:KEELMATRIX_TELEMETRY = 'off'
     $phase0Evidence = Join-Path $root 'evidence/phase0.md'
@@ -139,6 +171,7 @@ try {
     $toolName = if ($IsWindows) { 'package-surface.exe' } else { 'package-surface' }
     $tool = Join-Path $toolRoot $toolName
     if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) { throw 'The isolated tool command was not installed.' }
+    Ensure-DotnetRootForInstalledTool
     Invoke-GateStep 'installed tool version' { & $tool --version }
     Invoke-GateStep 'installed tool scan' { & $tool scan $singleProject --format json --no-telemetry }
 

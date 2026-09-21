@@ -43,14 +43,14 @@ Windows gate step results:
 Environment: Ubuntu 24.04.1 under WSL2, x64, .NET SDK `8.0.425`, PowerShell 7.6.6.
 
 ```text
-COMMAND: export PATH="/home/rdime/.dotnet:/home/rdime/bin:$PATH"; unset DOTNET_ROOT; dotnet restore KeelMatrix.PackageSurface.sln --configfile NuGet.config --packages <run-scratch>/linux-final-restore-1/packages --no-cache --force
+COMMAND: export PATH="/home/rdime/.dotnet:/home/rdime/bin:$PATH"; unset DOTNET_ROOT; dotnet restore KeelMatrix.PackageSurface.sln --configfile NuGet.config --packages <run-scratch>/linux-qa-recheck-3/packages --no-cache --force
 EXIT_CODE: 0
-DURATION_MS: 5841
+DURATION_MS: 5347
 
 COMMAND: export PATH="/home/rdime/.dotnet:/home/rdime/bin:$PATH"; unset DOTNET_ROOT; pwsh -NoLogo -NoProfile -File scripts/run-local-gate.ps1
 EXIT_CODE: 0
-DURATION_MS: 331749 (committed gate-reported duration)
-RESULT: PASS. The committed gate completed the same validation sequence as Windows, including successful Linux tool installation and consumer smoke. The gate derived `DOTNET_ROOT` from the Linux `dotnet` executable because the environment did not provide it; no manual environment mutation was required by the documented command.
+DURATION_MS: 310025 (committed gate-reported duration; 296287 ms outer WSL wall duration)
+RESULT: PASS. A fresh isolated Linux recheck completed the same validation sequence as Windows, including successful Linux tool installation and consumer smoke. The gate derived `DOTNET_ROOT` from the Linux `dotnet` executable because the environment did not provide it; no manual environment mutation was required by the documented command.
 ```
 
 Linux gate step results:
@@ -88,7 +88,7 @@ _rels/.rels
 icon.png
 KeelMatrix.PackageSurface.nuspec
 LICENSE/LICENSE
-package/services/metadata/core-properties/c19f78467f264258b6f944361fc6d456.psmdcp
+package/services/metadata/core-properties/e7dfbf6870f849de9c27763ce0e582ef.psmdcp
 README.md
 tools/net8.0/any/DotnetToolSettings.xml
 tools/net8.0/any/KeelMatrix.PackageSurface.Core.dll
@@ -105,7 +105,7 @@ The symbols archive `KeelMatrix.PackageSurface.0.1.0.snupkg` contained exactly t
 _rels/.rels
 [Content_Types].xml
 KeelMatrix.PackageSurface.nuspec
-package/services/metadata/core-properties/70e37a4aa99848838356cefb1add7db4.psmdcp
+package/services/metadata/core-properties/ad2008ac02004ab9a5c110d77e8dbf45.psmdcp
 tools/net8.0/any/KeelMatrix.PackageSurface.Core.pdb
 ```
 

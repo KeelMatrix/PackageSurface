@@ -32,6 +32,13 @@ if (incomplete.Diagnostics.Count != 1 || incomplete.Diagnostics[0].Id != "PS007"
     return 1;
 }
 
+if (!Options.HelpText.Contains("passes no analyzed dependency identity or content", StringComparison.Ordinal) ||
+    !Options.HelpText.Contains("https://github.com/KeelMatrix/Telemetry/blob/main/PRIVACY.md", StringComparison.Ordinal))
+{
+    Console.Error.WriteLine("CLI telemetry privacy contract is missing from --help.");
+    return 1;
+}
+
 RunClassifierHardeningTests();
 
 Console.WriteLine($"PASS: diagnostics {string.Join(", ", expected)}");

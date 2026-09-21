@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>KeelMatrix.PackageSurface.Cli.Tests</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/KeelMatrix.PackageSurface.Cli/KeelMatrix.PackageSurface.Cli.csproj" />
+  </ItemGroup>
+</Project>

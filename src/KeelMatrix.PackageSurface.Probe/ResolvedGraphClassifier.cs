@@ -1,3 +1,5 @@
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -8,6 +10,17 @@ namespace KeelMatrix.PackageSurface.Probe;
 
 public static class ResolvedGraphClassifier
 {
+    private const int MaxJsonDepth = 64;
+    private const int MaxTargets = 512;
+    private const int MaxLibraries = 20_000;
+    private const int MaxFilesPerLibrary = 20_000;
+    private const int MaxGeneratedImportFiles = 256;
+    private const long MaxMetadataFileBytes = 16 * 1024 * 1024;
+    private const long MaxXmlCharacters = 8 * 1024 * 1024;
+    private const int MaxXmlDepth = 64;
+    private const long MaxTotalBytes = 512 * 1024 * 1024;
+    private const long MaxTotalHashBytes = 256 * 1024 * 1024;
+
     private static readonly Regex PropertyComparison = new(
         "^\\s*['\\\"]?\\$\\(\\s*(?<property>[A-Za-z_][A-Za-z0-9_.-]*)\\s*\\)['\\\"]?\\s*(?<operator>==|!=)\\s*['\\\"](?<value>[^'\\\"]*)['\\\"]\\s*$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
@@ -15,27 +28,40 @@ public static class ResolvedGraphClassifier
         "^\\s*Exists\\s*\\(\\s*['\\\"](?<path>[^'\\\"]*)['\\\"]\\s*\\)\\s*$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
-    public static ProbeResult Analyze(string assetsFile, string projectRoot)
+    public static ProbeResult Analyze(string assetsFile, string projectRoot, bool strictContent = true, string? projectContext = null)
     {
         var incomplete = new List<string>();
         try
         {
+            EnsureFileWithinLimit(assetsFile, MaxMetadataFileBytes, "project.assets.json");
+            var budget = new WorkBudget();
+            budget.Add(FileLength(assetsFile), "metadata");
             using var stream = File.OpenRead(assetsFile);
-            using var document = JsonDocument.Parse(stream, new JsonDocumentOptions { MaxDepth = 128 });
+            using var document = JsonDocument.Parse(stream, new JsonDocumentOptions { MaxDepth = MaxJsonDepth });
             var root = document.RootElement;
             var packageFolders = ReadPackageFolders(root, incomplete);
             var libraries = root.TryGetProperty("libraries", out var librariesElement)
                 ? librariesElement
                 : throw new InvalidDataException("project.assets.json has no libraries object.");
+            if (libraries.ValueKind != JsonValueKind.Object || libraries.EnumerateObject().Take(MaxLibraries + 1).Count() > MaxLibraries)
+            {
+                throw new InvalidDataException("project.assets.json contains too many resolved libraries.");
+            }
             var directPackages = ReadDirectPackages(root);
             var targetAliases = ReadTargetAliases(root);
-            var generatedImports = ReadGeneratedImports(projectRoot, incomplete);
+            var generatedImports = ReadGeneratedImports(projectRoot, incomplete, budget);
             var entries = new List<SurfaceEntry>();
             var projectEntries = new Dictionary<string, SurfaceEntry>(StringComparer.OrdinalIgnoreCase);
+            var resolvedPackages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             if (!root.TryGetProperty("targets", out var targets))
             {
                 throw new InvalidDataException("project.assets.json has no targets object.");
+            }
+
+            if (targets.ValueKind != JsonValueKind.Object || targets.EnumerateObject().Take(MaxTargets + 1).Count() > MaxTargets)
+            {
+                throw new InvalidDataException("project.assets.json contains too many target graphs.");
             }
 
             foreach (var target in targets.EnumerateObject())
@@ -46,6 +72,7 @@ public static class ResolvedGraphClassifier
                 {
                     var (packageId, version) = SplitPackageKey(package.Name);
                     var libraryKey = packageId + "/" + version;
+                    resolvedPackages.Add(libraryKey);
                     if (!libraries.TryGetProperty(libraryKey, out var library))
                     {
                         incomplete.Add($"Target {target.Name} refers to missing library {libraryKey}.");
@@ -69,18 +96,32 @@ public static class ResolvedGraphClassifier
                         }
 
                         var physicalPath = Path.Combine(packageRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
-                        var present = File.Exists(physicalPath);
+                        var present = File.Exists(physicalPath) && IsSafeResolvedFile(packageRoot, physicalPath);
                         var reason = present ? null : $"Reachable asset is missing from resolved package contents: {relativePath}.";
+                        if (File.Exists(physicalPath) && !present)
+                        {
+                            reason = $"Reachable asset resolves through an unsafe package path: {relativePath}.";
+                        }
                         if (!present)
                         {
                             incomplete.Add($"{libraryKey}: {reason}");
+                        }
+                        else
+                        {
+                            budget.Add(FileLength(physicalPath), "package asset");
                         }
 
                         var context = capability == CapabilityKind.BuildMultiTargeting
                             ? SurfaceContextKind.Project
                             : SurfaceContextKind.Target;
+                        if (present && capability == CapabilityKind.CompilerExtension && !ValidateCompilerMetadata(physicalPath, out var metadataReason))
+                        {
+                            incomplete.Add($"{libraryKey}: analyzer metadata is invalid for {relativePath}: {metadataReason}");
+                            reason = $"Compiler extension metadata is invalid: {relativePath}.";
+                        }
+
                         var active = IsActive(capability, relativePath, packageRoot, targetAssets, context, targetAlias, generatedImports);
-                        var sha = present ? ComputeSha256(physicalPath) : null;
+                        var sha = present && strictContent ? ComputeSha256(physicalPath, budget) : null;
                         var entry = new SurfaceEntry(
                             context == SurfaceContextKind.Project ? null : tfm,
                             context == SurfaceContextKind.Project ? null : rid,
@@ -93,8 +134,9 @@ public static class ResolvedGraphClassifier
                             present,
                             active,
                             sha,
-                            !present,
-                            reason);
+                            reason is not null,
+                            reason,
+                            projectContext);
                         if (context == SurfaceContextKind.Project)
                         {
                             var key = string.Join("|", entry.PackageId, entry.Version, entry.Capability, entry.PackageRelativePath);
@@ -109,9 +151,9 @@ public static class ResolvedGraphClassifier
             }
 
             entries.AddRange(projectEntries.Values);
-            return new ProbeResult(Deduplicate(entries), incomplete.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray());
+            return new ProbeResult(Deduplicate(entries), incomplete.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray(), resolvedPackages.Count);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidDataException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidDataException or NotSupportedException)
         {
             incomplete.Add(ex.Message);
             return new ProbeResult(Array.Empty<SurfaceEntry>(), incomplete.Distinct(StringComparer.Ordinal).ToArray());
@@ -119,7 +161,7 @@ public static class ResolvedGraphClassifier
     }
 
     private static SurfaceEntry[] Deduplicate(IEnumerable<SurfaceEntry> entries) => entries
-        .GroupBy(entry => string.Join("|", entry.Context, entry.TargetFramework, entry.RuntimeIdentifier, entry.PackageId, entry.Version, entry.Capability, entry.PackageRelativePath), StringComparer.OrdinalIgnoreCase)
+        .GroupBy(entry => string.Join("|", entry.Project, entry.Context, entry.TargetFramework, entry.RuntimeIdentifier, entry.PackageId, entry.Version, entry.Capability, entry.PackageRelativePath), StringComparer.OrdinalIgnoreCase)
         .Select(group => group.OrderByDescending(entry => entry.Active).First())
         .OrderBy(entry => entry.Context)
         .ThenBy(entry => entry.TargetFramework, StringComparer.Ordinal)
@@ -186,7 +228,7 @@ public static class ResolvedGraphClassifier
 
     private static IReadOnlyList<string> ReadLibraryFiles(JsonElement library, string libraryKey, List<string> incomplete)
     {
-        if (!library.TryGetProperty("files", out var files) || files.ValueKind != JsonValueKind.Array)
+        if (!library.TryGetProperty("files", out var files) || files.ValueKind != JsonValueKind.Array || files.GetArrayLength() > MaxFilesPerLibrary)
         {
             incomplete.Add($"Library {libraryKey} has no files array.");
             return Array.Empty<string>();
@@ -217,8 +259,13 @@ public static class ResolvedGraphClassifier
 
         foreach (var folder in packageFolders)
         {
+            if (!Path.IsPathRooted(folder))
+            {
+                continue;
+            }
+
             var candidate = Path.GetFullPath(Path.Combine(folder, normalizedLibraryPath.Replace('/', Path.DirectorySeparatorChar)));
-            if (Directory.Exists(candidate))
+            if (Directory.Exists(candidate) && IsSafeResolvedDirectory(folder, candidate))
             {
                 return candidate;
             }
@@ -229,10 +276,31 @@ public static class ResolvedGraphClassifier
         return Path.GetFullPath(Path.Combine(firstFolder, normalizedLibraryPath.Replace('/', Path.DirectorySeparatorChar)));
     }
 
-    private static List<GeneratedImport> ReadGeneratedImports(string projectRoot, List<string> incomplete)
+    private static List<GeneratedImport> ReadGeneratedImports(string projectRoot, List<string> incomplete, WorkBudget budget)
     {
         var result = new List<GeneratedImport>();
-        foreach (var file in Directory.EnumerateFiles(projectRoot, "*.nuget.g.*", SearchOption.AllDirectories))
+        var files = new List<string>();
+        foreach (var candidate in Directory.EnumerateFiles(projectRoot, "*.nuget.g.*", SearchOption.TopDirectoryOnly))
+        {
+            files.Add(candidate);
+        }
+
+        var objDirectory = Path.Combine(projectRoot, "obj");
+        if (Directory.Exists(objDirectory))
+        {
+            foreach (var candidate in Directory.EnumerateFiles(objDirectory, "*.nuget.g.*", SearchOption.TopDirectoryOnly))
+            {
+                files.Add(candidate);
+            }
+        }
+
+        if (files.Count > MaxGeneratedImportFiles)
+        {
+            incomplete.Add("The project contains too many generated NuGet import files.");
+            files = files.Take(MaxGeneratedImportFiles).ToList();
+        }
+
+        foreach (var file in files.Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase))
         {
             if (!file.EndsWith(".props", StringComparison.OrdinalIgnoreCase) && !file.EndsWith(".targets", StringComparison.OrdinalIgnoreCase))
             {
@@ -241,9 +309,24 @@ public static class ResolvedGraphClassifier
 
             try
             {
-                var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, MaxCharactersFromEntities = 0, IgnoreComments = true, IgnoreWhitespace = true };
+                EnsureFileWithinLimit(file, MaxMetadataFileBytes, "generated NuGet import");
+                budget.Add(FileLength(file), "generated-import metadata");
+                var settings = new XmlReaderSettings
+                {
+                    DtdProcessing = DtdProcessing.Prohibit,
+                    XmlResolver = null,
+                    MaxCharactersFromEntities = 0,
+                    MaxCharactersInDocument = MaxXmlCharacters,
+                    IgnoreComments = true,
+                    IgnoreWhitespace = true
+                };
                 using var reader = XmlReader.Create(file, settings);
                 var xml = XDocument.Load(reader, LoadOptions.None);
+                if (xml.Descendants().Any(element => element.Ancestors().Count() > MaxXmlDepth))
+                {
+                    incomplete.Add($"Generated import file {Path.GetFileName(file)} exceeds the supported XML depth.");
+                    continue;
+                }
                 foreach (var import in xml.Descendants().Where(element => element.Name.LocalName == "Import"))
                 {
                     var project = import.Attribute("Project")?.Value;
@@ -268,6 +351,10 @@ public static class ResolvedGraphClassifier
             catch (XmlException ex)
             {
                 incomplete.Add($"Generated import file {Path.GetFileName(file)} is malformed: {ex.Message}");
+            }
+            catch (IOException ex)
+            {
+                incomplete.Add($"Generated import file {Path.GetFileName(file)} could not be read: {ex.Message}");
             }
         }
 
@@ -424,7 +511,8 @@ public static class ResolvedGraphClassifier
     private static bool TryNormalizeRelativePath(string value, out string normalized)
     {
         normalized = value.Replace('\\', '/');
-        if (string.IsNullOrWhiteSpace(normalized) || normalized.StartsWith('/') || Path.IsPathRooted(normalized) || normalized.Split('/').Any(part => part == ".."))
+        var parts = normalized.Split('/');
+        if (string.IsNullOrWhiteSpace(normalized) || normalized.Contains('\0') || normalized.StartsWith('/') || Path.IsPathRooted(normalized) || normalized.Contains(':') || parts.Any(part => part is "" or "." or ".."))
         {
             normalized = string.Empty;
             return false;
@@ -726,10 +814,113 @@ public static class ResolvedGraphClassifier
             IsKnown && (Condition?.Evaluate(context, targetFramework) ?? true);
     }
 
-    private static string ComputeSha256(string path)
+    private static string ComputeSha256(string path, WorkBudget budget)
     {
+        EnsureFileWithinLimit(path, MaxMetadataFileBytes, "asset");
+        budget.AddHash(FileLength(path));
         using var stream = File.OpenRead(path);
         return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+    }
+
+    private static void EnsureFileWithinLimit(string path, long limit, string description)
+    {
+        if (!File.Exists(path))
+        {
+            throw new FileNotFoundException($"The {description} does not exist.", path);
+        }
+
+        if (new FileInfo(path).Length > limit)
+        {
+            throw new InvalidDataException($"The {description} exceeds the supported size limit.");
+        }
+    }
+
+    private static long FileLength(string path) => new FileInfo(path).Length;
+
+    private static bool IsSafeResolvedFile(string packageRoot, string file)
+    {
+        var fullRoot = Path.GetFullPath(packageRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var fullFile = Path.GetFullPath(file);
+        return fullFile.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase) &&
+            !HasReparsePoint(packageRoot, fullFile, includeLeaf: true);
+    }
+
+    private static bool IsSafeResolvedDirectory(string packageFolder, string candidate)
+    {
+        var fullFolder = Path.GetFullPath(packageFolder).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var fullCandidate = Path.GetFullPath(candidate);
+        return fullCandidate.StartsWith(fullFolder, StringComparison.OrdinalIgnoreCase) &&
+            !HasReparsePoint(packageFolder, fullCandidate, includeLeaf: false);
+    }
+
+    private static bool HasReparsePoint(string root, string path, bool includeLeaf)
+    {
+        var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var current = new DirectoryInfo(includeLeaf ? Path.GetDirectoryName(path)! : path);
+        while (current is not null && !string.Equals(current.FullName.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), fullRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            if ((current.Attributes & FileAttributes.ReparsePoint) != 0 || current.LinkTarget is not null)
+            {
+                return true;
+            }
+
+            current = current.Parent;
+        }
+
+        if (includeLeaf && File.Exists(path))
+        {
+            var file = new FileInfo(path);
+            return (file.Attributes & FileAttributes.ReparsePoint) != 0 || file.LinkTarget is not null;
+        }
+
+        return false;
+    }
+
+    private static bool ValidateCompilerMetadata(string path, out string reason)
+    {
+        reason = string.Empty;
+        try
+        {
+            EnsureFileWithinLimit(path, MaxMetadataFileBytes, "compiler extension");
+            using var stream = File.OpenRead(path);
+            using var peReader = new PEReader(stream, PEStreamOptions.LeaveOpen);
+            if (!peReader.HasMetadata)
+            {
+                reason = "the file does not contain managed metadata";
+                return false;
+            }
+
+            MetadataReader metadata = peReader.GetMetadataReader();
+            _ = metadata.GetString(metadata.GetAssemblyDefinition().Name);
+            return true;
+        }
+        catch (Exception ex) when (ex is BadImageFormatException or InvalidOperationException or IOException or UnauthorizedAccessException)
+        {
+            reason = ex.Message;
+            return false;
+        }
+    }
+
+    private sealed class WorkBudget
+    {
+        private long _totalBytes;
+        private long _totalHashBytes;
+
+        public void Add(long bytes, string description)
+        {
+            if (bytes < 0 || Interlocked.Add(ref _totalBytes, bytes) > MaxTotalBytes)
+            {
+                throw new InvalidDataException($"The analysis exceeded the total {description} byte budget.");
+            }
+        }
+
+        public void AddHash(long bytes)
+        {
+            if (bytes < 0 || Interlocked.Add(ref _totalHashBytes, bytes) > MaxTotalHashBytes)
+            {
+                throw new InvalidDataException("The analysis exceeded the total hashing byte budget.");
+            }
+        }
     }
 
     private static string? GetString(this JsonElement element, string propertyName) =>

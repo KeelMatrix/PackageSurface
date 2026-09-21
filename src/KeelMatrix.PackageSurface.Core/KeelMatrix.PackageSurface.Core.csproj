@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>KeelMatrix.PackageSurface.Core</AssemblyName>
+    <RootNamespace>KeelMatrix.PackageSurface.Probe</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\KeelMatrix.PackageSurface.Probe\*.cs" Exclude="..\KeelMatrix.PackageSurface.Probe\Program.cs" LinkBase="" />
+  </ItemGroup>
+</Project>

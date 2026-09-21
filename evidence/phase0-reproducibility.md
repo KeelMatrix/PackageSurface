@@ -19,8 +19,18 @@ The probe was run twice on the same checkout and host after the condition-classi
 |---|---|---:|---:|
 | 1 | `pwsh -NoLogo -NoProfile -File scripts/run-phase0.ps1` | 0 | 62.680 s |
 | 2 | `pwsh -NoLogo -NoProfile -File scripts/run-phase0.ps1` | 0 | 87.359 s |
+| 3 (frozen report) | `pwsh -NoLogo -NoProfile -File scripts/run-phase0.ps1` | 0 | 69.627 s |
 
-The duration difference is an execution-time variation; both runs used the environment above and produced the same classification and gate outcomes.
+The duration difference is an execution-time variation; all runs used the environment above and produced the same classification and gate outcomes.
+
+The focused condition regression was also run directly after the implementation change:
+
+| Command | Exit code | Duration |
+|---|---:|---:|
+| `dotnet build tests/KeelMatrix.PackageSurface.Probe.Tests/KeelMatrix.PackageSurface.Probe.Tests.csproj -c Release --no-restore` | 0 | 1.418 s |
+| Probe test executable across `MultiTarget`, `SingleTarget`, and `RidTarget` assets | 0 | 3.208 s |
+
+The final frozen report records the disposable adversarial controls individually. Each control exited `1` as intended: simulated Git failure (717 ms), empty tracked output (644 ms), empty history output (715 ms), incomplete history (711 ms), Git search failure (701 ms), empty log output (713 ms), Git log failure (697 ms), shallow repository (719 ms), and restricted marker (904 ms). The regression suite exited `0` in 8.380 s, and the real hygiene gate exited `0` in 7.753 s.
 
 ## Fixture binary SHA-256
 

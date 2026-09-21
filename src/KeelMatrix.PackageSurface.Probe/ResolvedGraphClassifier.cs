@@ -8,8 +8,11 @@ namespace KeelMatrix.PackageSurface.Probe;
 
 public static class ResolvedGraphClassifier
 {
-    private static readonly Regex TargetFrameworkCondition = new(
-        "['\\\"]?\\$\\(\\s*TargetFramework\\s*\\)['\\\"]?\\s*(?<operator>==|!=)\\s*['\\\"](?<value>[^'\\\"]*)['\\\"]",
+    private static readonly Regex PropertyComparison = new(
+        "^\\s*['\\\"]?\\$\\(\\s*(?<property>[A-Za-z_][A-Za-z0-9_.-]*)\\s*\\)['\\\"]?\\s*(?<operator>==|!=)\\s*['\\\"](?<value>[^'\\\"]*)['\\\"]\\s*$",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex ExistsCondition = new(
+        "^\\s*Exists\\s*\\(\\s*['\\\"](?<path>[^'\\\"]*)['\\\"]\\s*\\)\\s*$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     public static ProbeResult Analyze(string assetsFile, string projectRoot)
@@ -204,7 +207,7 @@ public static class ResolvedGraphClassifier
         return result;
     }
 
-    private static string ResolvePackageRoot(string packageId, string version, string libraryPath, IReadOnlyList<string> packageFolders, List<string> incomplete)
+    private static string ResolvePackageRoot(string packageId, string version, string libraryPath, string[] packageFolders, List<string> incomplete)
     {
         if (!TryNormalizeRelativePath(libraryPath, out var normalizedLibraryPath))
         {
@@ -222,7 +225,7 @@ public static class ResolvedGraphClassifier
         }
 
         incomplete.Add($"Package {packageId}/{version} was not found in the resolved package folders.");
-        var firstFolder = packageFolders.Count > 0 ? packageFolders[0] : Path.GetTempPath();
+        var firstFolder = packageFolders.Length > 0 ? packageFolders[0] : Path.GetTempPath();
         return Path.GetFullPath(Path.Combine(firstFolder, normalizedLibraryPath.Replace('/', Path.DirectorySeparatorChar)));
     }
 
@@ -247,17 +250,18 @@ public static class ResolvedGraphClassifier
                     if (project is not null)
                     {
                         var conditions = import.AncestorsAndSelf()
-                            .Select(element => element.Attribute("Condition")?.Value)
-                            .Where(value => !string.IsNullOrWhiteSpace(value))
-                            .Cast<string>()
+                            .Select(element => new ConditionClause(
+                                element.Name.LocalName,
+                                element.Attribute("Condition")?.Value))
+                            .Where(clause => !string.IsNullOrWhiteSpace(clause.Expression))
                             .ToArray();
-                        var applicability = DetermineApplicability(conditions, out var targetFramework);
-                        if (applicability == ImportApplicability.Unknown)
+                        var applicability = DetermineApplicability(conditions, project, out var reason);
+                        if (!applicability.IsKnown)
                         {
-                            incomplete.Add($"Generated import {Path.GetFileName(file)} has a TargetFramework condition that cannot be proven: {string.Join(" AND ", conditions)}.");
+                            incomplete.Add($"Generated import {Path.GetFileName(file)} has an unproven condition on {reason!.Owner}: {reason.Message}");
                         }
 
-                        result.Add(new GeneratedImport(Path.GetFileName(file), project, applicability, targetFramework));
+                        result.Add(new GeneratedImport(Path.GetFileName(file), project, applicability));
                     }
                 }
             }
@@ -431,31 +435,295 @@ public static class ResolvedGraphClassifier
 
     private static string NormalizeText(string value) => value.Replace('\\', '/').Trim();
 
-    private static ImportApplicability DetermineApplicability(IReadOnlyList<string> conditions, out string? targetFramework)
+    private static ImportApplicability DetermineApplicability(
+        IReadOnlyList<ConditionClause> conditions,
+        string importProject,
+        out ConditionFailure? failure)
     {
-        targetFramework = null;
-        var combined = string.Join(" AND ", conditions);
-        var matches = TargetFrameworkCondition.Matches(combined).Cast<Match>().ToArray();
-        if (matches.Length == 0)
+        failure = null;
+        ConditionNode? combined = null;
+        foreach (var condition in conditions)
         {
-            return combined.Contains("TargetFramework", StringComparison.OrdinalIgnoreCase)
-                ? ImportApplicability.Unknown
-                : ImportApplicability.AllTargets;
+            var parsed = ParseCondition(condition.Expression!, importProject);
+            if (!parsed.IsKnown)
+            {
+                failure = new ConditionFailure(condition.Owner, parsed.Reason!);
+                return new ImportApplicability(null, parsed.Reason);
+            }
+
+            combined = combined is null ? parsed.Node : new AndCondition(combined, parsed.Node!);
         }
 
-        if (matches.Length != 1)
+        return ImportApplicability.Known(combined);
+    }
+
+    private static ParsedCondition ParseCondition(string expression, string importProject)
+    {
+        var normalized = StripOuterParentheses(expression.Trim());
+        if (normalized.Length == 0)
         {
-            return ImportApplicability.Unknown;
+            return ParsedCondition.Unknown("the condition is empty");
         }
 
-        var match = matches[0];
-        targetFramework = match.Groups["value"].Value;
-        return match.Groups["operator"].Value switch
+        if (TrySplitTopLevel(normalized, "OR", out var disjunction))
         {
-            "==" when targetFramework.Length == 0 => ImportApplicability.Project,
-            "==" => ImportApplicability.TargetFramework,
-            _ => ImportApplicability.Unknown
-        };
+            return CombineConditions(disjunction, importProject, static (left, right) => new OrCondition(left, right));
+        }
+
+        if (TrySplitTopLevel(normalized, "AND", out var conjunction))
+        {
+            return CombineConditions(conjunction, importProject, static (left, right) => new AndCondition(left, right));
+        }
+
+        var comparison = PropertyComparison.Match(normalized);
+        if (comparison.Success)
+        {
+            var property = comparison.Groups["property"].Value;
+            var @operator = comparison.Groups["operator"].Value;
+            var value = comparison.Groups["value"].Value;
+            if (property.Equals("TargetFramework", StringComparison.OrdinalIgnoreCase))
+            {
+                return ParsedCondition.Known(new PropertyComparisonCondition(property, @operator, value));
+            }
+
+            if (property.Equals("ExcludeRestorePackageImports", StringComparison.OrdinalIgnoreCase) &&
+                @operator == "!=" && value.Equals("true", StringComparison.OrdinalIgnoreCase))
+            {
+                return ParsedCondition.Known(new ConstantCondition(true));
+            }
+
+            return ParsedCondition.Unknown($"property '{property}' is outside the supported condition grammar");
+        }
+
+        var exists = ExistsCondition.Match(normalized);
+        if (exists.Success)
+        {
+            if (TryProveExists(exists.Groups["path"].Value, importProject, out var existsValue, out var reason))
+            {
+                return ParsedCondition.Known(new ConstantCondition(existsValue));
+            }
+
+            return ParsedCondition.Unknown(reason!);
+        }
+
+        return ParsedCondition.Unknown("the expression is outside the supported condition grammar");
+    }
+
+    private static ParsedCondition CombineConditions(
+        IReadOnlyList<string> expressions,
+        string importProject,
+        Func<ConditionNode, ConditionNode, ConditionNode> combine)
+    {
+        ConditionNode? combined = null;
+        foreach (var expression in expressions)
+        {
+            var parsed = ParseCondition(expression, importProject);
+            if (!parsed.IsKnown)
+            {
+                return ParsedCondition.Unknown($"subexpression '{expression}' is unproven: {parsed.Reason}");
+            }
+
+            combined = combined is null ? parsed.Node : combine(combined, parsed.Node!);
+        }
+
+        return ParsedCondition.Known(combined!);
+    }
+
+    private static bool TryProveExists(string requestedPath, string importProject, out bool exists, out string? reason)
+    {
+        exists = false;
+        reason = null;
+        var requested = NormalizeText(requestedPath);
+        var project = NormalizeText(importProject);
+        if (requested.StartsWith("$(NuGetPackageRoot)/", StringComparison.OrdinalIgnoreCase))
+        {
+            var suffix = requested["$(NuGetPackageRoot)/".Length..];
+            if (suffix.Contains("$(", StringComparison.Ordinal) ||
+                !project.EndsWith('/' + suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                reason = "Exists(...) is not the standard resolved-package-file guard";
+                return false;
+            }
+
+            // Generated NuGet imports retain $(NuGetPackageRoot) in both the
+            // Import and Exists expressions. The resolved package file is
+            // checked independently when the asset entry is created.
+            exists = true;
+            return true;
+        }
+
+        if (Path.IsPathRooted(requestedPath) &&
+            string.Equals(requested, project, StringComparison.OrdinalIgnoreCase))
+        {
+            exists = File.Exists(importProject);
+            return true;
+        }
+
+        reason = "Exists(...) is supported only for the standard resolved-package-file guard";
+        return false;
+    }
+
+    private static string StripOuterParentheses(string expression)
+    {
+        while (expression.Length >= 2 && expression[0] == '(' && expression[^1] == ')' && HasSingleOuterPair(expression))
+        {
+            expression = expression[1..^1].Trim();
+        }
+
+        return expression;
+    }
+
+    private static bool HasSingleOuterPair(string expression)
+    {
+        var depth = 0;
+        var quote = '\0';
+        for (var index = 0; index < expression.Length; index++)
+        {
+            var character = expression[index];
+            if (quote != '\0')
+            {
+                if (character == quote)
+                {
+                    quote = '\0';
+                }
+
+                continue;
+            }
+
+            if (character is '\'' or '\"')
+            {
+                quote = character;
+            }
+            else if (character == '(')
+            {
+                depth++;
+            }
+            else if (character == ')' && --depth == 0 && index != expression.Length - 1)
+            {
+                return false;
+            }
+        }
+
+        return depth == 0 && quote == '\0';
+    }
+
+    private static bool TrySplitTopLevel(string expression, string operatorText, out string[] parts)
+    {
+        var matches = new List<string>();
+        var start = 0;
+        var depth = 0;
+        var quote = '\0';
+        for (var index = 0; index < expression.Length; index++)
+        {
+            var character = expression[index];
+            if (quote != '\0')
+            {
+                if (character == quote)
+                {
+                    quote = '\0';
+                }
+
+                continue;
+            }
+
+            if (character is '\'' or '\"')
+            {
+                quote = character;
+                continue;
+            }
+
+            if (character == '(')
+            {
+                depth++;
+                continue;
+            }
+
+            if (character == ')')
+            {
+                depth--;
+                continue;
+            }
+
+            if (depth != 0 || index + operatorText.Length > expression.Length ||
+                !expression.AsSpan(index, operatorText.Length).Equals(operatorText.AsSpan(), StringComparison.OrdinalIgnoreCase) ||
+                !IsConditionBoundary(expression, index - 1) ||
+                !IsConditionBoundary(expression, index + operatorText.Length))
+            {
+                continue;
+            }
+
+            matches.Add(expression[start..index].Trim());
+            start = index + operatorText.Length;
+            index += operatorText.Length - 1;
+        }
+
+        if (matches.Count == 0)
+        {
+            parts = Array.Empty<string>();
+            return false;
+        }
+
+        matches.Add(expression[start..].Trim());
+        parts = matches.ToArray();
+        return true;
+    }
+
+    private static bool IsConditionBoundary(string expression, int index) =>
+        index < 0 || index >= expression.Length || !char.IsLetterOrDigit(expression[index]) && expression[index] != '_';
+
+    private sealed record ConditionClause(string Owner, string? Expression);
+
+    private sealed record ConditionFailure(string Owner, string Message);
+
+    private sealed record ParsedCondition(ConditionNode? Node, string? Reason)
+    {
+        public bool IsKnown => Reason is null;
+
+        public static ParsedCondition Known(ConditionNode node) => new(node, null);
+
+        public static ParsedCondition Unknown(string reason) => new(null, reason);
+    }
+
+    private abstract record ConditionNode
+    {
+        public abstract bool Evaluate(SurfaceContextKind context, string targetFramework);
+    }
+
+    private sealed record ConstantCondition(bool Value) : ConditionNode
+    {
+        public override bool Evaluate(SurfaceContextKind context, string targetFramework) => Value;
+    }
+
+    private sealed record PropertyComparisonCondition(string Property, string Operator, string Value) : ConditionNode
+    {
+        public override bool Evaluate(SurfaceContextKind context, string targetFramework)
+        {
+            var actual = context == SurfaceContextKind.Project ? string.Empty : targetFramework;
+            var equal = string.Equals(actual, Value, StringComparison.OrdinalIgnoreCase);
+            return Operator == "==" ? equal : !equal;
+        }
+    }
+
+    private sealed record AndCondition(ConditionNode Left, ConditionNode Right) : ConditionNode
+    {
+        public override bool Evaluate(SurfaceContextKind context, string targetFramework) =>
+            Left.Evaluate(context, targetFramework) && Right.Evaluate(context, targetFramework);
+    }
+
+    private sealed record OrCondition(ConditionNode Left, ConditionNode Right) : ConditionNode
+    {
+        public override bool Evaluate(SurfaceContextKind context, string targetFramework) =>
+            Left.Evaluate(context, targetFramework) || Right.Evaluate(context, targetFramework);
+    }
+
+    private sealed record ImportApplicability(ConditionNode? Condition, string? Failure)
+    {
+        public bool IsKnown => Failure is null;
+
+        public static ImportApplicability Known(ConditionNode? condition) => new(condition, null);
+
+        public bool AppliesTo(SurfaceContextKind context, string targetFramework) =>
+            IsKnown && (Condition?.Evaluate(context, targetFramework) ?? true);
     }
 
     private static string ComputeSha256(string path)
@@ -467,26 +735,13 @@ public static class ResolvedGraphClassifier
     private static string? GetString(this JsonElement element, string propertyName) =>
         element.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
-    private enum ImportApplicability
-    {
-        AllTargets,
-        TargetFramework,
-        Project,
-        Unknown
-    }
-
     private sealed record GeneratedImport(
         string SourceFile,
         string Project,
-        ImportApplicability Applicability,
-        string? TargetFramework)
+        ImportApplicability Applicability)
     {
         public bool AppliesTo(SurfaceContextKind context, string targetFramework, bool projectLevelCapability) =>
-            projectLevelCapability
-                ? context == SurfaceContextKind.Project && Applicability == ImportApplicability.Project
-                : context == SurfaceContextKind.Target &&
-                  (Applicability == ImportApplicability.AllTargets ||
-                   Applicability == ImportApplicability.TargetFramework &&
-                   string.Equals(TargetFramework, targetFramework, StringComparison.OrdinalIgnoreCase));
+            context == (projectLevelCapability ? SurfaceContextKind.Project : SurfaceContextKind.Target) &&
+            Applicability.AppliesTo(context, targetFramework);
     }
 }

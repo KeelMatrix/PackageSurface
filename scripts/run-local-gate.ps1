@@ -57,6 +57,10 @@ try {
     Invoke-GateStep 'no-code-execution proof' {
         & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/verify-no-execution.ps1')
     }
+    $cliTests = Join-Path $root 'tests/KeelMatrix.PackageSurface.Cli.Tests/KeelMatrix.PackageSurface.Cli.Tests.csproj'
+    Invoke-GateStep 'CLI contract and resource tests' {
+        & dotnet run --project $cliTests --configuration Release --no-build
+    }
 
     $singleProject = Join-Path $root 'fixtures/consumer/SingleTarget'
     $singleAssets = Join-Path $singleProject 'obj/project.assets.json'

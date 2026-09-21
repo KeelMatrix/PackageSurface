@@ -164,7 +164,23 @@ try {
     Invoke-GateStep 'no-network scan with disabled telemetry' { & $tool scan $singleProject --format json --no-telemetry }
     Remove-Item Env:HTTP_PROXY -ErrorAction SilentlyContinue
     Remove-Item Env:HTTPS_PROXY -ErrorAction SilentlyContinue
-    Write-Output 'TELEMETRY_PRIVACY=PASS package identity and asset content are absent from the telemetry call path; local gate uses --no-telemetry.'
+
+    $commandLineSource = Get-Content -LiteralPath (Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/CommandLine.cs') -Raw
+    $telemetryCalls = [regex]::Matches($commandLineSource, '\.Track(?:Activation|Heartbeat)\s*\((?<arguments>[^)]*)\)')
+    if ($telemetryCalls.Count -ne 1 -or $telemetryCalls[0].Groups['arguments'].Value.Trim().Length -ne 0) {
+        throw 'Telemetry call path must contain exactly one argument-free activation call.'
+    }
+    $privacyText = Get-Content -LiteralPath (Join-Path $root 'PRIVACY.md') -Raw
+    foreach ($requiredText in @(
+        'https://github.com/KeelMatrix/Telemetry/blob/main/PRIVACY.md',
+        'analyzed dependency package IDs or versions',
+        'content hashes',
+        'anonymous `project_hash` and `installation_hash`')) {
+        if (-not $privacyText.Contains($requiredText, [StringComparison]::Ordinal)) {
+            throw "Product privacy contract is missing '$requiredText'."
+        }
+    }
+    Write-Output 'TELEMETRY_PRIVACY=PASS PackageSurface passes no analyzed dependency identity or content to the shared client; the shared policy documents its anonymous hash fields. Local gate uses --no-telemetry.'
 
     $timer.Stop()
     Write-Output "LOCAL_GATE=PASS"

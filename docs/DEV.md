@@ -18,7 +18,7 @@ dotnet run --project tests/KeelMatrix.PackageSurface.Probe.Tests/KeelMatrix.Pack
 pwsh -NoProfile -File scripts/run-local-gate.ps1
 ```
 
-The gate performs the controlled fixture restore, Release build, permanent corpus checks, hostile-input checks, no-code-execution and no-network proofs, package inspection, dependency audit, isolated tool smoke, and telemetry suppression checks. Record the exact command, duration, exit code, and result with the validation evidence for each completed candidate.
+The gate performs the controlled fixture restore, Release build, permanent corpus checks, hostile-input checks, no-code-execution and no-network proofs, package inspection, dependency audit, isolated tool smoke, and telemetry suppression checks. Its telemetry/privacy assertion checks that the CLI passes no analyzed dependency identity or package content to the shared client; it does not claim that the shared client omits its documented anonymous hashes. The product-specific boundary is in [PRIVACY.md](../PRIVACY.md), with shared event fields and retention in the [KeelMatrix.Telemetry privacy policy](https://github.com/KeelMatrix/Telemetry/blob/main/PRIVACY.md). Record the exact command, duration, exit code, and result with the validation evidence for each completed candidate.
 
 ## Project roles
 

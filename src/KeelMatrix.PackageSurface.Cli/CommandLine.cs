@@ -185,6 +185,11 @@ public sealed record Options(
           --telemetry on|off        Enable or disable best-effort activation telemetry.
           --no-telemetry             Disable best-effort activation telemetry.
 
+        Telemetry privacy:
+          PackageSurface passes no analyzed dependency identity or content to telemetry.
+          See https://github.com/KeelMatrix/PackageSurface/blob/main/PRIVACY.md and the
+          shared policy at https://github.com/KeelMatrix/Telemetry/blob/main/PRIVACY.md.
+
         Exit codes:
           0  Scan/baseline succeeded, or check passed.
           1  Check found a reviewed surface or policy difference.

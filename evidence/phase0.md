@@ -133,14 +133,14 @@ Raw fixture binary hashes are intentionally not recorded: compiler/packaging out
 
 ```text
 COMMAND: dotnet restore C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\BuildProps\BuildProps.csproj --configfile C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface/NuGet.config --force-evaluate
-DURATION_MS: 996
+DURATION_MS: 886
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\BuildProps\BuildProps.csproj (in 73 ms).
+  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\BuildProps\BuildProps.csproj (in 66 ms).
 
 COMMAND: dotnet pack C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\BuildProps\BuildProps.csproj --configuration Release --output C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\.phase0\feed --no-restore
-DURATION_MS: 1124
+DURATION_MS: 1089
 EXIT_CODE: 0
 OUTPUT:
   BuildProps -> C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\BuildProps\bin\Release\net8.0\BuildProps.dll
@@ -148,14 +148,14 @@ OUTPUT:
   Successfully created package 'C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\.phase0\feed\KeelMatrix.Phase0.BuildProps.1.0.0.nupkg'.
 
 COMMAND: dotnet restore C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\BuildTargets\BuildTargets.csproj --configfile C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface/NuGet.config --force-evaluate
-DURATION_MS: 973
+DURATION_MS: 870
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\BuildTargets\BuildTargets.csproj (in 69 ms).
+  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\BuildTargets\BuildTargets.csproj (in 62 ms).
 
 COMMAND: dotnet pack C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\BuildTargets\BuildTargets.csproj --configuration Release --output C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\.phase0\feed --no-restore
-DURATION_MS: 1135
+DURATION_MS: 1028
 EXIT_CODE: 0
 OUTPUT:
   BuildTargets -> C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\BuildTargets\bin\Release\net8.0\BuildTargets.dll
@@ -163,14 +163,14 @@ OUTPUT:
   Successfully created package 'C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\.phase0\feed\KeelMatrix.Phase0.BuildTargets.1.0.0.nupkg'.
 
 COMMAND: dotnet restore C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\BuildBoth\BuildBoth.csproj --configfile C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface/NuGet.config --force-evaluate
-DURATION_MS: 1063
+DURATION_MS: 844
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\BuildBoth\BuildBoth.csproj (in 79 ms).
+  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\BuildBoth\BuildBoth.csproj (in 62 ms).
 
 COMMAND: dotnet pack C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\BuildBoth\BuildBoth.csproj --configuration Release --output C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\.phase0\feed --no-restore
-DURATION_MS: 1172
+DURATION_MS: 1011
 EXIT_CODE: 0
 OUTPUT:
   BuildBoth -> C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\BuildBoth\bin\Release\net8.0\BuildBoth.dll
@@ -178,14 +178,14 @@ OUTPUT:
   Successfully created package 'C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\.phase0\feed\KeelMatrix.Phase0.BuildBoth.1.0.0.nupkg'.
 
 COMMAND: dotnet restore C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\BuildTransitive\BuildTransitive.csproj --configfile C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface/NuGet.config --force-evaluate
-DURATION_MS: 945
+DURATION_MS: 1415
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\BuildTransitive\BuildTransitive.csproj (in 67 ms).
+  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\BuildTransitive\BuildTransitive.csproj (in 146 ms).
 
 COMMAND: dotnet pack C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\BuildTransitive\BuildTransitive.csproj --configuration Release --output C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\.phase0\feed --no-restore
-DURATION_MS: 1222
+DURATION_MS: 2766
 EXIT_CODE: 0
 OUTPUT:
   BuildTransitive -> C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\BuildTransitive\bin\Release\net8.0\BuildTransitive.dll
@@ -193,137 +193,157 @@ OUTPUT:
   Successfully created package 'C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\.phase0\feed\KeelMatrix.Phase0.BuildTransitive.1.0.0.nupkg'.
 
 COMMAND: dotnet restore C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\BuildMultiTargeting\BuildMultiTargeting.csproj --configfile C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface/NuGet.config --force-evaluate
-DURATION_MS: 1043
+DURATION_MS: 3216
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\BuildMultiTargeting\BuildMultiTargeting.csproj (in 85 ms).
+  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\BuildMultiTargeting\BuildMultiTargeting.csproj (in 170 ms).
 
 COMMAND: dotnet pack C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\BuildMultiTargeting\BuildMultiTargeting.csproj --configuration Release --output C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\.phase0\feed --no-restore
-DURATION_MS: 1297
+DURATION_MS: 4036
 EXIT_CODE: 0
 OUTPUT:
   BuildMultiTargeting -> C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\BuildMultiTargeting\bin\Release\net8.0\BuildMultiTargeting.dll
+  The package KeelMatrix.Phase0.BuildMultiTargeting.1.0.0 is missing a readme. Go to https://aka.ms/nuget/authoring-best-practices/readme to learn why package readmes are important.
+  Successfully created package 'C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\.phase0\feed\KeelMatrix.Phase0.BuildMultiTargeting.1.0.0.nupkg'.
 
 COMMAND: dotnet restore C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\CompilerExtension\CompilerExtension.csproj --configfile C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface/NuGet.config --force-evaluate
-DURATION_MS: 1355
+DURATION_MS: 3168
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\CompilerExtension\CompilerExtension.csproj (in 85 ms).
+  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\CompilerExtension\CompilerExtension.csproj (in 177 ms).
 
 COMMAND: dotnet pack C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\CompilerExtension\CompilerExtension.csproj --configuration Release --output C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\.phase0\feed --no-restore
-DURATION_MS: 1374
+DURATION_MS: 3799
 EXIT_CODE: 0
 OUTPUT:
   CompilerExtension -> C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\CompilerExtension\bin\Release\net8.0\KeelMatrix.Phase0.SourceGeneratorStyle.dll
+  The package KeelMatrix.Phase0.CompilerExtension.1.0.0 is missing a readme. Go to https://aka.ms/nuget/authoring-best-practices/readme to learn why package readmes are important.
+  Successfully created package 'C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\.phase0\feed\KeelMatrix.Phase0.CompilerExtension.1.0.0.nupkg'.
 
 COMMAND: dotnet restore C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\ContentInjection\ContentInjection.csproj --configfile C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface/NuGet.config --force-evaluate
-DURATION_MS: 1147
+DURATION_MS: 2593
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\ContentInjection\ContentInjection.csproj (in 87 ms).
+  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\ContentInjection\ContentInjection.csproj (in 292 ms).
 
 COMMAND: dotnet pack C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\ContentInjection\ContentInjection.csproj --configuration Release --output C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\.phase0\feed --no-restore
-DURATION_MS: 1293
+DURATION_MS: 3310
 EXIT_CODE: 0
 OUTPUT:
   ContentInjection -> C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\ContentInjection\bin\Release\net8.0\ContentInjection.dll
+  The package KeelMatrix.Phase0.ContentInjection.1.0.0 is missing a readme. Go to https://aka.ms/nuget/authoring-best-practices/readme to learn why package readmes are important.
+  Successfully created package 'C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\.phase0\feed\KeelMatrix.Phase0.ContentInjection.1.0.0.nupkg'.
 
 COMMAND: dotnet restore C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\ManagedRuntime\ManagedRuntime.csproj --configfile C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface/NuGet.config --force-evaluate
-DURATION_MS: 1243
+DURATION_MS: 2311
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\ManagedRuntime\ManagedRuntime.csproj (in 84 ms).
+  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\ManagedRuntime\ManagedRuntime.csproj (in 143 ms).
 
 COMMAND: dotnet pack C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\ManagedRuntime\ManagedRuntime.csproj --configuration Release --output C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\.phase0\feed --no-restore
-DURATION_MS: 1589
+DURATION_MS: 2960
 EXIT_CODE: 0
 OUTPUT:
   ManagedRuntime -> C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\ManagedRuntime\bin\Release\net8.0\KeelMatrix.Phase0.ManagedRuntime.dll
+  The package KeelMatrix.Phase0.ManagedRuntime.1.0.0 is missing a readme. Go to https://aka.ms/nuget/authoring-best-practices/readme to learn why package readmes are important.
+  Successfully created package 'C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\.phase0\feed\KeelMatrix.Phase0.ManagedRuntime.1.0.0.nupkg'.
 
 COMMAND: dotnet restore C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\NativeRuntime\NativeRuntime.csproj --configfile C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface/NuGet.config --force-evaluate
-DURATION_MS: 1259
+DURATION_MS: 1280
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\NativeRuntime\NativeRuntime.csproj (in 105 ms).
+  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\NativeRuntime\NativeRuntime.csproj (in 95 ms).
 
 COMMAND: dotnet pack C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\NativeRuntime\NativeRuntime.csproj --configuration Release --output C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\.phase0\feed --no-restore
-DURATION_MS: 1423
+DURATION_MS: 1597
 EXIT_CODE: 0
 OUTPUT:
   NativeRuntime -> C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\NativeRuntime\bin\Release\net8.0\NativeRuntime.dll
+  The package KeelMatrix.Phase0.NativeRuntime.1.0.0 is missing a readme. Go to https://aka.ms/nuget/authoring-best-practices/readme to learn why package readmes are important.
+  Successfully created package 'C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\.phase0\feed\KeelMatrix.Phase0.NativeRuntime.1.0.0.nupkg'.
 
 COMMAND: dotnet restore C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\ToolScript\ToolScript.csproj --configfile C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface/NuGet.config --force-evaluate
-DURATION_MS: 1163
+DURATION_MS: 1221
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\ToolScript\ToolScript.csproj (in 102 ms).
+  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\ToolScript\ToolScript.csproj (in 84 ms).
 
 COMMAND: dotnet pack C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\ToolScript\ToolScript.csproj --configuration Release --output C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\.phase0\feed --no-restore
-DURATION_MS: 1265
+DURATION_MS: 1347
 EXIT_CODE: 0
 OUTPUT:
   ToolScript -> C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\ToolScript\bin\Release\net8.0\ToolScript.dll
+  The package KeelMatrix.Phase0.ToolScript.1.0.0 is missing a readme. Go to https://aka.ms/nuget/authoring-best-practices/readme to learn why package readmes are important.
+  Successfully created package 'C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\.phase0\feed\KeelMatrix.Phase0.ToolScript.1.0.0.nupkg'.
 
 COMMAND: dotnet restore C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\OrdinaryLibrary\OrdinaryLibrary.csproj --configfile C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface/NuGet.config --force-evaluate
-DURATION_MS: 1112
+DURATION_MS: 1315
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\OrdinaryLibrary\OrdinaryLibrary.csproj (in 87 ms).
+  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\OrdinaryLibrary\OrdinaryLibrary.csproj (in 90 ms).
 
 COMMAND: dotnet pack C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\OrdinaryLibrary\OrdinaryLibrary.csproj --configuration Release --output C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\.phase0\feed --no-restore
-DURATION_MS: 1197
+DURATION_MS: 1311
 EXIT_CODE: 0
 OUTPUT:
   OrdinaryLibrary -> C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\OrdinaryLibrary\bin\Release\net8.0\KeelMatrix.Phase0.OrdinaryLibrary.dll
+  The package KeelMatrix.Phase0.OrdinaryLibrary.1.0.0 is missing a readme. Go to https://aka.ms/nuget/authoring-best-practices/readme to learn why package readmes are important.
+  Successfully created package 'C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\.phase0\feed\KeelMatrix.Phase0.OrdinaryLibrary.1.0.0.nupkg'.
 
 COMMAND: dotnet restore C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\NativeRuntimeTransitive\NativeRuntimeTransitive.csproj --configfile C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface/NuGet.config --force-evaluate
-DURATION_MS: 986
+DURATION_MS: 1047
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\NativeRuntimeTransitive\NativeRuntimeTransitive.csproj (in 72 ms).
+  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\NativeRuntimeTransitive\NativeRuntimeTransitive.csproj (in 68 ms).
 
 COMMAND: dotnet pack C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\NativeRuntimeTransitive\NativeRuntimeTransitive.csproj --configuration Release --output C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\.phase0\feed --no-restore
-DURATION_MS: 1111
+DURATION_MS: 1321
 EXIT_CODE: 0
 OUTPUT:
   NativeRuntimeTransitive -> C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\NativeRuntimeTransitive\bin\Release\net8.0\NativeRuntimeTransitive.dll
+  The package KeelMatrix.Phase0.NativeRuntimeTransitive.1.0.0 is missing a readme. Go to https://aka.ms/nuget/authoring-best-practices/readme to learn why package readmes are important.
+  Successfully created package 'C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\.phase0\feed\KeelMatrix.Phase0.NativeRuntimeTransitive.1.0.0.nupkg'.
 
 COMMAND: dotnet restore C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\TransitiveBundle\TransitiveBundle.csproj --configfile C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface/NuGet.config --force-evaluate
-DURATION_MS: 1083
+DURATION_MS: 1682
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\TransitiveBundle\TransitiveBundle.csproj (in 166 ms).
+  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\TransitiveBundle\TransitiveBundle.csproj (in 411 ms).
 
 COMMAND: dotnet pack C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\TransitiveBundle\TransitiveBundle.csproj --configuration Release --output C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\.phase0\feed --no-restore
-DURATION_MS: 1134
+DURATION_MS: 1460
 EXIT_CODE: 0
 OUTPUT:
   TransitiveBundle -> C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\TransitiveBundle\bin\Release\net8.0\TransitiveBundle.dll
+  The package KeelMatrix.Phase0.TransitiveBundle.1.0.0 is missing a readme. Go to https://aka.ms/nuget/authoring-best-practices/readme to learn why package readmes are important.
+  Successfully created package 'C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\.phase0\feed\KeelMatrix.Phase0.TransitiveBundle.1.0.0.nupkg'.
 
 COMMAND: dotnet restore C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\TransitiveRoot\TransitiveRoot.csproj --configfile C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface/NuGet.config --force-evaluate
-DURATION_MS: 1182
+DURATION_MS: 1289
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\TransitiveRoot\TransitiveRoot.csproj (in 186 ms).
+  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\TransitiveRoot\TransitiveRoot.csproj (in 266 ms).
 
 COMMAND: dotnet pack C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\TransitiveRoot\TransitiveRoot.csproj --configuration Release --output C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\.phase0\feed --no-restore
-DURATION_MS: 1124
+DURATION_MS: 1409
 EXIT_CODE: 0
 OUTPUT:
   TransitiveRoot -> C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\packages\TransitiveRoot\bin\Release\net8.0\TransitiveRoot.dll
+  The package KeelMatrix.Phase0.TransitiveRoot.1.0.0 is missing a readme. Go to https://aka.ms/nuget/authoring-best-practices/readme to learn why package readmes are important.
+  Successfully created package 'C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\.phase0\feed\KeelMatrix.Phase0.TransitiveRoot.1.0.0.nupkg'.
 
 COMMAND: dotnet build C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\src\KeelMatrix.PackageSurface.Probe\KeelMatrix.PackageSurface.Probe.csproj --configuration Release
-DURATION_MS: 1262
+DURATION_MS: 1468
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
@@ -334,31 +354,31 @@ Build succeeded.
     0 Warning(s)
     0 Error(s)
 
-Time Elapsed 00:00:01.01
+Time Elapsed 00:00:01.19
 
 COMMAND: dotnet restore C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\consumer\SingleTarget\SingleTarget.csproj --configfile C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface/NuGet.config --force-evaluate
-DURATION_MS: 1585
+DURATION_MS: 1265
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\consumer\SingleTarget\SingleTarget.csproj (in 532 ms).
+  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\consumer\SingleTarget\SingleTarget.csproj (in 244 ms).
 
 COMMAND: dotnet restore C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\consumer\MultiTarget\MultiTarget.csproj --configfile C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface/NuGet.config --force-evaluate
-DURATION_MS: 1639
+DURATION_MS: 1341
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\consumer\MultiTarget\MultiTarget.csproj (in 215 ms).
+  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\consumer\MultiTarget\MultiTarget.csproj (in 190 ms).
 
 COMMAND: dotnet restore C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\consumer\RidTarget\RidTarget.csproj --configfile C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface/NuGet.config --force-evaluate
-DURATION_MS: 1263
+DURATION_MS: 1198
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\consumer\RidTarget\RidTarget.csproj (in 194 ms).
+  Restored C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\consumer\RidTarget\RidTarget.csproj (in 200 ms).
 
 COMMAND: dotnet build C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\tests\KeelMatrix.PackageSurface.Probe.Tests\KeelMatrix.PackageSurface.Probe.Tests.csproj --configuration Release
-DURATION_MS: 1897
+DURATION_MS: 1719
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
@@ -370,10 +390,10 @@ Build succeeded.
     0 Warning(s)
     0 Error(s)
 
-Time Elapsed 00:00:01.62
+Time Elapsed 00:00:01.44
 
 COMMAND: dotnet run --project C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\src\KeelMatrix.PackageSurface.Probe\KeelMatrix.PackageSurface.Probe.csproj --configuration Release --no-build -- C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\consumer\SingleTarget\obj\project.assets.json C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\consumer\SingleTarget
-DURATION_MS: 1054
+DURATION_MS: 1522
 EXIT_CODE: 0
 OUTPUT:
 {
@@ -699,7 +719,7 @@ OUTPUT:
 }
 
 COMMAND: dotnet run --project C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\tests\KeelMatrix.PackageSurface.Probe.Tests\KeelMatrix.PackageSurface.Probe.Tests.csproj --configuration Release --no-build -- C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\consumer\SingleTarget\obj\project.assets.json BuildProps,BuildTargets,BuildTransitive,BuildMultiTargeting,CompilerExtension,CompileSourceInjection,NativeRuntime,ToolOrScriptPresent
-DURATION_MS: 1269
+DURATION_MS: 1601
 EXIT_CODE: 0
 OUTPUT:
 condition-case unconditional import: complete=True; active=net8.0
@@ -723,7 +743,7 @@ condition-exit incomplete analysis: 2
 {"entries":21,"complete":true}
 
 COMMAND: dotnet run --project C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\src\KeelMatrix.PackageSurface.Probe\KeelMatrix.PackageSurface.Probe.csproj --configuration Release --no-build -- C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\consumer\MultiTarget\obj\project.assets.json C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\consumer\MultiTarget
-DURATION_MS: 832
+DURATION_MS: 962
 EXIT_CODE: 0
 OUTPUT:
 {
@@ -1214,7 +1234,7 @@ OUTPUT:
 }
 
 COMMAND: dotnet run --project C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\tests\KeelMatrix.PackageSurface.Probe.Tests\KeelMatrix.PackageSurface.Probe.Tests.csproj --configuration Release --no-build -- C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\consumer\MultiTarget\obj\project.assets.json BuildProps,BuildTargets,BuildTransitive,BuildMultiTargeting,CompilerExtension,CompileSourceInjection,NativeRuntime,ToolOrScriptPresent
-DURATION_MS: 1299
+DURATION_MS: 1276
 EXIT_CODE: 0
 OUTPUT:
 condition-case unconditional import: complete=True; active=net8.0,net8.0-windows7.0
@@ -1238,7 +1258,7 @@ condition-exit incomplete analysis: 2
 {"entries":32,"complete":true}
 
 COMMAND: dotnet run --project C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\src\KeelMatrix.PackageSurface.Probe\KeelMatrix.PackageSurface.Probe.csproj --configuration Release --no-build -- C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\consumer\RidTarget\obj\project.assets.json C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\consumer\RidTarget
-DURATION_MS: 747
+DURATION_MS: 880
 EXIT_CODE: 0
 OUTPUT:
 {
@@ -1729,7 +1749,7 @@ OUTPUT:
 }
 
 COMMAND: dotnet run --project C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\tests\KeelMatrix.PackageSurface.Probe.Tests\KeelMatrix.PackageSurface.Probe.Tests.csproj --configuration Release --no-build -- C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\fixtures\consumer\RidTarget\obj\project.assets.json BuildProps,BuildTargets,BuildTransitive,BuildMultiTargeting,CompilerExtension,CompileSourceInjection,NativeRuntime,ToolOrScriptPresent
-DURATION_MS: 1157
+DURATION_MS: 1175
 EXIT_CODE: 0
 OUTPUT:
 condition-case unconditional import: complete=True; active=net8.0
@@ -1753,14 +1773,14 @@ condition-exit incomplete analysis: 2
 {"entries":32,"complete":true}
 
 COMMAND: pwsh -NoProfile -File C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\scripts\verify-no-execution.ps1
-DURATION_MS: 2401
+DURATION_MS: 2775
 EXIT_CODE: 0
 OUTPUT:
 PASS: classifier assembly has no forbidden assembly, process-start, assembly-load, MSBuild, or network references.
 PASS: NUGET_PACKAGES=C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\.phase0\packages
 
 COMMAND: pwsh -NoProfile -File C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\scripts\test-history-hygiene-regressions.ps1
-DURATION_MS: 8649
+DURATION_MS: 11746
 EXIT_CODE: 0
 OUTPUT:
 CASE: git-call-failure
@@ -1793,7 +1813,7 @@ PASS: restricted-marker rejected with the expected diagnostic class 'Restricted 
 PASS: hygiene gate rejects command failure, shallow history, and a tracked restricted marker in disposable repositories.
 
 COMMAND: pwsh -NoProfile -File C:\Users\rdime\Documents\Programming\vibe\NuGet\NuGet-projects\KeelMatrix.PackageSurface\KeelMatrix.PackageSurface\scripts\test-history-hygiene.ps1
-DURATION_MS: 3429
+DURATION_MS: 5131
 EXIT_CODE: 0
 OUTPUT:
 PASS: tracked material and complete non-shallow history contain no restricted developer-coordination markers.

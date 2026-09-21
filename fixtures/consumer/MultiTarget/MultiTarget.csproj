@@ -9,5 +9,6 @@
     <PackageReference Include="KeelMatrix.Phase0.ContentInjection" Version="1.0.0" />
     <PackageReference Include="KeelMatrix.Phase0.CompilerExtension" Version="1.0.0" />
     <PackageReference Include="KeelMatrix.Phase0.OrdinaryLibrary" Version="1.0.0" />
+    <PackageReference Include="KeelMatrix.Phase0.TransitiveRoot" Version="1.0.0" />
   </ItemGroup>
 </Project>

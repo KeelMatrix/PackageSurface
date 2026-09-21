@@ -10,5 +10,7 @@
   </PropertyGroup>
   <ItemGroup>
     <None Include="content/buildMultiTargeting/KeelMatrix.Phase0.BuildMultiTargeting.targets" Pack="true" PackagePath="buildMultiTargeting/KeelMatrix.Phase0.BuildMultiTargeting.targets" />
+    <None Include="content/buildMultiTargeting/net9.0/KeelMatrix.Phase0.BuildMultiTargeting.targets" Pack="true" PackagePath="buildMultiTargeting/net9.0/KeelMatrix.Phase0.BuildMultiTargeting.targets" />
+    <None Include="content/lib/net9.0/_._" Pack="true" PackagePath="lib/net9.0/_._" />
   </ItemGroup>
 </Project>

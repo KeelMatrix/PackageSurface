@@ -26,8 +26,43 @@ if (required.Any(kind => !present.Contains(kind)))
     return 1;
 }
 
+using (var document = JsonDocument.Parse(File.ReadAllText(assets)))
+{
+    var graphTargetFrameworks = document.RootElement.GetProperty("targets")
+        .EnumerateObject()
+        .Select(target => target.Name.Split('/', 2)[0])
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    var classifiedTargetFrameworks = result.Entries
+        .Where(entry => entry.Context == SurfaceContextKind.Target)
+        .Select(entry => entry.TargetFramework)
+        .OfType<string>()
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    if (graphTargetFrameworks.Any(targetFramework => !classifiedTargetFrameworks.Contains(targetFramework)))
+    {
+        Console.Error.WriteLine("A target framework in the graph has no target-context classifier entry.");
+        return 1;
+    }
+
+    var outerTargetEntries = result.Entries.Where(entry => entry.Capability == CapabilityKind.BuildMultiTargeting).ToArray();
+    if (outerTargetEntries.Any(entry => entry.Context != SurfaceContextKind.Project || entry.TargetFramework is not null || entry.RuntimeIdentifier is not null) ||
+        outerTargetEntries.GroupBy(entry => string.Join("|", entry.PackageId, entry.Version, entry.PackageRelativePath), StringComparer.OrdinalIgnoreCase).Count() != outerTargetEntries.Length)
+    {
+        Console.Error.WriteLine("Outer-target assets were associated with a target framework or duplicated.");
+        return 1;
+    }
+
+    if (result.Entries.Any(entry => entry.Active && entry.Context == SurfaceContextKind.Target && entry.Capability == CapabilityKind.BuildMultiTargeting))
+    {
+        Console.Error.WriteLine("An outer-target asset was marked active for a target framework.");
+        return 1;
+    }
+}
+
 if (result.Entries.Any(entry => entry.Capability == CapabilityKind.ToolOrScriptPresent && entry.Active) ||
-    (required.Contains(CapabilityKind.NativeRuntime) &&
+    (assets.Contains("RidTarget", StringComparison.OrdinalIgnoreCase) &&
+     required.Contains(CapabilityKind.NativeRuntime) &&
      (!result.Entries.Any(entry => entry.Capability == CapabilityKind.NativeRuntime && entry.Active) ||
       !result.Entries.Any(entry => entry.Capability == CapabilityKind.NativeRuntime && !entry.Active))))
 {

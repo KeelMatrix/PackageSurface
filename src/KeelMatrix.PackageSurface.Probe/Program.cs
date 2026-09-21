@@ -15,7 +15,7 @@ var result = ResolvedGraphClassifier.Analyze(assetsFile, projectRoot);
 Console.WriteLine(JsonSerializer.Serialize(result, ProbeJson.Options));
 return result.IsComplete ? 0 : 2;
 
- static class ProbeJson
+static class ProbeJson
 {
-     static readonly JsonSerializerOptions Options = new() { WriteIndented = true, Converters = { new JsonStringEnumConverter() } };
+    public static readonly JsonSerializerOptions Options = new() { WriteIndented = true, Converters = { new JsonStringEnumConverter() } };
 }

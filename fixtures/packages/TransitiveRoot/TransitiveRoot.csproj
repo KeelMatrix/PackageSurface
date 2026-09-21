@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <PackageId>KeelMatrix.Phase0.TransitiveRoot</PackageId>
+    <PackageVersion>1.0.0</PackageVersion>
+    <PackageDescription>Phase 0 transitive relationship root fixture.</PackageDescription>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="KeelMatrix.Phase0.TransitiveBundle" Version="1.0.0" PrivateAssets="none" />
+  </ItemGroup>
+</Project>

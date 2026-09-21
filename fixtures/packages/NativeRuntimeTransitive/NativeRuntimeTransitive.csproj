@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <PackageId>KeelMatrix.Phase0.NativeRuntimeTransitive</PackageId>
+    <PackageVersion>1.0.0</PackageVersion>
+    <PackageDescription>Phase 0 transitive native RID fixture.</PackageDescription>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="../NativeRuntime/content/runtimes/win-x64/native/active.dll" Pack="true" PackagePath="runtimes/win-x64/native/active.dll" />
+    <None Include="../NativeRuntime/content/runtimes/linux-x64/native/inactive.so" Pack="true" PackagePath="runtimes/linux-x64/native/inactive.so" />
+  </ItemGroup>
+</Project>

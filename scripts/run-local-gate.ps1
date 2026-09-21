@@ -6,6 +6,9 @@ $artifactRoot = Join-Path $root 'artifacts/gate'
 New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('packagesurface-gate-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $scratch | Out-Null
+$solution = Join-Path $root 'KeelMatrix.PackageSurface.sln'
+$shippingPackages = Join-Path $scratch 'shipping-packages'
+$nugetConfig = Join-Path $root 'NuGet.config'
 
 function Invoke-GateStep {
     param(
@@ -61,6 +64,10 @@ function Ensure-DotnetRootForInstalledTool {
 
 try {
     $env:KEELMATRIX_TELEMETRY = 'off'
+    $env:NUGET_PACKAGES = $shippingPackages
+    Invoke-GateStep 'shipping restore' {
+        & dotnet restore $solution --configfile $nugetConfig --packages $shippingPackages --no-cache --force
+    }
     $phase0Evidence = Join-Path $root 'evidence/phase0.md'
     $phase0EvidenceCopy = Join-Path $scratch 'phase0.md'
     $hadPhase0Evidence = Test-Path -LiteralPath $phase0Evidence -PathType Leaf
@@ -79,12 +86,13 @@ try {
         elseif (Test-Path -LiteralPath $phase0Evidence) {
             Remove-Item -LiteralPath $phase0Evidence -Force
         }
+        $env:NUGET_PACKAGES = $shippingPackages
     }
     Invoke-GateStep 'format verification' {
-        & dotnet format (Join-Path $root 'KeelMatrix.PackageSurface.sln') --verify-no-changes --no-restore
+        & dotnet format $solution --verify-no-changes --no-restore
     }
     Invoke-GateStep 'Release build' {
-        & dotnet build (Join-Path $root 'KeelMatrix.PackageSurface.sln') --configuration Release --no-restore
+        & dotnet build $solution --configuration Release --no-restore
     }
     Invoke-GateStep 'no-code-execution proof' {
         & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/verify-no-execution.ps1')

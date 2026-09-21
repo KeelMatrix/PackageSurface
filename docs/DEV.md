@@ -11,14 +11,17 @@ This guide describes reproducible local validation for the repository. Consumer 
 ## Validation sequence
 
 ```powershell
-dotnet restore KeelMatrix.PackageSurface.sln --configfile NuGet.config
-dotnet format KeelMatrix.PackageSurface.sln --verify-no-changes --no-restore
-dotnet build KeelMatrix.PackageSurface.sln --configuration Release --no-restore
-dotnet run --project tests/KeelMatrix.PackageSurface.Probe.Tests/KeelMatrix.PackageSurface.Probe.Tests.csproj --configuration Release --no-build -- fixtures/consumer/SingleTarget/obj/project.assets.json BuildProps,BuildTargets,BuildTransitive,BuildMultiTargeting,CompilerExtension,CompileSourceInjection,NativeRuntime,ToolOrScriptPresent
 pwsh -NoProfile -File scripts/run-local-gate.ps1
 ```
 
-The gate performs the controlled fixture restore, Release build, permanent corpus checks, hostile-input checks, no-code-execution and no-network proofs, package inspection, dependency audit, isolated tool smoke, and telemetry suppression checks. Its telemetry/privacy assertion checks that the CLI passes no analyzed dependency identity or package content to the shared client; it does not claim that the shared client omits its documented anonymous hashes. The product-specific boundary is in [PRIVACY.md](../PRIVACY.md), with shared event fields and retention in the [KeelMatrix.Telemetry privacy policy](https://github.com/KeelMatrix/Telemetry/blob/main/PRIVACY.md). Record the exact command, duration, exit code, and result with the validation evidence for each completed candidate.
+The gate is self-contained. It first restores the shipping solution into a fresh run-owned package cache, then runs the controlled fixture restore, Release build, permanent corpus checks, hostile-input checks, no-code-execution and no-network proofs, package inspection, dependency audit, isolated tool smoke, and telemetry suppression checks. Phase 0 uses its own disposable fixture cache; it cannot delete or redirect the cache used by the shipping build and pack steps. Its telemetry/privacy assertion checks that the CLI passes no analyzed dependency identity or package content to the shared client; it does not claim that the shared client omits its documented anonymous hashes. The product-specific boundary is in [PRIVACY.md](../PRIVACY.md), with shared event fields and retention in the [KeelMatrix.Telemetry privacy policy](https://github.com/KeelMatrix/Telemetry/blob/main/PRIVACY.md). Record the exact command, duration, exit code, and result with the validation evidence for each completed candidate.
+
+For a clean cache-isolation repeat, restore the solution into a fresh run-owned cache and then invoke the same gate; the gate performs its own shipping restore as an additional cache-invariant check:
+
+```powershell
+dotnet restore KeelMatrix.PackageSurface.sln --configfile NuGet.config --packages <fresh-run-cache> --no-cache --force
+pwsh -NoLogo -NoProfile -File scripts/run-local-gate.ps1
+```
 
 On Linux/macOS, the gate derives `DOTNET_ROOT` from the `dotnet` executable when the variable is unset before invoking the installed tool apphost. This keeps the installed-tool smoke independent of whether the SDK was installed under a system path or a user-local SDK path; an existing `DOTNET_ROOT` is preserved.
 

@@ -1,6 +1,6 @@
 # Phase 0 corpus matrix
 
-Each supported capability has direct and transitive active/inactive evidence. `ToolOrScriptPresent` is intentionally informational and inactive in every row.
+Each supported capability has direct and transitive active/inactive evidence. `ToolOrScriptPresent` is intentionally informational and inactive in every row. `BuildMultiTargeting` is project-level: the generated outer-target import is direct-only under this NuGet convention, so its transitive fixture is explicitly present/inactive.
 
 | Capability | Relationship | State | Context | TFM/RID | Fixture |
 |---|---|---|---|---|---|

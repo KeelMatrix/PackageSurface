@@ -8,6 +8,7 @@
     <PackageReference Include="KeelMatrix.Phase0.BuildMultiTargeting" Version="1.0.0" />
     <PackageReference Include="KeelMatrix.Phase0.ContentInjection" Version="1.0.0" />
     <PackageReference Include="KeelMatrix.Phase0.CompilerExtension" Version="1.0.0" />
+    <PackageReference Update="KeelMatrix.Phase0.CompilerExtension" ExcludeAssets="analyzers" Condition="'$(TargetFramework)' == 'net8.0-windows'" />
     <PackageReference Include="KeelMatrix.Phase0.OrdinaryLibrary" Version="1.0.0" />
     <PackageReference Include="KeelMatrix.Phase0.TransitiveRoot" Version="1.0.0" />
   </ItemGroup>

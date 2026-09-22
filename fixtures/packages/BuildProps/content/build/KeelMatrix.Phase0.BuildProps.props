@@ -1,5 +1,8 @@
 <Project>
+  <!-- UsingTask Exec Import InlineTaskFactory: names in comments are not observations. -->
+  <UsingTask TaskName="Phase0.Noop" TaskFactory="Phase0.InlineFactory" AssemblyFile="$(MSBuildThisFileDirectory)missing-task.dll" />
   <PropertyGroup>
     <Phase0BuildProps>true</Phase0BuildProps>
+    <Phase0Description>UsingTask Exec Import InlineTaskFactory</Phase0Description>
   </PropertyGroup>
 </Project>

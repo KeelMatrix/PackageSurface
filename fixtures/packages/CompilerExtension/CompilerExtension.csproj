@@ -10,6 +10,7 @@
   </PropertyGroup>
   <ItemGroup>
     <None Include="$(TargetPath)" Pack="true" PackagePath="analyzers/dotnet/cs/KeelMatrix.Phase0.SourceGeneratorStyle.dll" Visible="false" />
+    <None Include="$(TargetPath)" Pack="true" PackagePath="analyzers/dotnet/vb/KeelMatrix.Phase0.VisualBasicOnly.dll" Visible="false" />
     <None Include="$(TargetPath)" Pack="true" PackagePath="analyzers/net9.0/KeelMatrix.Phase0.SourceGeneratorStyle.dll" Visible="false" />
   </ItemGroup>
 </Project>

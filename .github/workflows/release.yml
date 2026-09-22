@@ -1,0 +1,96 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  PACKAGE_VERSION: '0.1.0'
+
+jobs:
+  validate:
+    name: Validate and package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Validate tag, version, and finalized changelog
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".Substring(1)
+          if ($version -ne "${{ env.PACKAGE_VERSION }}") { throw 'Tag version does not match the repository package version.' }
+          ./scripts/validate-release.ps1 -Version $version -RequireFinalized
+      - name: Restore
+        run: dotnet restore KeelMatrix.PackageSurface.sln --configfile NuGet.config --force
+      - name: Release build
+        run: dotnet build KeelMatrix.PackageSurface.sln --configuration Release --no-restore
+      - name: Controlled fixture validation
+        shell: pwsh
+        run: ./scripts/run-phase0.ps1
+      - name: Console contract tests
+        run: |
+          dotnet run --project tests/KeelMatrix.PackageSurface.Cli.Tests/KeelMatrix.PackageSurface.Cli.Tests.csproj --configuration Release --no-build --no-restore
+          dotnet run --project tests/KeelMatrix.PackageSurface.Probe.Tests/KeelMatrix.PackageSurface.Probe.Tests.csproj --configuration Release --no-build --no-restore -- fixtures/consumer/SingleTarget/obj/project.assets.json BuildProps,BuildTargets,BuildTransitive,BuildMultiTargeting,CompilerExtension,CompileSourceInjection,NativeRuntime,ToolOrScriptPresent
+      - name: Installed package and artifact gate
+        shell: pwsh
+        run: ./scripts/run-local-gate.ps1
+      - name: Pack exact release artifacts
+        run: dotnet pack src/KeelMatrix.PackageSurface.Cli/KeelMatrix.PackageSurface.Cli.csproj --configuration Release --no-restore --output artifacts/release
+      - name: Validate artifact set
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem artifacts/release -File | Select-Object -ExpandProperty Name)
+          $expected = @("KeelMatrix.PackageSurface.${{ env.PACKAGE_VERSION }}.nupkg", "KeelMatrix.PackageSurface.${{ env.PACKAGE_VERSION }}.snupkg")
+          if (@(Compare-Object $expected $files).Count -ne 0) { throw "Unexpected release artifact set: $($files -join ', ')" }
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: artifacts/release/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish package
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: artifacts/release
+      - name: Authenticate to NuGet.org
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          user: dmitriyzen
+      - name: Publish package with short-lived credential
+        run: dotnet nuget push artifacts/release/KeelMatrix.PackageSurface.${{ env.PACKAGE_VERSION }}.nupkg --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json
+
+  github-release:
+    name: Create GitHub Release
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create release after successful publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" --verify-tag --generate-notes --title "${{ github.ref_name }}"

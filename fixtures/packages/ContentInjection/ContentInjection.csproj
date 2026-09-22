@@ -9,7 +9,7 @@
     <NoWarn>$(NoWarn);NU5128</NoWarn>
   </PropertyGroup>
   <ItemGroup>
-    <None Include="content/contentFiles/cs/any/Active.cs" Pack="true" PackagePath="contentFiles/cs/any/Active.cs" />
+    <Compile Update="content/contentFiles/cs/any/Active.cs" Pack="true" PackagePath="contentFiles/cs/any/Active.cs" />
     <None Include="content/contentFiles/cs/net9.0/Inactive.cs" Pack="true" PackagePath="contentFiles/cs/net9.0/Inactive.cs" />
   </ItemGroup>
 </Project>

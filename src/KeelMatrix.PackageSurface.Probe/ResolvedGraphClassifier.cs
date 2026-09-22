@@ -50,7 +50,8 @@ public static class ResolvedGraphClassifier
             var directAssetRules = ReadDirectPackageAssetRules(root);
             var targetAliases = ReadTargetAliases(root);
             var generatedImportSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var generatedImports = ReadGeneratedImports(projectRoot, incomplete, budget, generatedImportSources);
+            var expectedGeneratedImportSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var generatedImports = ReadGeneratedImports(root, projectRoot, incomplete, budget, generatedImportSources, expectedGeneratedImportSources);
             var projectLanguage = ReadProjectLanguage(root, projectRoot, incomplete);
             var entries = new List<SurfaceEntry>();
             var projectEntries = new Dictionary<string, SurfaceEntry>(StringComparer.OrdinalIgnoreCase);
@@ -173,7 +174,7 @@ public static class ResolvedGraphClassifier
                             }
                         }
 
-                        var active = IsActive(capability, relativePath, packageId, analyzerPackages, packageRoot, targetAssets, context, targetAlias, generatedImports, generatedImportSources, isMultiTargetingProject, projectLanguage, incomplete, libraryKey);
+                        var active = IsActive(capability, relativePath, packageId, analyzerPackages, packageRoot, targetAssets, context, targetAlias, generatedImports, generatedImportSources, expectedGeneratedImportSources, isMultiTargetingProject, projectLanguage, incomplete, libraryKey);
                         var sha = present && strictContent ? ComputeSha256(physicalPath, budget) : null;
                         var entry = new SurfaceEntry(
                             context == SurfaceContextKind.Project ? null : tfm,
@@ -517,9 +518,20 @@ public static class ResolvedGraphClassifier
         return Path.GetFullPath(Path.Combine(firstFolder, normalizedLibraryPath.Replace('/', Path.DirectorySeparatorChar)));
     }
 
-    private static List<GeneratedImport> ReadGeneratedImports(string projectRoot, List<string> incomplete, WorkBudget budget, HashSet<string> generatedImportSources)
+    private static List<GeneratedImport> ReadGeneratedImports(
+        JsonElement root,
+        string projectRoot,
+        List<string> incomplete,
+        WorkBudget budget,
+        HashSet<string> generatedImportSources,
+        HashSet<string> expectedGeneratedImportSources)
     {
         var result = new List<GeneratedImport>();
+        foreach (var expectedSource in GetExpectedGeneratedImportSources(root, projectRoot))
+        {
+            expectedGeneratedImportSources.Add(expectedSource);
+        }
+
         var files = new List<string>();
         foreach (var candidate in Directory.EnumerateFiles(projectRoot, "*.nuget.g.*", SearchOption.TopDirectoryOnly))
         {
@@ -636,6 +648,7 @@ public static class ResolvedGraphClassifier
         string targetFramework,
         IReadOnlyList<GeneratedImport> generatedImports,
         IReadOnlySet<string> generatedImportSources,
+        IReadOnlySet<string> expectedGeneratedImportSources,
         bool isMultiTargetingProject,
         ProjectLanguage projectLanguage,
         List<string> incomplete,
@@ -653,13 +666,18 @@ public static class ResolvedGraphClassifier
             var imported = generatedImports.Any(import =>
             {
                 var normalizedImport = NormalizeText(import.Project);
-                return (normalizedImport.Contains(fullAsset, StringComparison.OrdinalIgnoreCase) ||
+                return IsExpectedGeneratedImportSource(import.SourceFile, capability, expectedGeneratedImportSources) &&
+                       (normalizedImport.Contains(fullAsset, StringComparison.OrdinalIgnoreCase) ||
                         normalizedImport.EndsWith('/' + relativePath, StringComparison.OrdinalIgnoreCase) ||
                         normalizedImport.EndsWith('\\' + relativePath.Replace('/', '\\'), StringComparison.OrdinalIgnoreCase)) &&
                          import.AppliesTo(context, targetFramework, capability == CapabilityKind.BuildMultiTargeting);
             });
             var importSource = capability == CapabilityKind.BuildProps ? ".props" : ".targets";
-            var hasGeneratedImportSource = generatedImportSources.Any(source => source.EndsWith(importSource, StringComparison.OrdinalIgnoreCase));
+            var hasGeneratedImportSource = expectedGeneratedImportSources.Count == 0
+                ? generatedImportSources.Any(source => source.EndsWith(importSource, StringComparison.OrdinalIgnoreCase))
+                : expectedGeneratedImportSources
+                    .Where(source => source.EndsWith(importSource, StringComparison.OrdinalIgnoreCase))
+                    .Any(generatedImportSources.Contains);
             if (!imported && reachableBuildAsset && RequiresGeneratedImportEvidence(capability, relativePath, isMultiTargetingProject) && !hasGeneratedImportSource)
             {
                 incomplete.Add($"{libraryKey}: required generated NuGet import evidence is missing for {relativePath}.");
@@ -676,6 +694,48 @@ public static class ResolvedGraphClassifier
             CapabilityKind.NativeRuntime => ContainsAsset(targetAssets, "native", assetName) || ContainsAsset(targetAssets, "runtime", assetName),
             _ => false
         };
+    }
+
+    private static bool IsExpectedGeneratedImportSource(
+        string sourceFile,
+        CapabilityKind capability,
+        IReadOnlySet<string> expectedGeneratedImportSources)
+    {
+        if (expectedGeneratedImportSources.Count == 0)
+        {
+            return true;
+        }
+
+        var expectedSuffix = capability == CapabilityKind.BuildProps ? ".props" : ".targets";
+        return sourceFile.EndsWith(expectedSuffix, StringComparison.OrdinalIgnoreCase) &&
+            expectedGeneratedImportSources.Contains(sourceFile);
+    }
+
+    private static IEnumerable<string> GetExpectedGeneratedImportSources(JsonElement root, string projectRoot)
+    {
+        string? projectPath = null;
+        if (root.TryGetProperty("project", out var project) && project.ValueKind == JsonValueKind.Object &&
+            project.TryGetProperty("restore", out var restore) && restore.ValueKind == JsonValueKind.Object &&
+            restore.TryGetProperty("projectPath", out var restoredPath) && restoredPath.ValueKind == JsonValueKind.String)
+        {
+            projectPath = restoredPath.GetString();
+        }
+
+        projectPath ??= Directory.EnumerateFiles(projectRoot, "*proj", SearchOption.TopDirectoryOnly).SingleOrDefault();
+        if (string.IsNullOrWhiteSpace(projectPath))
+        {
+            yield break;
+        }
+
+        var normalizedPath = projectPath.Replace('\\', '/');
+        var fileName = normalizedPath[(normalizedPath.LastIndexOf('/') + 1)..];
+        if (fileName.Length == 0)
+        {
+            yield break;
+        }
+
+        yield return fileName + ".nuget.g.props";
+        yield return fileName + ".nuget.g.targets";
     }
 
     private static bool IsBuildCapability(CapabilityKind capability) =>

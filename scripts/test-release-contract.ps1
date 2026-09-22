@@ -9,6 +9,8 @@ try {
     [IO.File]::WriteAllText($changelog, "# Changelog`n`n## [Unreleased]`n`n- Candidate capabilities.`n")
     & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/validate-release.ps1') -Version 0.1.0 -ProjectFile $project -ChangelogPath $changelog
     if ($LASTEXITCODE -ne 0) { throw 'Unreleased candidate validation failed.' }
+    & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/validate-release.ps1') -Version 0.1.0 -RequireFinalized -ProjectFile $project -ChangelogPath $changelog 2>$null
+    if ($LASTEXITCODE -eq 0) { throw 'Tag-mode validation accepted an Unreleased changelog entry.' }
 
     $changelogText = "# Changelog`n`n## [0.1.0] - 2026-09-22`n`n- Initial release.`n"
     [IO.File]::WriteAllText($changelog, $changelogText)
@@ -18,7 +20,7 @@ try {
     [IO.File]::WriteAllText($changelog, "# Changelog`n`n## [0.2.0] - 2026-09-22`n`n- Wrong version.`n")
     & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/validate-release.ps1') -Version 0.1.0 -ProjectFile $project -ChangelogPath $changelog 2>$null
     if ($LASTEXITCODE -eq 0) { throw 'Version mismatch was accepted.' }
-    Write-Output 'PASS: release contract rejects unfinalized, finalized mismatch, and permits frontier Unreleased entries.'
+    Write-Output 'PASS: release contract rejects tag-mode Unreleased, finalized mismatch, and permits frontier Unreleased entries.'
 }
 finally {
     if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force }

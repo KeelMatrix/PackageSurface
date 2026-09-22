@@ -10,4 +10,9 @@
     <TreatWarningsAsErrors Condition="'$(Configuration)' == 'Release'">true</TreatWarningsAsErrors>
     <LangVersion>latestMajor</LangVersion>
   </PropertyGroup>
+  <Target Name="ValidateSensitivePackInputs" BeforeTargets="_IntermediatePack" Condition="'$(IsPackable)' == 'true'">
+    <Error Condition="'%(None.Extension)' == '.env' Or '%(None.Extension)' == '.user' Or '%(None.Extension)' == '.suo' Or '%(None.Extension)' == '.pfx' Or '%(None.Extension)' == '.snk' Or '%(None.Extension)' == '.key'" Text="Sensitive or machine-local file '%(None.Identity)' cannot be included in the package." />
+    <Error Condition="$([System.String]::Copy('%(None.Filename)').ToLowerInvariant()) == 'appsettings.local' Or $([System.String]::Copy('%(None.Filename)').ToLowerInvariant()) == 'secrets'" Text="Sensitive or machine-local file '%(None.Identity)' cannot be included in the package." />
+    <Error Condition="'%(Content.Extension)' == '.env' Or '%(Content.Extension)' == '.user' Or '%(Content.Extension)' == '.suo' Or '%(Content.Extension)' == '.pfx' Or '%(Content.Extension)' == '.snk' Or '%(Content.Extension)' == '.key'" Text="Sensitive or machine-local file '%(Content.Identity)' cannot be included in the package." />
+  </Target>
 </Project>

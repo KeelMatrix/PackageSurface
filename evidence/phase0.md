@@ -22,6 +22,7 @@ The probe reads only reachable entries from `project.assets.json`; it does not r
 | BuildTransitive | KeelMatrix.Phase0.BuildTransitive | direct | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | missing (expected import is absent from generated targets files) | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | CompilerExtension | KeelMatrix.Phase0.CompilerExtension | direct | Target | net8.0/- | active | active | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | CompilerExtension | KeelMatrix.Phase0.CompilerExtension | direct | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
+| CompilerExtension | KeelMatrix.Phase0.CompilerExtension | direct | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | CompileSourceInjection | KeelMatrix.Phase0.ContentInjection | direct | Target | net8.0/- | active | active | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | CompileSourceInjection | KeelMatrix.Phase0.ContentInjection | direct | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | NativeRuntime | KeelMatrix.Phase0.NativeRuntime | transitive | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
@@ -39,6 +40,7 @@ The probe reads only reachable entries from `project.assets.json`; it does not r
 | BuildTransitive | KeelMatrix.Phase0.BuildTransitive | transitive | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | missing (expected import is absent from generated targets files) | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | CompilerExtension | KeelMatrix.Phase0.CompilerExtension | direct | Target | net8.0/- | active | active | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | CompilerExtension | KeelMatrix.Phase0.CompilerExtension | direct | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
+| CompilerExtension | KeelMatrix.Phase0.CompilerExtension | direct | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | CompileSourceInjection | KeelMatrix.Phase0.ContentInjection | direct | Target | net8.0/- | active | active | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | CompileSourceInjection | KeelMatrix.Phase0.ContentInjection | direct | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | NativeRuntime | KeelMatrix.Phase0.NativeRuntime | transitive | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
@@ -52,7 +54,8 @@ The probe reads only reachable entries from `project.assets.json`; it does not r
 | BuildTargets | KeelMatrix.Phase0.BuildTargets | transitive | Target | net8.0-windows7.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | missing (expected import is absent from generated targets files) | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | BuildTransitive | KeelMatrix.Phase0.BuildTransitive | transitive | Target | net8.0-windows7.0/- | active | active | proven (reachable package/version and file in graph) | not applicable | proven (imported in MultiTarget.csproj.nuget.g.targets) | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package, generated targets |  |
 | BuildTransitive | KeelMatrix.Phase0.BuildTransitive | transitive | Target | net8.0-windows7.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | missing (expected import is absent from generated targets files) | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
-| CompilerExtension | KeelMatrix.Phase0.CompilerExtension | direct | Target | net8.0-windows7.0/- | active | active | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
+| CompilerExtension | KeelMatrix.Phase0.CompilerExtension | direct | Target | net8.0-windows7.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
+| CompilerExtension | KeelMatrix.Phase0.CompilerExtension | direct | Target | net8.0-windows7.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | CompilerExtension | KeelMatrix.Phase0.CompilerExtension | direct | Target | net8.0-windows7.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | CompileSourceInjection | KeelMatrix.Phase0.ContentInjection | direct | Target | net8.0-windows7.0/- | active | active | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | CompileSourceInjection | KeelMatrix.Phase0.ContentInjection | direct | Target | net8.0-windows7.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
@@ -71,6 +74,7 @@ The probe reads only reachable entries from `project.assets.json`; it does not r
 | BuildTransitive | KeelMatrix.Phase0.BuildTransitive | transitive | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | missing (expected import is absent from generated targets files) | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | CompilerExtension | KeelMatrix.Phase0.CompilerExtension | transitive | Target | net8.0/- | active | active | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | CompilerExtension | KeelMatrix.Phase0.CompilerExtension | transitive | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
+| CompilerExtension | KeelMatrix.Phase0.CompilerExtension | transitive | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | CompileSourceInjection | KeelMatrix.Phase0.ContentInjection | transitive | Target | net8.0/- | active | active | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | CompileSourceInjection | KeelMatrix.Phase0.ContentInjection | transitive | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | NativeRuntime | KeelMatrix.Phase0.NativeRuntime | direct | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
@@ -85,6 +89,7 @@ The probe reads only reachable entries from `project.assets.json`; it does not r
 | BuildTransitive | KeelMatrix.Phase0.BuildTransitive | transitive | Target | net8.0/win-x64 | active | active | proven (reachable package/version and file in graph) | not applicable | proven (imported in RidTarget.csproj.nuget.g.targets) | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package, generated targets |  |
 | BuildTransitive | KeelMatrix.Phase0.BuildTransitive | transitive | Target | net8.0/win-x64 | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | missing (expected import is absent from generated targets files) | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | CompilerExtension | KeelMatrix.Phase0.CompilerExtension | transitive | Target | net8.0/win-x64 | active | active | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
+| CompilerExtension | KeelMatrix.Phase0.CompilerExtension | transitive | Target | net8.0/win-x64 | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | CompilerExtension | KeelMatrix.Phase0.CompilerExtension | transitive | Target | net8.0/win-x64 | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | CompileSourceInjection | KeelMatrix.Phase0.ContentInjection | transitive | Target | net8.0/win-x64 | active | active | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | CompileSourceInjection | KeelMatrix.Phase0.ContentInjection | transitive | Target | net8.0/win-x64 | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
@@ -133,14 +138,14 @@ Raw fixture binary hashes are intentionally not recorded: compiler/packaging out
 
 ```text
 COMMAND: dotnet restore .\fixtures\packages\BuildProps\BuildProps.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1034
+DURATION_MS: 956
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\BuildProps\BuildProps.csproj (in 77 ms).
+  Restored .\fixtures\packages\BuildProps\BuildProps.csproj (in 79 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\BuildProps\BuildProps.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1232
+DURATION_MS: 988
 EXIT_CODE: 0
 OUTPUT:
   BuildProps -> .\fixtures\packages\BuildProps\bin\Release\net8.0\BuildProps.dll
@@ -148,14 +153,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.BuildProps.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\BuildTargets\BuildTargets.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1031
+DURATION_MS: 816
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\BuildTargets\BuildTargets.csproj (in 72 ms).
+  Restored .\fixtures\packages\BuildTargets\BuildTargets.csproj (in 61 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\BuildTargets\BuildTargets.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1237
+DURATION_MS: 1110
 EXIT_CODE: 0
 OUTPUT:
   BuildTargets -> .\fixtures\packages\BuildTargets\bin\Release\net8.0\BuildTargets.dll
@@ -163,14 +168,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.BuildTargets.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\BuildBoth\BuildBoth.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1011
+DURATION_MS: 1028
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\BuildBoth\BuildBoth.csproj (in 66 ms).
+  Restored .\fixtures\packages\BuildBoth\BuildBoth.csproj (in 71 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\BuildBoth\BuildBoth.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1094
+DURATION_MS: 1425
 EXIT_CODE: 0
 OUTPUT:
   BuildBoth -> .\fixtures\packages\BuildBoth\bin\Release\net8.0\BuildBoth.dll
@@ -178,14 +183,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.BuildBoth.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\BuildTransitive\BuildTransitive.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 915
+DURATION_MS: 1215
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\BuildTransitive\BuildTransitive.csproj (in 70 ms).
+  Restored .\fixtures\packages\BuildTransitive\BuildTransitive.csproj (in 80 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\BuildTransitive\BuildTransitive.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1101
+DURATION_MS: 1939
 EXIT_CODE: 0
 OUTPUT:
   BuildTransitive -> .\fixtures\packages\BuildTransitive\bin\Release\net8.0\BuildTransitive.dll
@@ -193,14 +198,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.BuildTransitive.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\BuildMultiTargeting\BuildMultiTargeting.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1081
+DURATION_MS: 1627
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\BuildMultiTargeting\BuildMultiTargeting.csproj (in 78 ms).
+  Restored .\fixtures\packages\BuildMultiTargeting\BuildMultiTargeting.csproj (in 103 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\BuildMultiTargeting\BuildMultiTargeting.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1434
+DURATION_MS: 1663
 EXIT_CODE: 0
 OUTPUT:
   BuildMultiTargeting -> .\fixtures\packages\BuildMultiTargeting\bin\Release\net8.0\BuildMultiTargeting.dll
@@ -208,14 +213,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.BuildMultiTargeting.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\CompilerExtension\CompilerExtension.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1312
+DURATION_MS: 1879
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\CompilerExtension\CompilerExtension.csproj (in 82 ms).
+  Restored .\fixtures\packages\CompilerExtension\CompilerExtension.csproj (in 89 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\CompilerExtension\CompilerExtension.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1434
+DURATION_MS: 1783
 EXIT_CODE: 0
 OUTPUT:
   CompilerExtension -> .\fixtures\packages\CompilerExtension\bin\Release\net8.0\KeelMatrix.Phase0.SourceGeneratorStyle.dll
@@ -223,14 +228,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.CompilerExtension.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\ContentInjection\ContentInjection.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 965
+DURATION_MS: 1073
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\ContentInjection\ContentInjection.csproj (in 64 ms).
+  Restored .\fixtures\packages\ContentInjection\ContentInjection.csproj (in 72 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\ContentInjection\ContentInjection.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1156
+DURATION_MS: 1154
 EXIT_CODE: 0
 OUTPUT:
   ContentInjection -> .\fixtures\packages\ContentInjection\bin\Release\net8.0\ContentInjection.dll
@@ -238,14 +243,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.ContentInjection.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\ManagedRuntime\ManagedRuntime.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 930
+DURATION_MS: 954
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\ManagedRuntime\ManagedRuntime.csproj (in 70 ms).
+  Restored .\fixtures\packages\ManagedRuntime\ManagedRuntime.csproj (in 71 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\ManagedRuntime\ManagedRuntime.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1092
+DURATION_MS: 1393
 EXIT_CODE: 0
 OUTPUT:
   ManagedRuntime -> .\fixtures\packages\ManagedRuntime\bin\Release\net8.0\KeelMatrix.Phase0.ManagedRuntime.dll
@@ -253,14 +258,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.ManagedRuntime.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\NativeRuntime\NativeRuntime.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 878
+DURATION_MS: 1276
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\NativeRuntime\NativeRuntime.csproj (in 63 ms).
+  Restored .\fixtures\packages\NativeRuntime\NativeRuntime.csproj (in 90 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\NativeRuntime\NativeRuntime.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1055
+DURATION_MS: 1293
 EXIT_CODE: 0
 OUTPUT:
   NativeRuntime -> .\fixtures\packages\NativeRuntime\bin\Release\net8.0\NativeRuntime.dll
@@ -268,14 +273,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.NativeRuntime.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\ToolScript\ToolScript.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 862
+DURATION_MS: 977
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\ToolScript\ToolScript.csproj (in 66 ms).
+  Restored .\fixtures\packages\ToolScript\ToolScript.csproj (in 67 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\ToolScript\ToolScript.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1072
+DURATION_MS: 1493
 EXIT_CODE: 0
 OUTPUT:
   ToolScript -> .\fixtures\packages\ToolScript\bin\Release\net8.0\ToolScript.dll
@@ -283,14 +288,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.ToolScript.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\OrdinaryLibrary\OrdinaryLibrary.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 884
+DURATION_MS: 913
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\OrdinaryLibrary\OrdinaryLibrary.csproj (in 65 ms).
+  Restored .\fixtures\packages\OrdinaryLibrary\OrdinaryLibrary.csproj (in 66 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\OrdinaryLibrary\OrdinaryLibrary.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1087
+DURATION_MS: 1094
 EXIT_CODE: 0
 OUTPUT:
   OrdinaryLibrary -> .\fixtures\packages\OrdinaryLibrary\bin\Release\net8.0\KeelMatrix.Phase0.OrdinaryLibrary.dll
@@ -298,14 +303,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.OrdinaryLibrary.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\NativeRuntimeTransitive\NativeRuntimeTransitive.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 853
+DURATION_MS: 984
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\NativeRuntimeTransitive\NativeRuntimeTransitive.csproj (in 63 ms).
+  Restored .\fixtures\packages\NativeRuntimeTransitive\NativeRuntimeTransitive.csproj (in 65 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\NativeRuntimeTransitive\NativeRuntimeTransitive.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1141
+DURATION_MS: 1083
 EXIT_CODE: 0
 OUTPUT:
   NativeRuntimeTransitive -> .\fixtures\packages\NativeRuntimeTransitive\bin\Release\net8.0\NativeRuntimeTransitive.dll
@@ -313,14 +318,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.NativeRuntimeTransitive.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\TransitiveBundle\TransitiveBundle.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1351
+DURATION_MS: 1135
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\TransitiveBundle\TransitiveBundle.csproj (in 348 ms).
+  Restored .\fixtures\packages\TransitiveBundle\TransitiveBundle.csproj (in 328 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\TransitiveBundle\TransitiveBundle.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1375
+DURATION_MS: 1180
 EXIT_CODE: 0
 OUTPUT:
   TransitiveBundle -> .\fixtures\packages\TransitiveBundle\bin\Release\net8.0\TransitiveBundle.dll
@@ -328,14 +333,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.TransitiveBundle.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\TransitiveRoot\TransitiveRoot.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1199
+DURATION_MS: 1391
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\TransitiveRoot\TransitiveRoot.csproj (in 311 ms).
+  Restored .\fixtures\packages\TransitiveRoot\TransitiveRoot.csproj (in 346 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\TransitiveRoot\TransitiveRoot.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1243
+DURATION_MS: 1255
 EXIT_CODE: 0
 OUTPUT:
   TransitiveRoot -> .\fixtures\packages\TransitiveRoot\bin\Release\net8.0\TransitiveRoot.dll
@@ -343,12 +348,11 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.TransitiveRoot.1.0.0.nupkg'.
 
 COMMAND: dotnet build .\src\KeelMatrix.PackageSurface.Probe\KeelMatrix.PackageSurface.Probe.csproj --configuration Release
-DURATION_MS: 1926
+DURATION_MS: 1707
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\src\KeelMatrix.PackageSurface.Core\KeelMatrix.PackageSurface.Core.csproj (in 99 ms).
-  1 of 2 projects are up-to-date for restore.
+  All projects are up-to-date for restore.
   KeelMatrix.PackageSurface.Core -> .\src\KeelMatrix.PackageSurface.Core\bin\Release\net8.0\KeelMatrix.PackageSurface.Core.dll
   KeelMatrix.PackageSurface.Probe -> .\src\KeelMatrix.PackageSurface.Probe\bin\Release\net8.0\KeelMatrix.PackageSurface.Probe.dll
 
@@ -356,45 +360,45 @@ Build succeeded.
     0 Warning(s)
     0 Error(s)
 
-Time Elapsed 00:00:01.65
+Time Elapsed 00:00:01.48
 
 COMMAND: dotnet restore .\fixtures\consumer\SingleTarget\SingleTarget.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1221
+DURATION_MS: 1118
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\consumer\SingleTarget\SingleTarget.csproj (in 338 ms).
+  Restored .\fixtures\consumer\SingleTarget\SingleTarget.csproj (in 319 ms).
 
 COMMAND: dotnet restore .\fixtures\consumer\MultiTarget\MultiTarget.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1314
+DURATION_MS: 1136
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\consumer\MultiTarget\MultiTarget.csproj (in 285 ms).
+  Restored .\fixtures\consumer\MultiTarget\MultiTarget.csproj (in 260 ms).
 
 COMMAND: dotnet restore .\fixtures\consumer\RidTarget\RidTarget.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1120
+DURATION_MS: 1056
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\consumer\RidTarget\RidTarget.csproj (in 286 ms).
+  Restored .\fixtures\consumer\RidTarget\RidTarget.csproj (in 268 ms).
 
 COMMAND: dotnet restore .\fixtures\consumer\AnalyzerExcluded\AnalyzerExcluded.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1028
+DURATION_MS: 958
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\consumer\AnalyzerExcluded\AnalyzerExcluded.csproj (in 220 ms).
+  Restored .\fixtures\consumer\AnalyzerExcluded\AnalyzerExcluded.csproj (in 198 ms).
 
 COMMAND: dotnet restore .\fixtures\consumer\AnalyzerExcludedTransitive\AnalyzerExcludedTransitive.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1197
+DURATION_MS: 998
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\consumer\AnalyzerExcludedTransitive\AnalyzerExcludedTransitive.csproj (in 300 ms).
+  Restored .\fixtures\consumer\AnalyzerExcludedTransitive\AnalyzerExcludedTransitive.csproj (in 248 ms).
 
 COMMAND: dotnet build .\tests\KeelMatrix.PackageSurface.Probe.Tests\KeelMatrix.PackageSurface.Probe.Tests.csproj --configuration Release
-DURATION_MS: 1787
+DURATION_MS: 1609
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
@@ -407,10 +411,10 @@ Build succeeded.
     0 Warning(s)
     0 Error(s)
 
-Time Elapsed 00:00:01.52
+Time Elapsed 00:00:01.38
 
 COMMAND: dotnet run --project .\src\KeelMatrix.PackageSurface.Probe\KeelMatrix.PackageSurface.Probe.csproj --configuration Release --no-build -- .\fixtures\consumer\SingleTarget\obj\project.assets.json .\fixtures\consumer\SingleTarget
-DURATION_MS: 904
+DURATION_MS: 1098
 EXIT_CODE: 0
 OUTPUT:
 {
@@ -429,7 +433,8 @@ OUTPUT:
       "Sha256": "40b734cd013c3c6ec48b6918e657735dcd64999ce7c039397cb36b2d1c5d0564",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": "net8.0",
@@ -445,7 +450,8 @@ OUTPUT:
       "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": "net8.0",
@@ -461,7 +467,8 @@ OUTPUT:
       "Sha256": "8884edf2df19dd99fc4787644731c95991d18039c59b4bba0a5e6b0b753d8b70",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": "net8.0",
@@ -477,7 +484,8 @@ OUTPUT:
       "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": "net8.0",
@@ -490,10 +498,14 @@ OUTPUT:
       "PackageRelativePath": "build/KeelMatrix.Phase0.BuildProps.props",
       "Present": true,
       "Active": true,
-      "Sha256": "db0af6ab0edb06f7a069ad9abfa54cdb41ab434ffebd150499a0e2153c1699d5",
+      "Sha256": "887735e995b1284b3cfce961211eeddc3415e40dff3e7afc3ecfd00a4a3e21be",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": [
+        "InlineTaskFactory",
+        "UsingTask"
+      ]
     },
     {
       "TargetFramework": "net8.0",
@@ -509,7 +521,8 @@ OUTPUT:
       "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": "net8.0",
@@ -522,10 +535,14 @@ OUTPUT:
       "PackageRelativePath": "build/KeelMatrix.Phase0.BuildTargets.targets",
       "Present": true,
       "Active": true,
-      "Sha256": "c202e068f459689b75cbeb6df7183ebf96e1da8b24cf40b46a4ccdb1563dc9fa",
+      "Sha256": "28fe6b546f2543b8f7fc6f5d7898396d6200af2bee00c5db9c81e321e08732ce",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": [
+        "Exec",
+        "Import"
+      ]
     },
     {
       "TargetFramework": "net8.0",
@@ -541,7 +558,8 @@ OUTPUT:
       "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": "net8.0",
@@ -557,7 +575,8 @@ OUTPUT:
       "Sha256": "cec825bcce6fd349db6074d71a5037b5dcb7b3afd9c967b2cee8589967b3817e",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": "net8.0",
@@ -573,7 +592,8 @@ OUTPUT:
       "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": "net8.0",
@@ -586,10 +606,28 @@ OUTPUT:
       "PackageRelativePath": "analyzers/dotnet/cs/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": true,
-      "Sha256": "a95be30270ff155f6d2552cb5c0ffab80c35b51ba090093cf2253b4532f0ff00",
+      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
+    },
+    {
+      "TargetFramework": "net8.0",
+      "RuntimeIdentifier": null,
+      "Context": "Target",
+      "PackageId": "KeelMatrix.Phase0.CompilerExtension",
+      "Version": "1.0.0",
+      "Relationship": "direct",
+      "Capability": "CompilerExtension",
+      "PackageRelativePath": "analyzers/dotnet/vb/KeelMatrix.Phase0.VisualBasicOnly.dll",
+      "Present": true,
+      "Active": false,
+      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
+      "Incomplete": false,
+      "IncompleteReason": null,
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -602,10 +640,11 @@ OUTPUT:
       "PackageRelativePath": "analyzers/net9.0/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "a95be30270ff155f6d2552cb5c0ffab80c35b51ba090093cf2253b4532f0ff00",
+      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -621,7 +660,8 @@ OUTPUT:
       "Sha256": "b57ce7a5f35276398b14de01fb6a391d2350aac38c2c46e0f2788dbeeed0d109",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -637,7 +677,8 @@ OUTPUT:
       "Sha256": "fc36196931f5436d6edfc6c5c868c9023ba6343777b37afbcb7c9d67da4310c3",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -653,7 +694,8 @@ OUTPUT:
       "Sha256": "7684ab6de8fcf1723cfdaad2a6740e8bee7d0aa246a71bbf54446028421ac7e2",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -669,7 +711,8 @@ OUTPUT:
       "Sha256": "90699fe43727b321e3f9552559f93d213499ae7d5f44ed18cfa5440652e53d5a",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -685,7 +728,8 @@ OUTPUT:
       "Sha256": "7684ab6de8fcf1723cfdaad2a6740e8bee7d0aa246a71bbf54446028421ac7e2",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -701,7 +745,8 @@ OUTPUT:
       "Sha256": "90699fe43727b321e3f9552559f93d213499ae7d5f44ed18cfa5440652e53d5a",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -717,7 +762,8 @@ OUTPUT:
       "Sha256": "f9261d0928c26cd0a92454e4e34d2ce9f8eda8a3c480faaa779c515bf3fa73ef",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": null,
@@ -733,7 +779,8 @@ OUTPUT:
       "Sha256": "e6698f2eee309f4b348053bd1d292574696ebc7ed140dfc32df96da7de37bff1",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": null,
@@ -749,7 +796,8 @@ OUTPUT:
       "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     }
   ],
   "IncompleteReasons": [],
@@ -758,7 +806,7 @@ OUTPUT:
 }
 
 COMMAND: dotnet run --project .\tests\KeelMatrix.PackageSurface.Probe.Tests\KeelMatrix.PackageSurface.Probe.Tests.csproj --configuration Release --no-build -- .\fixtures\consumer\SingleTarget\obj\project.assets.json BuildProps,BuildTargets,BuildTransitive,BuildMultiTargeting,CompilerExtension,CompileSourceInjection,NativeRuntime,ToolOrScriptPresent
-DURATION_MS: 1529
+DURATION_MS: 1652
 EXIT_CODE: 0
 OUTPUT:
 condition-case unconditional import: complete=True; active=net8.0
@@ -779,10 +827,10 @@ condition-case nested arbitrary condition: complete=False; active=
 condition-case unproven Exists: complete=False; active=
 condition-case empty TFM project context: complete=True; active=True
 condition-exit incomplete analysis: 2
-{"entries":21,"complete":true}
+{"entries":22,"complete":true}
 
 COMMAND: dotnet run --project .\src\KeelMatrix.PackageSurface.Probe\KeelMatrix.PackageSurface.Probe.csproj --configuration Release --no-build -- .\fixtures\consumer\MultiTarget\obj\project.assets.json .\fixtures\consumer\MultiTarget
-DURATION_MS: 698
+DURATION_MS: 677
 EXIT_CODE: 0
 OUTPUT:
 {
@@ -798,10 +846,14 @@ OUTPUT:
       "PackageRelativePath": "build/KeelMatrix.Phase0.BuildProps.props",
       "Present": true,
       "Active": true,
-      "Sha256": "db0af6ab0edb06f7a069ad9abfa54cdb41ab434ffebd150499a0e2153c1699d5",
+      "Sha256": "887735e995b1284b3cfce961211eeddc3415e40dff3e7afc3ecfd00a4a3e21be",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": [
+        "InlineTaskFactory",
+        "UsingTask"
+      ]
     },
     {
       "TargetFramework": "net8.0",
@@ -817,7 +869,8 @@ OUTPUT:
       "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": "net8.0",
@@ -830,10 +883,14 @@ OUTPUT:
       "PackageRelativePath": "build/KeelMatrix.Phase0.BuildTargets.targets",
       "Present": true,
       "Active": true,
-      "Sha256": "c202e068f459689b75cbeb6df7183ebf96e1da8b24cf40b46a4ccdb1563dc9fa",
+      "Sha256": "28fe6b546f2543b8f7fc6f5d7898396d6200af2bee00c5db9c81e321e08732ce",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": [
+        "Exec",
+        "Import"
+      ]
     },
     {
       "TargetFramework": "net8.0",
@@ -849,7 +906,8 @@ OUTPUT:
       "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": "net8.0",
@@ -865,7 +923,8 @@ OUTPUT:
       "Sha256": "cec825bcce6fd349db6074d71a5037b5dcb7b3afd9c967b2cee8589967b3817e",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": "net8.0",
@@ -881,7 +940,8 @@ OUTPUT:
       "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": "net8.0",
@@ -894,10 +954,28 @@ OUTPUT:
       "PackageRelativePath": "analyzers/dotnet/cs/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": true,
-      "Sha256": "a95be30270ff155f6d2552cb5c0ffab80c35b51ba090093cf2253b4532f0ff00",
+      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
+    },
+    {
+      "TargetFramework": "net8.0",
+      "RuntimeIdentifier": null,
+      "Context": "Target",
+      "PackageId": "KeelMatrix.Phase0.CompilerExtension",
+      "Version": "1.0.0",
+      "Relationship": "direct",
+      "Capability": "CompilerExtension",
+      "PackageRelativePath": "analyzers/dotnet/vb/KeelMatrix.Phase0.VisualBasicOnly.dll",
+      "Present": true,
+      "Active": false,
+      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
+      "Incomplete": false,
+      "IncompleteReason": null,
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -910,10 +988,11 @@ OUTPUT:
       "PackageRelativePath": "analyzers/net9.0/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "a95be30270ff155f6d2552cb5c0ffab80c35b51ba090093cf2253b4532f0ff00",
+      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -929,7 +1008,8 @@ OUTPUT:
       "Sha256": "b57ce7a5f35276398b14de01fb6a391d2350aac38c2c46e0f2788dbeeed0d109",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -945,7 +1025,8 @@ OUTPUT:
       "Sha256": "fc36196931f5436d6edfc6c5c868c9023ba6343777b37afbcb7c9d67da4310c3",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -961,7 +1042,8 @@ OUTPUT:
       "Sha256": "7684ab6de8fcf1723cfdaad2a6740e8bee7d0aa246a71bbf54446028421ac7e2",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -977,7 +1059,8 @@ OUTPUT:
       "Sha256": "90699fe43727b321e3f9552559f93d213499ae7d5f44ed18cfa5440652e53d5a",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -993,7 +1076,8 @@ OUTPUT:
       "Sha256": "7684ab6de8fcf1723cfdaad2a6740e8bee7d0aa246a71bbf54446028421ac7e2",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -1009,7 +1093,8 @@ OUTPUT:
       "Sha256": "90699fe43727b321e3f9552559f93d213499ae7d5f44ed18cfa5440652e53d5a",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -1025,7 +1110,8 @@ OUTPUT:
       "Sha256": "f9261d0928c26cd0a92454e4e34d2ce9f8eda8a3c480faaa779c515bf3fa73ef",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0-windows7.0",
@@ -1038,10 +1124,14 @@ OUTPUT:
       "PackageRelativePath": "build/KeelMatrix.Phase0.BuildProps.props",
       "Present": true,
       "Active": true,
-      "Sha256": "db0af6ab0edb06f7a069ad9abfa54cdb41ab434ffebd150499a0e2153c1699d5",
+      "Sha256": "887735e995b1284b3cfce961211eeddc3415e40dff3e7afc3ecfd00a4a3e21be",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": [
+        "InlineTaskFactory",
+        "UsingTask"
+      ]
     },
     {
       "TargetFramework": "net8.0-windows7.0",
@@ -1057,7 +1147,8 @@ OUTPUT:
       "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": "net8.0-windows7.0",
@@ -1070,10 +1161,14 @@ OUTPUT:
       "PackageRelativePath": "build/KeelMatrix.Phase0.BuildTargets.targets",
       "Present": true,
       "Active": true,
-      "Sha256": "c202e068f459689b75cbeb6df7183ebf96e1da8b24cf40b46a4ccdb1563dc9fa",
+      "Sha256": "28fe6b546f2543b8f7fc6f5d7898396d6200af2bee00c5db9c81e321e08732ce",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": [
+        "Exec",
+        "Import"
+      ]
     },
     {
       "TargetFramework": "net8.0-windows7.0",
@@ -1089,7 +1184,8 @@ OUTPUT:
       "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": "net8.0-windows7.0",
@@ -1105,7 +1201,8 @@ OUTPUT:
       "Sha256": "cec825bcce6fd349db6074d71a5037b5dcb7b3afd9c967b2cee8589967b3817e",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": "net8.0-windows7.0",
@@ -1121,7 +1218,8 @@ OUTPUT:
       "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": "net8.0-windows7.0",
@@ -1133,11 +1231,29 @@ OUTPUT:
       "Capability": "CompilerExtension",
       "PackageRelativePath": "analyzers/dotnet/cs/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
-      "Active": true,
-      "Sha256": "a95be30270ff155f6d2552cb5c0ffab80c35b51ba090093cf2253b4532f0ff00",
+      "Active": false,
+      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
+    },
+    {
+      "TargetFramework": "net8.0-windows7.0",
+      "RuntimeIdentifier": null,
+      "Context": "Target",
+      "PackageId": "KeelMatrix.Phase0.CompilerExtension",
+      "Version": "1.0.0",
+      "Relationship": "direct",
+      "Capability": "CompilerExtension",
+      "PackageRelativePath": "analyzers/dotnet/vb/KeelMatrix.Phase0.VisualBasicOnly.dll",
+      "Present": true,
+      "Active": false,
+      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
+      "Incomplete": false,
+      "IncompleteReason": null,
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0-windows7.0",
@@ -1150,10 +1266,11 @@ OUTPUT:
       "PackageRelativePath": "analyzers/net9.0/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "a95be30270ff155f6d2552cb5c0ffab80c35b51ba090093cf2253b4532f0ff00",
+      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0-windows7.0",
@@ -1169,7 +1286,8 @@ OUTPUT:
       "Sha256": "b57ce7a5f35276398b14de01fb6a391d2350aac38c2c46e0f2788dbeeed0d109",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0-windows7.0",
@@ -1185,7 +1303,8 @@ OUTPUT:
       "Sha256": "fc36196931f5436d6edfc6c5c868c9023ba6343777b37afbcb7c9d67da4310c3",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0-windows7.0",
@@ -1201,7 +1320,8 @@ OUTPUT:
       "Sha256": "7684ab6de8fcf1723cfdaad2a6740e8bee7d0aa246a71bbf54446028421ac7e2",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0-windows7.0",
@@ -1217,7 +1337,8 @@ OUTPUT:
       "Sha256": "90699fe43727b321e3f9552559f93d213499ae7d5f44ed18cfa5440652e53d5a",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0-windows7.0",
@@ -1233,7 +1354,8 @@ OUTPUT:
       "Sha256": "7684ab6de8fcf1723cfdaad2a6740e8bee7d0aa246a71bbf54446028421ac7e2",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0-windows7.0",
@@ -1249,7 +1371,8 @@ OUTPUT:
       "Sha256": "90699fe43727b321e3f9552559f93d213499ae7d5f44ed18cfa5440652e53d5a",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0-windows7.0",
@@ -1265,7 +1388,8 @@ OUTPUT:
       "Sha256": "f9261d0928c26cd0a92454e4e34d2ce9f8eda8a3c480faaa779c515bf3fa73ef",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": null,
@@ -1281,7 +1405,8 @@ OUTPUT:
       "Sha256": "e6698f2eee309f4b348053bd1d292574696ebc7ed140dfc32df96da7de37bff1",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": null,
@@ -1297,7 +1422,8 @@ OUTPUT:
       "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     }
   ],
   "IncompleteReasons": [],
@@ -1306,7 +1432,7 @@ OUTPUT:
 }
 
 COMMAND: dotnet run --project .\tests\KeelMatrix.PackageSurface.Probe.Tests\KeelMatrix.PackageSurface.Probe.Tests.csproj --configuration Release --no-build -- .\fixtures\consumer\MultiTarget\obj\project.assets.json BuildProps,BuildTargets,BuildTransitive,BuildMultiTargeting,CompilerExtension,CompileSourceInjection,NativeRuntime,ToolOrScriptPresent
-DURATION_MS: 1415
+DURATION_MS: 1443
 EXIT_CODE: 0
 OUTPUT:
 condition-case unconditional import: complete=True; active=net8.0,net8.0-windows7.0
@@ -1327,10 +1453,10 @@ condition-case nested arbitrary condition: complete=False; active=
 condition-case unproven Exists: complete=False; active=
 condition-case empty TFM project context: complete=True; active=True
 condition-exit incomplete analysis: 2
-{"entries":32,"complete":true}
+{"entries":34,"complete":true}
 
 COMMAND: dotnet run --project .\src\KeelMatrix.PackageSurface.Probe\KeelMatrix.PackageSurface.Probe.csproj --configuration Release --no-build -- .\fixtures\consumer\RidTarget\obj\project.assets.json .\fixtures\consumer\RidTarget
-DURATION_MS: 737
+DURATION_MS: 705
 EXIT_CODE: 0
 OUTPUT:
 {
@@ -1346,10 +1472,14 @@ OUTPUT:
       "PackageRelativePath": "build/KeelMatrix.Phase0.BuildProps.props",
       "Present": true,
       "Active": true,
-      "Sha256": "db0af6ab0edb06f7a069ad9abfa54cdb41ab434ffebd150499a0e2153c1699d5",
+      "Sha256": "887735e995b1284b3cfce961211eeddc3415e40dff3e7afc3ecfd00a4a3e21be",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": [
+        "InlineTaskFactory",
+        "UsingTask"
+      ]
     },
     {
       "TargetFramework": "net8.0",
@@ -1365,7 +1495,8 @@ OUTPUT:
       "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": "net8.0",
@@ -1378,10 +1509,14 @@ OUTPUT:
       "PackageRelativePath": "build/KeelMatrix.Phase0.BuildTargets.targets",
       "Present": true,
       "Active": true,
-      "Sha256": "c202e068f459689b75cbeb6df7183ebf96e1da8b24cf40b46a4ccdb1563dc9fa",
+      "Sha256": "28fe6b546f2543b8f7fc6f5d7898396d6200af2bee00c5db9c81e321e08732ce",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": [
+        "Exec",
+        "Import"
+      ]
     },
     {
       "TargetFramework": "net8.0",
@@ -1397,7 +1532,8 @@ OUTPUT:
       "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": "net8.0",
@@ -1413,7 +1549,8 @@ OUTPUT:
       "Sha256": "cec825bcce6fd349db6074d71a5037b5dcb7b3afd9c967b2cee8589967b3817e",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": "net8.0",
@@ -1429,7 +1566,8 @@ OUTPUT:
       "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": "net8.0",
@@ -1442,10 +1580,28 @@ OUTPUT:
       "PackageRelativePath": "analyzers/dotnet/cs/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": true,
-      "Sha256": "a95be30270ff155f6d2552cb5c0ffab80c35b51ba090093cf2253b4532f0ff00",
+      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
+    },
+    {
+      "TargetFramework": "net8.0",
+      "RuntimeIdentifier": null,
+      "Context": "Target",
+      "PackageId": "KeelMatrix.Phase0.CompilerExtension",
+      "Version": "1.0.0",
+      "Relationship": "transitive",
+      "Capability": "CompilerExtension",
+      "PackageRelativePath": "analyzers/dotnet/vb/KeelMatrix.Phase0.VisualBasicOnly.dll",
+      "Present": true,
+      "Active": false,
+      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
+      "Incomplete": false,
+      "IncompleteReason": null,
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -1458,10 +1614,11 @@ OUTPUT:
       "PackageRelativePath": "analyzers/net9.0/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "a95be30270ff155f6d2552cb5c0ffab80c35b51ba090093cf2253b4532f0ff00",
+      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -1477,7 +1634,8 @@ OUTPUT:
       "Sha256": "b57ce7a5f35276398b14de01fb6a391d2350aac38c2c46e0f2788dbeeed0d109",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -1493,7 +1651,8 @@ OUTPUT:
       "Sha256": "fc36196931f5436d6edfc6c5c868c9023ba6343777b37afbcb7c9d67da4310c3",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -1509,7 +1668,8 @@ OUTPUT:
       "Sha256": "7684ab6de8fcf1723cfdaad2a6740e8bee7d0aa246a71bbf54446028421ac7e2",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -1525,7 +1685,8 @@ OUTPUT:
       "Sha256": "90699fe43727b321e3f9552559f93d213499ae7d5f44ed18cfa5440652e53d5a",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -1541,7 +1702,8 @@ OUTPUT:
       "Sha256": "7684ab6de8fcf1723cfdaad2a6740e8bee7d0aa246a71bbf54446028421ac7e2",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -1557,7 +1719,8 @@ OUTPUT:
       "Sha256": "90699fe43727b321e3f9552559f93d213499ae7d5f44ed18cfa5440652e53d5a",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -1573,7 +1736,8 @@ OUTPUT:
       "Sha256": "f9261d0928c26cd0a92454e4e34d2ce9f8eda8a3c480faaa779c515bf3fa73ef",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -1586,10 +1750,14 @@ OUTPUT:
       "PackageRelativePath": "build/KeelMatrix.Phase0.BuildProps.props",
       "Present": true,
       "Active": true,
-      "Sha256": "db0af6ab0edb06f7a069ad9abfa54cdb41ab434ffebd150499a0e2153c1699d5",
+      "Sha256": "887735e995b1284b3cfce961211eeddc3415e40dff3e7afc3ecfd00a4a3e21be",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": [
+        "InlineTaskFactory",
+        "UsingTask"
+      ]
     },
     {
       "TargetFramework": "net8.0",
@@ -1605,7 +1773,8 @@ OUTPUT:
       "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": "net8.0",
@@ -1618,10 +1787,14 @@ OUTPUT:
       "PackageRelativePath": "build/KeelMatrix.Phase0.BuildTargets.targets",
       "Present": true,
       "Active": true,
-      "Sha256": "c202e068f459689b75cbeb6df7183ebf96e1da8b24cf40b46a4ccdb1563dc9fa",
+      "Sha256": "28fe6b546f2543b8f7fc6f5d7898396d6200af2bee00c5db9c81e321e08732ce",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": [
+        "Exec",
+        "Import"
+      ]
     },
     {
       "TargetFramework": "net8.0",
@@ -1637,7 +1810,8 @@ OUTPUT:
       "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": "net8.0",
@@ -1653,7 +1827,8 @@ OUTPUT:
       "Sha256": "cec825bcce6fd349db6074d71a5037b5dcb7b3afd9c967b2cee8589967b3817e",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": "net8.0",
@@ -1669,7 +1844,8 @@ OUTPUT:
       "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": "net8.0",
@@ -1682,10 +1858,28 @@ OUTPUT:
       "PackageRelativePath": "analyzers/dotnet/cs/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": true,
-      "Sha256": "a95be30270ff155f6d2552cb5c0ffab80c35b51ba090093cf2253b4532f0ff00",
+      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
+    },
+    {
+      "TargetFramework": "net8.0",
+      "RuntimeIdentifier": "win-x64",
+      "Context": "Target",
+      "PackageId": "KeelMatrix.Phase0.CompilerExtension",
+      "Version": "1.0.0",
+      "Relationship": "transitive",
+      "Capability": "CompilerExtension",
+      "PackageRelativePath": "analyzers/dotnet/vb/KeelMatrix.Phase0.VisualBasicOnly.dll",
+      "Present": true,
+      "Active": false,
+      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
+      "Incomplete": false,
+      "IncompleteReason": null,
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -1698,10 +1892,11 @@ OUTPUT:
       "PackageRelativePath": "analyzers/net9.0/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "a95be30270ff155f6d2552cb5c0ffab80c35b51ba090093cf2253b4532f0ff00",
+      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -1717,7 +1912,8 @@ OUTPUT:
       "Sha256": "b57ce7a5f35276398b14de01fb6a391d2350aac38c2c46e0f2788dbeeed0d109",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -1733,7 +1929,8 @@ OUTPUT:
       "Sha256": "fc36196931f5436d6edfc6c5c868c9023ba6343777b37afbcb7c9d67da4310c3",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -1749,7 +1946,8 @@ OUTPUT:
       "Sha256": "7684ab6de8fcf1723cfdaad2a6740e8bee7d0aa246a71bbf54446028421ac7e2",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -1765,7 +1963,8 @@ OUTPUT:
       "Sha256": "90699fe43727b321e3f9552559f93d213499ae7d5f44ed18cfa5440652e53d5a",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -1781,7 +1980,8 @@ OUTPUT:
       "Sha256": "7684ab6de8fcf1723cfdaad2a6740e8bee7d0aa246a71bbf54446028421ac7e2",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -1797,7 +1997,8 @@ OUTPUT:
       "Sha256": "90699fe43727b321e3f9552559f93d213499ae7d5f44ed18cfa5440652e53d5a",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -1813,7 +2014,8 @@ OUTPUT:
       "Sha256": "f9261d0928c26cd0a92454e4e34d2ce9f8eda8a3c480faaa779c515bf3fa73ef",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": null,
@@ -1829,7 +2031,8 @@ OUTPUT:
       "Sha256": "e6698f2eee309f4b348053bd1d292574696ebc7ed140dfc32df96da7de37bff1",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": null,
@@ -1845,7 +2048,8 @@ OUTPUT:
       "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     }
   ],
   "IncompleteReasons": [],
@@ -1854,7 +2058,7 @@ OUTPUT:
 }
 
 COMMAND: dotnet run --project .\tests\KeelMatrix.PackageSurface.Probe.Tests\KeelMatrix.PackageSurface.Probe.Tests.csproj --configuration Release --no-build -- .\fixtures\consumer\RidTarget\obj\project.assets.json BuildProps,BuildTargets,BuildTransitive,BuildMultiTargeting,CompilerExtension,CompileSourceInjection,NativeRuntime,ToolOrScriptPresent
-DURATION_MS: 1291
+DURATION_MS: 1384
 EXIT_CODE: 0
 OUTPUT:
 condition-case unconditional import: complete=True; active=net8.0
@@ -1875,10 +2079,10 @@ condition-case nested arbitrary condition: complete=False; active=
 condition-case unproven Exists: complete=False; active=
 condition-case empty TFM project context: complete=True; active=True
 condition-exit incomplete analysis: 2
-{"entries":32,"complete":true}
+{"entries":34,"complete":true}
 
 COMMAND: dotnet run --project .\src\KeelMatrix.PackageSurface.Probe\KeelMatrix.PackageSurface.Probe.csproj --configuration Release --no-build -- .\fixtures\consumer\AnalyzerExcluded\obj\project.assets.json .\fixtures\consumer\AnalyzerExcluded
-DURATION_MS: 619
+DURATION_MS: 829
 EXIT_CODE: 0
 OUTPUT:
 {
@@ -1894,10 +2098,28 @@ OUTPUT:
       "PackageRelativePath": "analyzers/dotnet/cs/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "a95be30270ff155f6d2552cb5c0ffab80c35b51ba090093cf2253b4532f0ff00",
+      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
+    },
+    {
+      "TargetFramework": "net8.0",
+      "RuntimeIdentifier": null,
+      "Context": "Target",
+      "PackageId": "KeelMatrix.Phase0.CompilerExtension",
+      "Version": "1.0.0",
+      "Relationship": "direct",
+      "Capability": "CompilerExtension",
+      "PackageRelativePath": "analyzers/dotnet/vb/KeelMatrix.Phase0.VisualBasicOnly.dll",
+      "Present": true,
+      "Active": false,
+      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
+      "Incomplete": false,
+      "IncompleteReason": null,
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -1910,10 +2132,11 @@ OUTPUT:
       "PackageRelativePath": "analyzers/net9.0/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "a95be30270ff155f6d2552cb5c0ffab80c35b51ba090093cf2253b4532f0ff00",
+      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     }
   ],
   "IncompleteReasons": [],
@@ -1922,7 +2145,7 @@ OUTPUT:
 }
 
 COMMAND: dotnet run --project .\src\KeelMatrix.PackageSurface.Probe\KeelMatrix.PackageSurface.Probe.csproj --configuration Release --no-build -- .\fixtures\consumer\AnalyzerExcludedTransitive\obj\project.assets.json .\fixtures\consumer\AnalyzerExcludedTransitive
-DURATION_MS: 659
+DURATION_MS: 794
 EXIT_CODE: 0
 OUTPUT:
 {
@@ -1938,10 +2161,14 @@ OUTPUT:
       "PackageRelativePath": "build/KeelMatrix.Phase0.BuildProps.props",
       "Present": true,
       "Active": true,
-      "Sha256": "db0af6ab0edb06f7a069ad9abfa54cdb41ab434ffebd150499a0e2153c1699d5",
+      "Sha256": "887735e995b1284b3cfce961211eeddc3415e40dff3e7afc3ecfd00a4a3e21be",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": [
+        "InlineTaskFactory",
+        "UsingTask"
+      ]
     },
     {
       "TargetFramework": "net8.0",
@@ -1957,7 +2184,8 @@ OUTPUT:
       "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": "net8.0",
@@ -1970,10 +2198,14 @@ OUTPUT:
       "PackageRelativePath": "build/KeelMatrix.Phase0.BuildTargets.targets",
       "Present": true,
       "Active": true,
-      "Sha256": "c202e068f459689b75cbeb6df7183ebf96e1da8b24cf40b46a4ccdb1563dc9fa",
+      "Sha256": "28fe6b546f2543b8f7fc6f5d7898396d6200af2bee00c5db9c81e321e08732ce",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": [
+        "Exec",
+        "Import"
+      ]
     },
     {
       "TargetFramework": "net8.0",
@@ -1989,7 +2221,8 @@ OUTPUT:
       "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": "net8.0",
@@ -2005,7 +2238,8 @@ OUTPUT:
       "Sha256": "cec825bcce6fd349db6074d71a5037b5dcb7b3afd9c967b2cee8589967b3817e",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": "net8.0",
@@ -2021,7 +2255,8 @@ OUTPUT:
       "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": "net8.0",
@@ -2034,10 +2269,28 @@ OUTPUT:
       "PackageRelativePath": "analyzers/dotnet/cs/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "a95be30270ff155f6d2552cb5c0ffab80c35b51ba090093cf2253b4532f0ff00",
+      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
+    },
+    {
+      "TargetFramework": "net8.0",
+      "RuntimeIdentifier": null,
+      "Context": "Target",
+      "PackageId": "KeelMatrix.Phase0.CompilerExtension",
+      "Version": "1.0.0",
+      "Relationship": "transitive",
+      "Capability": "CompilerExtension",
+      "PackageRelativePath": "analyzers/dotnet/vb/KeelMatrix.Phase0.VisualBasicOnly.dll",
+      "Present": true,
+      "Active": false,
+      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
+      "Incomplete": false,
+      "IncompleteReason": null,
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -2050,10 +2303,11 @@ OUTPUT:
       "PackageRelativePath": "analyzers/net9.0/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "a95be30270ff155f6d2552cb5c0ffab80c35b51ba090093cf2253b4532f0ff00",
+      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -2069,7 +2323,8 @@ OUTPUT:
       "Sha256": "b57ce7a5f35276398b14de01fb6a391d2350aac38c2c46e0f2788dbeeed0d109",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -2085,7 +2340,8 @@ OUTPUT:
       "Sha256": "fc36196931f5436d6edfc6c5c868c9023ba6343777b37afbcb7c9d67da4310c3",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -2101,7 +2357,8 @@ OUTPUT:
       "Sha256": "7684ab6de8fcf1723cfdaad2a6740e8bee7d0aa246a71bbf54446028421ac7e2",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -2117,7 +2374,8 @@ OUTPUT:
       "Sha256": "90699fe43727b321e3f9552559f93d213499ae7d5f44ed18cfa5440652e53d5a",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -2133,7 +2391,8 @@ OUTPUT:
       "Sha256": "7684ab6de8fcf1723cfdaad2a6740e8bee7d0aa246a71bbf54446028421ac7e2",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -2149,7 +2408,8 @@ OUTPUT:
       "Sha256": "90699fe43727b321e3f9552559f93d213499ae7d5f44ed18cfa5440652e53d5a",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": "net8.0",
@@ -2165,7 +2425,8 @@ OUTPUT:
       "Sha256": "f9261d0928c26cd0a92454e4e34d2ce9f8eda8a3c480faaa779c515bf3fa73ef",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": null,
@@ -2181,7 +2442,8 @@ OUTPUT:
       "Sha256": "e6698f2eee309f4b348053bd1d292574696ebc7ed140dfc32df96da7de37bff1",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     },
     {
       "TargetFramework": null,
@@ -2197,7 +2459,8 @@ OUTPUT:
       "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
       "Incomplete": false,
       "IncompleteReason": null,
-      "Project": null
+      "Project": null,
+      "ObservedPrimitives": []
     }
   ],
   "IncompleteReasons": [],
@@ -2206,56 +2469,56 @@ OUTPUT:
 }
 
 COMMAND: pwsh -NoProfile -File .\scripts\verify-no-execution.ps1
-DURATION_MS: 2240
+DURATION_MS: 2212
 EXIT_CODE: 0
 OUTPUT:
 PASS: classifier assembly has no forbidden assembly, process-start, assembly-load, MSBuild, or network references.
 PASS: NUGET_PACKAGES=.\.phase0\packages
 
 COMMAND: pwsh -NoProfile -File .\scripts\test-history-hygiene-regressions.ps1
-DURATION_MS: 6804
+DURATION_MS: 6760
 EXIT_CODE: 0
 OUTPUT:
 CASE: git-call-failure
 EXIT_CODE: 1
-DURATION_MS: 589
+DURATION_MS: 477
 PASS: git-call-failure rejected with the expected diagnostic class 'git rev-parse'.
 CASE: empty-tracked-output
 EXIT_CODE: 1
-DURATION_MS: 519
+DURATION_MS: 556
 PASS: empty-tracked-output rejected with the expected diagnostic class 'returned no required output'.
 CASE: empty-history-output
 EXIT_CODE: 1
-DURATION_MS: 468
+DURATION_MS: 532
 PASS: empty-history-output rejected with the expected diagnostic class 'returned no required output'.
 CASE: incomplete-history-output
 EXIT_CODE: 1
-DURATION_MS: 515
+DURATION_MS: 464
 PASS: incomplete-history-output rejected with the expected diagnostic class 'does not include HEAD'.
 CASE: git-grep-failure
 EXIT_CODE: 1
-DURATION_MS: 474
+DURATION_MS: 467
 PASS: git-grep-failure rejected with the expected diagnostic class 'git grep'.
 CASE: empty-log-output
 EXIT_CODE: 1
-DURATION_MS: 486
+DURATION_MS: 444
 PASS: empty-log-output rejected with the expected diagnostic class 'git log --all'.
 CASE: git-log-failure
 EXIT_CODE: 1
-DURATION_MS: 469
+DURATION_MS: 534
 PASS: git-log-failure rejected with the expected diagnostic class 'git log'.
 CASE: shallow-repository
 EXIT_CODE: 1
-DURATION_MS: 559
+DURATION_MS: 713
 PASS: shallow-repository rejected with the expected diagnostic class 'repository is shallow'.
 CASE: restricted-marker
 EXIT_CODE: 1
-DURATION_MS: 943
+DURATION_MS: 766
 PASS: restricted-marker rejected with the expected diagnostic class 'Restricted text found'.
 PASS: hygiene gate rejects command failure, shallow history, and a tracked restricted marker in disposable repositories.
 
 COMMAND: pwsh -NoProfile -File .\scripts\test-history-hygiene.ps1
-DURATION_MS: 4133
+DURATION_MS: 6190
 EXIT_CODE: 0
 OUTPUT:
 PASS: tracked material and complete non-shallow history contain no restricted developer-coordination markers.

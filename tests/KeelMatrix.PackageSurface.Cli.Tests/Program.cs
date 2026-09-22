@@ -96,6 +96,7 @@ static void RunClassifierHardeningTests()
         File.WriteAllText(Path.Combine(obj, "project.nuget.g.props"), "<Project />");
         RunAnalyzerExclusionRegression(scratch, cache, obj);
         RunMalformedAssetsShapeRegression(assets, scratch);
+        RunDiagnosticPathLeakRegression(scratch);
 
         var traversalAssets = Path.Combine(obj, "traversal.assets.json");
         var traversalFiles = new[] { "../escape.props" };
@@ -132,6 +133,40 @@ static void RunClassifierHardeningTests()
         {
             Directory.Delete(scratch, recursive: true);
         }
+    }
+}
+
+static void RunDiagnosticPathLeakRegression(string scratch)
+{
+    var marker = "HomeCacheMarker-" + Guid.NewGuid().ToString("N");
+    var root = Path.Combine(scratch, marker);
+    var obj = Path.Combine(root, "obj");
+    var cache = Path.Combine(root, "cache");
+    Directory.CreateDirectory(obj);
+    Directory.CreateDirectory(cache);
+    var assets = Path.Combine(obj, "project.assets.json");
+    WriteAssets(assets, cache, "MissingPackage", new List<string> { "build/missing.targets" });
+    var absoluteMarker = Path.GetFullPath(root);
+    foreach (var format in new[] { "text", "json", "sarif" })
+    {
+        var output = new StringWriter(CultureInfo.InvariantCulture);
+        var error = new StringWriter(CultureInfo.InvariantCulture);
+        var priorOutput = Console.Out;
+        var priorError = Console.Error;
+        try
+        {
+            Console.SetOut(output);
+            Console.SetError(error);
+            _ = CommandLine.Run(new[] { "scan", assets, "--format", format, "--no-telemetry" });
+        }
+        finally
+        {
+            Console.SetOut(priorOutput);
+            Console.SetError(priorError);
+        }
+
+        Require(!output.ToString().Contains(absoluteMarker, StringComparison.OrdinalIgnoreCase), $"{format} output disclosed an absolute cache marker.");
+        Require(!error.ToString().Contains(absoluteMarker, StringComparison.OrdinalIgnoreCase), $"{format} stderr disclosed an absolute cache marker.");
     }
 }
 

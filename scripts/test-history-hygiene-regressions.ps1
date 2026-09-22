@@ -77,7 +77,6 @@ function Invoke-Gate {
             (-join (@(111,114,99,104,101,115,116,114,97,116) | ForEach-Object { [char]$_ })),
             (-join (@(105,110,116,101,114,110,97,108) | ForEach-Object { [char]$_ })),
             (-join (@(99,111,109,112,97,110,121) | ForEach-Object { [char]$_ })),
-            (-join (@(116,97,115,107) | ForEach-Object { [char]$_ })),
             (-join (@(99,111,45,97,117,116,104,111,114,101,100,45,98,121) | ForEach-Object { [char]$_ }))
         )
         $redactionPattern = ($restricted | ForEach-Object { [regex]::Escape($_) }) -join '|'

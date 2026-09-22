@@ -27,7 +27,7 @@ PackageSurface is not a malware or vulnerability scanner. A reported capability 
 
 ## What it reports
 
-The versioned `package-surface.json` baseline records project context, TFM, RID, package identity, direct or transitive relationship, capability category, normalized package-relative asset path, and whether the asset is present and active. `--strict-content` adds SHA-256 fingerprints for classified assets; fingerprints do not include archive timestamps or machine cache paths.
+The versioned `package-surface.json` baseline records project context, TFM, RID, package identity, direct or transitive relationship, capability category, normalized package-relative asset path, and whether the asset is present and active. `--strict-content` adds SHA-256 fingerprints for every present classified asset; fingerprints do not include machine cache paths.
 
 The taxonomy is:
 
@@ -37,13 +37,19 @@ The taxonomy is:
 - `NativeRuntime` for native runtime assets applicable to a restored RID.
 - `ToolOrScriptPresent` for recognized tools or scripts that are present but are not treated as automatically active.
 
-Present and active are separate facts. Active means the resolved project/TFM/RID evidence shows applicability. Direct and transitive relationships are retained, and multi-target/RID entries are evaluated independently. Static `.props` and `.targets` inspection reports observed XML primitives such as the `Using` element, `Exec`, inline factories, and imports. These are syntax facts, not proof of execution, maliciousness, or a vulnerability; a string containing an element name alone is not enough.
+Present and active are separate facts. Active means the resolved project/TFM/RID evidence shows applicability. Direct and transitive relationships are retained, and multi-target/RID entries are evaluated independently. Static `.props` and `.targets` inspection reports observed XML primitives such as `UsingTask`, `Exec`, inline task factories, and `Import`. These are syntax facts, not proof of execution, maliciousness, or a vulnerability; comments and text containing an element name alone are not enough.
 
 ## Commands and reports
 
 Use `scan <path>` to report facts. Use `baseline <path> --output <file>` to write an approved state. Use `check <path> --baseline <file>` to compare without rewriting the baseline. Solutions, projects, directories containing an existing `obj/project.assets.json`, and individual `project.assets.json` files are supported; `--project <path>` selects one project when a solution is ambiguous.
 
 Reports support `--format text|json|sarif`. JSON and SARIF report schemas are versioned. Exit code `0` means a successful scan/baseline or passing check, `1` means a check found a surface or policy difference, and `2` means invalid invocation, missing restore artifacts, unsupported input, incomplete analysis, or an environment error. `PS007 AnalysisIncomplete` always fails closed; it is never a clean check.
+
+### Baseline contract
+
+Schema version `1` requires `schemaVersion`, `toolVersion`, `strictContent`, `entries`, and `incompleteReasons`. Each entry requires `context`, `packageId`, `version`, `relationship`, `capability`, `packageRelativePath`, `present`, `active`, `incomplete`, and a null or valid 64-character SHA-256 value. Project/TFM/RID values are nullable only where the context does not apply. Paths are package-relative and cannot be rooted or contain `..`. Null entries, incomplete markers, oversized documents, unknown schema/enum values, invalid hashes, active-but-missing assets, and incomplete baselines are rejected with controlled exit `2`.
+
+Baselines are never rewritten by `check`. Schema version `1` is the only supported version; unknown or future versions are rejected rather than upgraded. A non-strict baseline can be checked normally; `--strict-content` requests strict hashing and therefore requires a baseline that was explicitly created with `--strict-content`. A strict baseline automatically enables strict hashing even when the check command omits the flag. Recreate the baseline after reviewing a deliberate content change.
 
 The stable diagnostics are:
 
@@ -59,7 +65,7 @@ The stable diagnostics are:
 
 ## Safety and privacy
 
-The analyzer reads only packages reachable from the supplied resolved graph. It does not crawl the global package cache, access the network after restore, or execute MSBuild or package-provided build code. XML parsing prohibits DTDs and external entities. File sizes, graph size, XML depth, archive metadata, metadata inspection, and hashing work are bounded. Traversal-looking paths, unsafe links, malformed XML, corrupt metadata, and invalid compiler-extension PE metadata fail closed.
+The analyzer reads only packages reachable from the supplied resolved graph. It does not crawl the global package cache, access the network after restore, or execute MSBuild or package-provided build code. XML parsing prohibits DTDs and external entities. File sizes, graph size, XML depth, metadata inspection, and hashing work are bounded. Traversal-looking paths, unsafe links, malformed XML, corrupt metadata, and invalid compiler-extension PE metadata fail closed.
 
 Activation telemetry is best effort and occurs only after a successful baseline creation or comparison that classified at least one real resolved `PackageReference` graph. PackageSurface does not pass analyzed dependency package IDs or versions, asset names or paths, target names, TFM/RID values, MSBuild or package content, content hashes, diagnostics, baseline contents, or feed information. The shared client may emit the anonymous hashes and other fields documented in the [KeelMatrix.Telemetry privacy policy](https://github.com/KeelMatrix/Telemetry/blob/main/PRIVACY.md). Use `--telemetry off` or `--no-telemetry` to opt out. Telemetry failure cannot change analysis results. See [PRIVACY.md](PRIVACY.md) for the product-specific boundary; local validation sets telemetry off.
 
@@ -73,6 +79,7 @@ The tool targets `net8.0` and SDK-style `PackageReference` restore outputs. Wind
 - `PS007`: inspect the incomplete-analysis text, correct the restore or input, and rerun. Do not approve a baseline from incomplete material.
 - Corrupt XML, package metadata, or compiler-extension files: restore a valid package and rerun; the tool will not execute the material to recover from corruption.
 - Different TFMs or RIDs: run the check against the same project graph used for the baseline, or review the separate entries and explicitly create a new baseline after approval.
+- More than 128 projects in a directory or solution: narrow the input with `--project`; the tool returns an explicit resource-limit failure rather than silently dropping projects.
 
 ## Documentation
 

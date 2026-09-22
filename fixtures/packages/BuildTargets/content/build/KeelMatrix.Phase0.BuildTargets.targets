@@ -1,3 +1,7 @@
 <Project>
+  <Import Project="never-imported.props" Condition="'$(Phase0NeverDefined)' == 'true'" />
+  <Target Name="Phase0NeverExecuted" Condition="'$(Phase0NeverDefined)' == 'true'">
+    <Exec Command="echo never-executed" />
+  </Target>
   <Target Name="Phase0BuildTargets" BeforeTargets="CoreCompile" />
 </Project>

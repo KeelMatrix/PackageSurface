@@ -4,10 +4,11 @@ PackageSurface release history.
 
 ## [Unreleased]
 
-- Package and documentation work for the initial release is being validated.
-- Clarify the PackageSurface telemetry boundary and link the shared telemetry privacy policy.
-- Make package icon packing fail closed when the repository-root `icon.png` is absent, and validate the icon asset and metadata in the local gate.
-- Use the public `KeelMatrix.Telemetry` `0.1.0` dependency so clean public-feed restores do not depend on a local package cache.
-- Map the complete public SourceLink dependency graph, including its transitive build and hashing packages, for clean restores.
-- Make the committed local gate select the installed tool executable correctly on Windows and Linux.
-- Make the Linux/macOS installed-tool smoke derive `DOTNET_ROOT` from the active `dotnet` executable when the variable is unset, and record the exact symbols archive file set in the validation evidence.
+- Initial consumer workflow: restore normally, then run `package-surface scan`, `baseline`, and `check` against an SDK-style PackageReference project or solution.
+- Reports active build props/targets, transitive and multi-targeting imports, compiler extensions, compile-source content, native runtime assets, and informational tool/script presence without executing package code.
+- Supports text, JSON, and SARIF reports with stable `PS001`–`PS007` diagnostics and exit codes `0` (success), `1` (reviewed surface difference), and `2` (invalid or incomplete analysis).
+- `--strict-content` records SHA-256 fingerprints and requires an explicitly strict baseline; strict baselines also enforce hashing when the flag is omitted.
+- Baselines are deterministic, package-relative, bounded, versioned schema documents. Unsupported schema versions, incomplete restore evidence, unsafe paths, malformed XML, invalid hashes, and unsupported project inputs fail closed.
+- Static package `.props`/`.targets` inspection reports observed `UsingTask`, `Exec`, inline factories, and `Import` elements as syntax facts only.
+- V1 is limited to already-restored modern SDK-style PackageReference graphs; it does not restore, query feeds, execute MSBuild, load analyzers, inspect malware/vulnerabilities, or decide whether a dependency is safe.
+- Activation telemetry is best-effort and opt-out; analyzed dependency identities, paths, content, diagnostics, and baseline contents are not sent.

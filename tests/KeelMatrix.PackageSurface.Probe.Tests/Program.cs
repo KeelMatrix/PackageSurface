@@ -125,6 +125,7 @@ static void RunGeneratedImportConditionRegression(string baselineAssets)
     try
     {
         File.Copy(baselineAssets, Path.Combine(scratch, "obj", "project.assets.json"));
+        File.WriteAllText(Path.Combine(scratch, "conditions.nuget.g.targets"), "<Project />");
         AssertTarget("unconditional import", CreateImports(buildPropsImport, null, null), true, null, allTargetFrameworks);
         AssertTarget("TFM equality", CreateImports(buildPropsImport, "'$(TargetFramework)' == 'net8.0'", null), true, null, "net8.0");
         AssertTarget("TFM inequality", CreateImports(buildPropsImport, "'$(TargetFramework)' != 'net8.0'", null), true, null, nonNet8TargetFrameworks);

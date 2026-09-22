@@ -32,7 +32,8 @@ public sealed record SurfaceEntry(
     string? Sha256,
     bool Incomplete,
     string? IncompleteReason,
-    string? Project = null);
+    string? Project = null,
+    IReadOnlyList<string>? ObservedPrimitives = null);
 
 public sealed record ProbeResult(
     IReadOnlyList<SurfaceEntry> Entries,

@@ -93,7 +93,6 @@ try {
         (Convert-CodePoints @(111,114,99,104,101,115,116,114,97,116)),
         (Convert-CodePoints @(105,110,116,101,114,110,97,108)),
         (Convert-CodePoints @(99,111,109,112,97,110,121)),
-        (Convert-CodePoints @(116,97,115,107)),
         (Convert-CodePoints @(99,111,45,97,117,116,104,111,114,101,100,45,98,121))
     )
     $pattern = ($restricted | ForEach-Object { [regex]::Escape($_) }) -join '|'

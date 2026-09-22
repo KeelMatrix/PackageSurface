@@ -262,6 +262,17 @@ try {
         Invoke-GateStep 'deleted required generated imports' { & $tool check $singleProject --baseline $baselineA --format text --no-telemetry } 2
     }
     finally { Copy-Item -LiteralPath $generatedPropsBackup -Destination $generatedProps[0].FullName -Force }
+    $wrongGeneratedProps = Join-Path (Split-Path -Parent $generatedProps[0].FullName) 'Other.csproj.nuget.g.props'
+    if (Test-Path -LiteralPath $wrongGeneratedProps) { throw 'The wrong-name generated NuGet props test target already exists.' }
+    try {
+        Move-Item -LiteralPath $generatedProps[0].FullName -Destination $wrongGeneratedProps
+        [IO.File]::WriteAllText($wrongGeneratedProps, '<Project />', [Text.UTF8Encoding]::new($false))
+        Invoke-GateStep 'wrong generated import filename' { & $tool check $singleProject --baseline $baselineA --format text --no-telemetry } 2
+    }
+    finally {
+        if (Test-Path -LiteralPath $wrongGeneratedProps) { Remove-Item -LiteralPath $wrongGeneratedProps -Force }
+        Copy-Item -LiteralPath $generatedPropsBackup -Destination $generatedProps[0].FullName -Force
+    }
     $oversizedBaseline = Join-Path $scratch 'oversized-baseline.json'
     [IO.File]::WriteAllText($oversizedBaseline, ('x' * (16 * 1024 * 1024 + 1)), [Text.UTF8Encoding]::new($false))
     Invoke-GateStep 'oversized baseline' { & $tool check $singleProject --baseline $oversizedBaseline --format text --no-telemetry } 2

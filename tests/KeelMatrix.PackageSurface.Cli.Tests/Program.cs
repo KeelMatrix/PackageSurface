@@ -23,6 +23,21 @@ if (expected.Any(id => !ids.Contains(id)))
     return 1;
 }
 
+var inactiveBaseline = new[] { BaselineEntry.From(Entry(CapabilityKind.BuildProps, "build/net9.0/changed.props", "old", active: false)) };
+var inactiveCurrent = new[] { Entry(CapabilityKind.BuildProps, "build/net9.0/changed.props", "new", active: false) };
+var inactiveDiagnostics = DiffEngine.Compare(inactiveBaseline, inactiveCurrent, strictContent: true);
+if (inactiveDiagnostics.Count(diagnostic => diagnostic.Id == "PS005") != 1)
+{
+    Console.Error.WriteLine("Strict content did not report a changed present-but-inactive asset.");
+    return 1;
+}
+
+if (DiffEngine.Compare(inactiveBaseline, inactiveCurrent, strictContent: false).Any(diagnostic => diagnostic.Id == "PS005"))
+{
+    Console.Error.WriteLine("Non-strict content comparison reported a content fingerprint change.");
+    return 1;
+}
+
 var ps007 = new[] { Diagnostic.Create("PS007", "restore evidence is incomplete") };
 var incompleteReasons = new[] { "restore evidence is incomplete" };
 var incomplete = ReportDocument.Create(CommandKind.Check, new SurfaceSnapshot(Array.Empty<SurfaceEntry>(), incompleteReasons, false, 0), ps007);
@@ -44,7 +59,7 @@ RunClassifierHardeningTests();
 Console.WriteLine($"PASS: diagnostics {string.Join(", ", expected)}");
 return 0;
 
-static SurfaceEntry Entry(CapabilityKind capability, string path, string hash) => new(
+static SurfaceEntry Entry(CapabilityKind capability, string path, string hash, bool active = true, bool present = true) => new(
     "net8.0",
     capability == CapabilityKind.NativeRuntime ? "win-x64" : null,
     SurfaceContextKind.Target,
@@ -53,8 +68,8 @@ static SurfaceEntry Entry(CapabilityKind capability, string path, string hash) =
     "direct",
     capability,
     path,
-    true,
-    true,
+    present,
+    active,
     hash,
     false,
     null,

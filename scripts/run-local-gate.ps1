@@ -279,6 +279,18 @@ try {
 
     $assetsDocument = Get-Content -LiteralPath $singleAssets -Raw | ConvertFrom-Json
     $packageFolder = @($assetsDocument.packageFolders.psobject.Properties.Name | Select-Object -First 1)
+    $buildPropsLibrary = $assetsDocument.libraries.psobject.Properties['KeelMatrix.Phase0.BuildProps/1.0.0']
+    if ($null -eq $buildPropsLibrary) { throw 'The strict-content regression package is missing from the restored graph.' }
+    $inactiveAsset = Join-Path (Join-Path $packageFolder $buildPropsLibrary.Value.path) 'build/net9.0/KeelMatrix.Phase0.BuildProps.props'
+    if (-not (Test-Path -LiteralPath $inactiveAsset -PathType Leaf)) { throw "The strict-content regression asset is missing: $inactiveAsset" }
+    $inactiveAssetBackup = Join-Path $scratch 'inactive-build-props.backup'
+    Copy-Item -LiteralPath $inactiveAsset -Destination $inactiveAssetBackup -Force
+    try {
+        [IO.File]::AppendAllText($inactiveAsset, '<!-- strict-inactive-repro -->' + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+        Invoke-GateStep 'strict present-but-inactive content difference' { & $tool check $singleProject --baseline $baselineA --format text --no-telemetry } 1
+    }
+    finally { Copy-Item -LiteralPath $inactiveAssetBackup -Destination $inactiveAsset -Force }
+
     $toolLibrary = $assetsDocument.libraries.psobject.Properties['KeelMatrix.Phase0.ToolScript/1.0.0']
     $toolAsset = Join-Path (Join-Path $packageFolder $toolLibrary.Value.path) 'tools/phase0-tool.ps1'
     $toolBackup = Join-Path $scratch 'phase0-tool.ps1.backup'

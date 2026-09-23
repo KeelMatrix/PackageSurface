@@ -608,9 +608,11 @@ public static class DiffEngine
 
         if (strictContent)
         {
-            foreach (var pair in observed)
+            var approvedContent = baseline.Where(entry => entry.Present).ToDictionary(Key, StringComparer.OrdinalIgnoreCase);
+            var observedContent = current.Where(entry => entry.Present).ToDictionary(Key, StringComparer.OrdinalIgnoreCase);
+            foreach (var pair in observedContent)
             {
-                if (!approved.TryGetValue(pair.Key, out var prior) || string.Equals(prior.Sha256, pair.Value.Sha256, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!approvedContent.TryGetValue(pair.Key, out var prior) || string.Equals(prior.Sha256, pair.Value.Sha256, StringComparison.OrdinalIgnoreCase)) continue;
                 diagnostics.Add(Diagnostic.Create("PS005", $"Approved asset content changed at {pair.Value.PackageRelativePath}.", pair.Value.Project, pair.Value.PackageId, pair.Value.PackageRelativePath));
             }
         }

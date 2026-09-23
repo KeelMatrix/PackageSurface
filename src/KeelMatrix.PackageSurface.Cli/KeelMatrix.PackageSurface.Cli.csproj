@@ -28,7 +28,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\KeelMatrix.PackageSurface.Core\KeelMatrix.PackageSurface.Core.csproj" />
-    <PackageReference Include="KeelMatrix.Telemetry" Version="0.1.0" />
+    <PackageReference Include="KeelMatrix.Telemetry" Version="0.1.1" />
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.401" PrivateAssets="All" />
   </ItemGroup>
   <ItemGroup>

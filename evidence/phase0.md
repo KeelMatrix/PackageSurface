@@ -19,6 +19,8 @@ The probe reads only reachable entries from `project.assets.json`; it does not r
 | BuildTargets | KeelMatrix.Phase0.BuildTargets | direct | Target | net8.0/- | active | active | proven (reachable package/version and file in graph) | not applicable | proven (imported in SingleTarget.csproj.nuget.g.targets) | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package, generated targets |  |
 | BuildTargets | KeelMatrix.Phase0.BuildTargets | direct | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | missing (expected import is absent from generated targets files) | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | BuildTransitive | KeelMatrix.Phase0.BuildTransitive | direct | Target | net8.0/- | active | active | proven (reachable package/version and file in graph) | not applicable | proven (imported in SingleTarget.csproj.nuget.g.targets) | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package, generated targets |  |
+| BuildTransitive | KeelMatrix.Phase0.BuildTransitive | direct | Target | net8.0/- | active | active | proven (reachable package/version and file in graph) | proven (imported in SingleTarget.csproj.nuget.g.props) | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package, generated props |  |
+| BuildTransitive | KeelMatrix.Phase0.BuildTransitive | direct | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | missing (expected import is absent from generated props files) | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | BuildTransitive | KeelMatrix.Phase0.BuildTransitive | direct | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | missing (expected import is absent from generated targets files) | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | CompilerExtension | KeelMatrix.Phase0.CompilerExtension | direct | Target | net8.0/- | active | active | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | CompilerExtension | KeelMatrix.Phase0.CompilerExtension | direct | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
@@ -31,13 +33,19 @@ The probe reads only reachable entries from `project.assets.json`; it does not r
 | NativeRuntime | KeelMatrix.Phase0.NativeRuntimeTransitive | transitive | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | ToolOrScriptPresent | KeelMatrix.Phase0.ToolScript | direct | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | BuildMultiTargeting | KeelMatrix.Phase0.BuildMultiTargeting | transitive | Project | -/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | missing (expected import is absent from generated targets files) | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
+| BuildMultiTargeting | KeelMatrix.Phase0.BuildMultiTargeting | transitive | Project | -/- | inactive | inactive | proven (reachable package/version and file in graph) | missing (expected import is absent from generated props files) | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
+| BuildMultiTargeting | KeelMatrix.Phase0.BuildMultiTargeting | transitive | Project | -/- | inactive | inactive | proven (reachable package/version and file in graph) | missing (expected import is absent from generated props files) | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | BuildMultiTargeting | KeelMatrix.Phase0.BuildMultiTargeting | transitive | Project | -/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | missing (expected import is absent from generated targets files) | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | BuildProps | KeelMatrix.Phase0.BuildProps | transitive | Target | net8.0/- | active | active | proven (reachable package/version and file in graph) | proven (imported in MultiTarget.csproj.nuget.g.props) | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package, generated props |  |
 | BuildProps | KeelMatrix.Phase0.BuildProps | transitive | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | missing (expected import is absent from generated props files) | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | BuildTargets | KeelMatrix.Phase0.BuildTargets | transitive | Target | net8.0/- | active | active | proven (reachable package/version and file in graph) | not applicable | proven (imported in MultiTarget.csproj.nuget.g.targets) | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package, generated targets |  |
 | BuildTargets | KeelMatrix.Phase0.BuildTargets | transitive | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | missing (expected import is absent from generated targets files) | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | BuildTransitive | KeelMatrix.Phase0.BuildTransitive | transitive | Target | net8.0/- | active | active | proven (reachable package/version and file in graph) | not applicable | proven (imported in MultiTarget.csproj.nuget.g.targets) | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package, generated targets |  |
+| BuildTransitive | KeelMatrix.Phase0.BuildTransitive | transitive | Target | net8.0/- | active | active | proven (reachable package/version and file in graph) | proven (imported in MultiTarget.csproj.nuget.g.props) | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package, generated props |  |
+| BuildTransitive | KeelMatrix.Phase0.BuildTransitive | transitive | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | missing (expected import is absent from generated props files) | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | BuildTransitive | KeelMatrix.Phase0.BuildTransitive | transitive | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | missing (expected import is absent from generated targets files) | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
+| BuildTransitive | KeelMatrix.Phase0.BuildTransitive | transitive | Target | net8.0-windows7.0/- | active | active | proven (reachable package/version and file in graph) | proven (imported in MultiTarget.csproj.nuget.g.props) | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package, generated props |  |
+| BuildTransitive | KeelMatrix.Phase0.BuildTransitive | transitive | Target | net8.0-windows7.0/- | inactive | inactive | proven (reachable package/version and file in graph) | missing (expected import is absent from generated props files) | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | CompilerExtension | KeelMatrix.Phase0.CompilerExtension | direct | Target | net8.0/- | active | active | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | CompilerExtension | KeelMatrix.Phase0.CompilerExtension | direct | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | CompilerExtension | KeelMatrix.Phase0.CompilerExtension | direct | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
@@ -65,13 +73,19 @@ The probe reads only reachable entries from `project.assets.json`; it does not r
 | NativeRuntime | KeelMatrix.Phase0.NativeRuntimeTransitive | transitive | Target | net8.0-windows7.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | ToolOrScriptPresent | KeelMatrix.Phase0.ToolScript | transitive | Target | net8.0-windows7.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | BuildMultiTargeting | KeelMatrix.Phase0.BuildMultiTargeting | direct | Project | -/- | active | active | proven (reachable package/version and file in graph) | not applicable | proven (imported in MultiTarget.csproj.nuget.g.targets) | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package, generated targets |  |
+| BuildMultiTargeting | KeelMatrix.Phase0.BuildMultiTargeting | direct | Project | -/- | active | active | proven (reachable package/version and file in graph) | proven (imported in MultiTarget.csproj.nuget.g.props) | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package, generated props |  |
+| BuildMultiTargeting | KeelMatrix.Phase0.BuildMultiTargeting | direct | Project | -/- | inactive | inactive | proven (reachable package/version and file in graph) | missing (expected import is absent from generated props files) | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | BuildMultiTargeting | KeelMatrix.Phase0.BuildMultiTargeting | direct | Project | -/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | missing (expected import is absent from generated targets files) | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | BuildProps | KeelMatrix.Phase0.BuildProps | transitive | Target | net8.0/- | active | active | proven (reachable package/version and file in graph) | proven (imported in RidTarget.csproj.nuget.g.props) | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package, generated props |  |
 | BuildProps | KeelMatrix.Phase0.BuildProps | transitive | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | missing (expected import is absent from generated props files) | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | BuildTargets | KeelMatrix.Phase0.BuildTargets | transitive | Target | net8.0/- | active | active | proven (reachable package/version and file in graph) | not applicable | proven (imported in RidTarget.csproj.nuget.g.targets) | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package, generated targets |  |
 | BuildTargets | KeelMatrix.Phase0.BuildTargets | transitive | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | missing (expected import is absent from generated targets files) | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | BuildTransitive | KeelMatrix.Phase0.BuildTransitive | transitive | Target | net8.0/- | active | active | proven (reachable package/version and file in graph) | not applicable | proven (imported in RidTarget.csproj.nuget.g.targets) | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package, generated targets |  |
+| BuildTransitive | KeelMatrix.Phase0.BuildTransitive | transitive | Target | net8.0/- | active | active | proven (reachable package/version and file in graph) | proven (imported in RidTarget.csproj.nuget.g.props) | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package, generated props |  |
+| BuildTransitive | KeelMatrix.Phase0.BuildTransitive | transitive | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | missing (expected import is absent from generated props files) | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | BuildTransitive | KeelMatrix.Phase0.BuildTransitive | transitive | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | missing (expected import is absent from generated targets files) | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
+| BuildTransitive | KeelMatrix.Phase0.BuildTransitive | transitive | Target | net8.0/win-x64 | active | active | proven (reachable package/version and file in graph) | proven (imported in RidTarget.csproj.nuget.g.props) | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package, generated props |  |
+| BuildTransitive | KeelMatrix.Phase0.BuildTransitive | transitive | Target | net8.0/win-x64 | inactive | inactive | proven (reachable package/version and file in graph) | missing (expected import is absent from generated props files) | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | CompilerExtension | KeelMatrix.Phase0.CompilerExtension | transitive | Target | net8.0/- | active | active | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | CompilerExtension | KeelMatrix.Phase0.CompilerExtension | transitive | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | CompilerExtension | KeelMatrix.Phase0.CompilerExtension | transitive | Target | net8.0/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
@@ -99,6 +113,8 @@ The probe reads only reachable entries from `project.assets.json`; it does not r
 | NativeRuntime | KeelMatrix.Phase0.NativeRuntimeTransitive | transitive | Target | net8.0/win-x64 | active | active | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | ToolOrScriptPresent | KeelMatrix.Phase0.ToolScript | transitive | Target | net8.0/win-x64 | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | BuildMultiTargeting | KeelMatrix.Phase0.BuildMultiTargeting | transitive | Project | -/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | missing (expected import is absent from generated targets files) | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
+| BuildMultiTargeting | KeelMatrix.Phase0.BuildMultiTargeting | transitive | Project | -/- | inactive | inactive | proven (reachable package/version and file in graph) | missing (expected import is absent from generated props files) | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
+| BuildMultiTargeting | KeelMatrix.Phase0.BuildMultiTargeting | transitive | Project | -/- | inactive | inactive | proven (reachable package/version and file in graph) | missing (expected import is absent from generated props files) | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | BuildMultiTargeting | KeelMatrix.Phase0.BuildMultiTargeting | transitive | Project | -/- | inactive | inactive | proven (reachable package/version and file in graph) | not applicable | missing (expected import is absent from generated targets files) | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | classifier, assets, package |  |
 | ManagedRuntime | KeelMatrix.Phase0.ManagedRuntime | direct | Target | net8.0/- | absent | not applicable | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | assets, package |  |
 | ManagedRuntime | KeelMatrix.Phase0.ManagedRuntime | direct | Target | net8.0/- | absent | not applicable | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | assets, package |  |
@@ -138,14 +154,14 @@ Raw fixture binary hashes are intentionally not recorded: compiler/packaging out
 
 ```text
 COMMAND: dotnet restore .\fixtures\packages\BuildProps\BuildProps.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 956
+DURATION_MS: 1037
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\BuildProps\BuildProps.csproj (in 79 ms).
+  Restored .\fixtures\packages\BuildProps\BuildProps.csproj (in 70 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\BuildProps\BuildProps.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 988
+DURATION_MS: 1561
 EXIT_CODE: 0
 OUTPUT:
   BuildProps -> .\fixtures\packages\BuildProps\bin\Release\net8.0\BuildProps.dll
@@ -153,14 +169,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.BuildProps.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\BuildTargets\BuildTargets.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 816
+DURATION_MS: 1141
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\BuildTargets\BuildTargets.csproj (in 61 ms).
+  Restored .\fixtures\packages\BuildTargets\BuildTargets.csproj (in 81 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\BuildTargets\BuildTargets.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1110
+DURATION_MS: 1124
 EXIT_CODE: 0
 OUTPUT:
   BuildTargets -> .\fixtures\packages\BuildTargets\bin\Release\net8.0\BuildTargets.dll
@@ -168,14 +184,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.BuildTargets.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\BuildBoth\BuildBoth.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1028
+DURATION_MS: 959
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\BuildBoth\BuildBoth.csproj (in 71 ms).
+  Restored .\fixtures\packages\BuildBoth\BuildBoth.csproj (in 79 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\BuildBoth\BuildBoth.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1425
+DURATION_MS: 1266
 EXIT_CODE: 0
 OUTPUT:
   BuildBoth -> .\fixtures\packages\BuildBoth\bin\Release\net8.0\BuildBoth.dll
@@ -183,14 +199,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.BuildBoth.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\BuildTransitive\BuildTransitive.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1215
+DURATION_MS: 879
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\BuildTransitive\BuildTransitive.csproj (in 80 ms).
+  Restored .\fixtures\packages\BuildTransitive\BuildTransitive.csproj (in 64 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\BuildTransitive\BuildTransitive.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1939
+DURATION_MS: 1026
 EXIT_CODE: 0
 OUTPUT:
   BuildTransitive -> .\fixtures\packages\BuildTransitive\bin\Release\net8.0\BuildTransitive.dll
@@ -198,14 +214,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.BuildTransitive.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\BuildMultiTargeting\BuildMultiTargeting.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1627
+DURATION_MS: 816
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\BuildMultiTargeting\BuildMultiTargeting.csproj (in 103 ms).
+  Restored .\fixtures\packages\BuildMultiTargeting\BuildMultiTargeting.csproj (in 57 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\BuildMultiTargeting\BuildMultiTargeting.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1663
+DURATION_MS: 999
 EXIT_CODE: 0
 OUTPUT:
   BuildMultiTargeting -> .\fixtures\packages\BuildMultiTargeting\bin\Release\net8.0\BuildMultiTargeting.dll
@@ -213,14 +229,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.BuildMultiTargeting.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\CompilerExtension\CompilerExtension.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1879
+DURATION_MS: 942
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\CompilerExtension\CompilerExtension.csproj (in 89 ms).
+  Restored .\fixtures\packages\CompilerExtension\CompilerExtension.csproj (in 61 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\CompilerExtension\CompilerExtension.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1783
+DURATION_MS: 965
 EXIT_CODE: 0
 OUTPUT:
   CompilerExtension -> .\fixtures\packages\CompilerExtension\bin\Release\net8.0\KeelMatrix.Phase0.SourceGeneratorStyle.dll
@@ -228,14 +244,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.CompilerExtension.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\ContentInjection\ContentInjection.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1073
+DURATION_MS: 776
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\ContentInjection\ContentInjection.csproj (in 72 ms).
+  Restored .\fixtures\packages\ContentInjection\ContentInjection.csproj (in 56 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\ContentInjection\ContentInjection.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1154
+DURATION_MS: 1095
 EXIT_CODE: 0
 OUTPUT:
   ContentInjection -> .\fixtures\packages\ContentInjection\bin\Release\net8.0\ContentInjection.dll
@@ -243,14 +259,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.ContentInjection.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\ManagedRuntime\ManagedRuntime.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 954
+DURATION_MS: 792
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\ManagedRuntime\ManagedRuntime.csproj (in 71 ms).
+  Restored .\fixtures\packages\ManagedRuntime\ManagedRuntime.csproj (in 58 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\ManagedRuntime\ManagedRuntime.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1393
+DURATION_MS: 943
 EXIT_CODE: 0
 OUTPUT:
   ManagedRuntime -> .\fixtures\packages\ManagedRuntime\bin\Release\net8.0\KeelMatrix.Phase0.ManagedRuntime.dll
@@ -258,14 +274,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.ManagedRuntime.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\NativeRuntime\NativeRuntime.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1276
+DURATION_MS: 900
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\NativeRuntime\NativeRuntime.csproj (in 90 ms).
+  Restored .\fixtures\packages\NativeRuntime\NativeRuntime.csproj (in 87 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\NativeRuntime\NativeRuntime.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1293
+DURATION_MS: 1157
 EXIT_CODE: 0
 OUTPUT:
   NativeRuntime -> .\fixtures\packages\NativeRuntime\bin\Release\net8.0\NativeRuntime.dll
@@ -273,14 +289,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.NativeRuntime.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\ToolScript\ToolScript.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 977
+DURATION_MS: 784
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\ToolScript\ToolScript.csproj (in 67 ms).
+  Restored .\fixtures\packages\ToolScript\ToolScript.csproj (in 57 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\ToolScript\ToolScript.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1493
+DURATION_MS: 1069
 EXIT_CODE: 0
 OUTPUT:
   ToolScript -> .\fixtures\packages\ToolScript\bin\Release\net8.0\ToolScript.dll
@@ -288,14 +304,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.ToolScript.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\OrdinaryLibrary\OrdinaryLibrary.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 913
+DURATION_MS: 924
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\OrdinaryLibrary\OrdinaryLibrary.csproj (in 66 ms).
+  Restored .\fixtures\packages\OrdinaryLibrary\OrdinaryLibrary.csproj (in 64 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\OrdinaryLibrary\OrdinaryLibrary.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1094
+DURATION_MS: 1183
 EXIT_CODE: 0
 OUTPUT:
   OrdinaryLibrary -> .\fixtures\packages\OrdinaryLibrary\bin\Release\net8.0\KeelMatrix.Phase0.OrdinaryLibrary.dll
@@ -303,14 +319,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.OrdinaryLibrary.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\NativeRuntimeTransitive\NativeRuntimeTransitive.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 984
+DURATION_MS: 779
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\NativeRuntimeTransitive\NativeRuntimeTransitive.csproj (in 65 ms).
+  Restored .\fixtures\packages\NativeRuntimeTransitive\NativeRuntimeTransitive.csproj (in 56 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\NativeRuntimeTransitive\NativeRuntimeTransitive.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1083
+DURATION_MS: 895
 EXIT_CODE: 0
 OUTPUT:
   NativeRuntimeTransitive -> .\fixtures\packages\NativeRuntimeTransitive\bin\Release\net8.0\NativeRuntimeTransitive.dll
@@ -318,14 +334,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.NativeRuntimeTransitive.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\TransitiveBundle\TransitiveBundle.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1135
+DURATION_MS: 1021
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\TransitiveBundle\TransitiveBundle.csproj (in 328 ms).
+  Restored .\fixtures\packages\TransitiveBundle\TransitiveBundle.csproj (in 303 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\TransitiveBundle\TransitiveBundle.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1180
+DURATION_MS: 1005
 EXIT_CODE: 0
 OUTPUT:
   TransitiveBundle -> .\fixtures\packages\TransitiveBundle\bin\Release\net8.0\TransitiveBundle.dll
@@ -333,14 +349,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.TransitiveBundle.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\TransitiveRoot\TransitiveRoot.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1391
+DURATION_MS: 988
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\TransitiveRoot\TransitiveRoot.csproj (in 346 ms).
+  Restored .\fixtures\packages\TransitiveRoot\TransitiveRoot.csproj (in 245 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\TransitiveRoot\TransitiveRoot.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1255
+DURATION_MS: 932
 EXIT_CODE: 0
 OUTPUT:
   TransitiveRoot -> .\fixtures\packages\TransitiveRoot\bin\Release\net8.0\TransitiveRoot.dll
@@ -348,7 +364,7 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.TransitiveRoot.1.0.0.nupkg'.
 
 COMMAND: dotnet build .\src\KeelMatrix.PackageSurface.Probe\KeelMatrix.PackageSurface.Probe.csproj --configuration Release
-DURATION_MS: 1707
+DURATION_MS: 1135
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
@@ -360,45 +376,45 @@ Build succeeded.
     0 Warning(s)
     0 Error(s)
 
-Time Elapsed 00:00:01.48
+Time Elapsed 00:00:00.95
 
 COMMAND: dotnet restore .\fixtures\consumer\SingleTarget\SingleTarget.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1118
+DURATION_MS: 1385
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\consumer\SingleTarget\SingleTarget.csproj (in 319 ms).
+  Restored .\fixtures\consumer\SingleTarget\SingleTarget.csproj (in 353 ms).
 
 COMMAND: dotnet restore .\fixtures\consumer\MultiTarget\MultiTarget.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1136
+DURATION_MS: 1131
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\consumer\MultiTarget\MultiTarget.csproj (in 260 ms).
+  Restored .\fixtures\consumer\MultiTarget\MultiTarget.csproj (in 219 ms).
 
 COMMAND: dotnet restore .\fixtures\consumer\RidTarget\RidTarget.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1056
+DURATION_MS: 921
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\consumer\RidTarget\RidTarget.csproj (in 268 ms).
+  Restored .\fixtures\consumer\RidTarget\RidTarget.csproj (in 232 ms).
 
 COMMAND: dotnet restore .\fixtures\consumer\AnalyzerExcluded\AnalyzerExcluded.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 958
+DURATION_MS: 858
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\consumer\AnalyzerExcluded\AnalyzerExcluded.csproj (in 198 ms).
+  Restored .\fixtures\consumer\AnalyzerExcluded\AnalyzerExcluded.csproj (in 179 ms).
 
 COMMAND: dotnet restore .\fixtures\consumer\AnalyzerExcludedTransitive\AnalyzerExcludedTransitive.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 998
+DURATION_MS: 903
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\consumer\AnalyzerExcludedTransitive\AnalyzerExcludedTransitive.csproj (in 248 ms).
+  Restored .\fixtures\consumer\AnalyzerExcludedTransitive\AnalyzerExcludedTransitive.csproj (in 230 ms).
 
 COMMAND: dotnet build .\tests\KeelMatrix.PackageSurface.Probe.Tests\KeelMatrix.PackageSurface.Probe.Tests.csproj --configuration Release
-DURATION_MS: 1609
+DURATION_MS: 1533
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
@@ -411,10 +427,10 @@ Build succeeded.
     0 Warning(s)
     0 Error(s)
 
-Time Elapsed 00:00:01.38
+Time Elapsed 00:00:01.29
 
 COMMAND: dotnet run --project .\src\KeelMatrix.PackageSurface.Probe\KeelMatrix.PackageSurface.Probe.csproj --configuration Release --no-build -- .\fixtures\consumer\SingleTarget\obj\project.assets.json .\fixtures\consumer\SingleTarget
-DURATION_MS: 1098
+DURATION_MS: 603
 EXIT_CODE: 0
 OUTPUT:
 {
@@ -447,7 +463,7 @@ OUTPUT:
       "PackageRelativePath": "build/net9.0/KeelMatrix.Phase0.BuildBoth.props",
       "Present": true,
       "Active": false,
-      "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -481,7 +497,7 @@ OUTPUT:
       "PackageRelativePath": "build/net9.0/KeelMatrix.Phase0.BuildBoth.targets",
       "Present": true,
       "Active": false,
-      "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -518,7 +534,7 @@ OUTPUT:
       "PackageRelativePath": "build/net9.0/KeelMatrix.Phase0.BuildProps.props",
       "Present": true,
       "Active": false,
-      "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -555,7 +571,24 @@ OUTPUT:
       "PackageRelativePath": "build/net9.0/KeelMatrix.Phase0.BuildTargets.targets",
       "Present": true,
       "Active": false,
-      "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
+      "Sha256": null,
+      "Incomplete": false,
+      "IncompleteReason": null,
+      "Project": null,
+      "ObservedPrimitives": []
+    },
+    {
+      "TargetFramework": "net8.0",
+      "RuntimeIdentifier": null,
+      "Context": "Target",
+      "PackageId": "KeelMatrix.Phase0.BuildTransitive",
+      "Version": "1.0.0",
+      "Relationship": "direct",
+      "Capability": "BuildTransitive",
+      "PackageRelativePath": "buildTransitive/KeelMatrix.Phase0.BuildTransitive.props",
+      "Present": true,
+      "Active": true,
+      "Sha256": "f7955d35d163f8e5514c83d30f8dbca8a4474fd128e8908eb0e54a83169176c6",
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -586,10 +619,27 @@ OUTPUT:
       "Version": "1.0.0",
       "Relationship": "direct",
       "Capability": "BuildTransitive",
+      "PackageRelativePath": "buildTransitive/net9.0/KeelMatrix.Phase0.BuildTransitive.props",
+      "Present": true,
+      "Active": false,
+      "Sha256": null,
+      "Incomplete": false,
+      "IncompleteReason": null,
+      "Project": null,
+      "ObservedPrimitives": []
+    },
+    {
+      "TargetFramework": "net8.0",
+      "RuntimeIdentifier": null,
+      "Context": "Target",
+      "PackageId": "KeelMatrix.Phase0.BuildTransitive",
+      "Version": "1.0.0",
+      "Relationship": "direct",
+      "Capability": "BuildTransitive",
       "PackageRelativePath": "buildTransitive/net9.0/KeelMatrix.Phase0.BuildTransitive.targets",
       "Present": true,
       "Active": false,
-      "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -606,7 +656,7 @@ OUTPUT:
       "PackageRelativePath": "analyzers/dotnet/cs/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": true,
-      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
+      "Sha256": "3f7edad522822d363c0a144afe90aa919c763277dbe79a1a0f752bf3e64ca271",
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -623,7 +673,7 @@ OUTPUT:
       "PackageRelativePath": "analyzers/dotnet/vb/KeelMatrix.Phase0.VisualBasicOnly.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -640,7 +690,7 @@ OUTPUT:
       "PackageRelativePath": "analyzers/net9.0/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -674,7 +724,7 @@ OUTPUT:
       "PackageRelativePath": "contentFiles/cs/net9.0/Inactive.cs",
       "Present": true,
       "Active": false,
-      "Sha256": "fc36196931f5436d6edfc6c5c868c9023ba6343777b37afbcb7c9d67da4310c3",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -691,7 +741,7 @@ OUTPUT:
       "PackageRelativePath": "runtimes/linux-x64/native/inactive.so",
       "Present": true,
       "Active": false,
-      "Sha256": "7684ab6de8fcf1723cfdaad2a6740e8bee7d0aa246a71bbf54446028421ac7e2",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -708,7 +758,7 @@ OUTPUT:
       "PackageRelativePath": "runtimes/win-x64/native/active.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "90699fe43727b321e3f9552559f93d213499ae7d5f44ed18cfa5440652e53d5a",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -725,7 +775,7 @@ OUTPUT:
       "PackageRelativePath": "runtimes/linux-x64/native/inactive.so",
       "Present": true,
       "Active": false,
-      "Sha256": "7684ab6de8fcf1723cfdaad2a6740e8bee7d0aa246a71bbf54446028421ac7e2",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -742,7 +792,7 @@ OUTPUT:
       "PackageRelativePath": "runtimes/win-x64/native/active.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "90699fe43727b321e3f9552559f93d213499ae7d5f44ed18cfa5440652e53d5a",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -759,7 +809,24 @@ OUTPUT:
       "PackageRelativePath": "tools/phase0-tool.ps1",
       "Present": true,
       "Active": false,
-      "Sha256": "f9261d0928c26cd0a92454e4e34d2ce9f8eda8a3c480faaa779c515bf3fa73ef",
+      "Sha256": null,
+      "Incomplete": false,
+      "IncompleteReason": null,
+      "Project": null,
+      "ObservedPrimitives": null
+    },
+    {
+      "TargetFramework": null,
+      "RuntimeIdentifier": null,
+      "Context": "Project",
+      "PackageId": "KeelMatrix.Phase0.BuildMultiTargeting",
+      "Version": "1.0.0",
+      "Relationship": "transitive",
+      "Capability": "BuildMultiTargeting",
+      "PackageRelativePath": "buildMultiTargeting/KeelMatrix.Phase0.BuildMultiTargeting.props",
+      "Present": true,
+      "Active": false,
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -776,11 +843,28 @@ OUTPUT:
       "PackageRelativePath": "buildMultiTargeting/KeelMatrix.Phase0.BuildMultiTargeting.targets",
       "Present": true,
       "Active": false,
-      "Sha256": "e6698f2eee309f4b348053bd1d292574696ebc7ed140dfc32df96da7de37bff1",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
-      "ObservedPrimitives": []
+      "ObservedPrimitives": null
+    },
+    {
+      "TargetFramework": null,
+      "RuntimeIdentifier": null,
+      "Context": "Project",
+      "PackageId": "KeelMatrix.Phase0.BuildMultiTargeting",
+      "Version": "1.0.0",
+      "Relationship": "transitive",
+      "Capability": "BuildMultiTargeting",
+      "PackageRelativePath": "buildMultiTargeting/net9.0/KeelMatrix.Phase0.BuildMultiTargeting.props",
+      "Present": true,
+      "Active": false,
+      "Sha256": null,
+      "Incomplete": false,
+      "IncompleteReason": null,
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": null,
@@ -793,11 +877,11 @@ OUTPUT:
       "PackageRelativePath": "buildMultiTargeting/net9.0/KeelMatrix.Phase0.BuildMultiTargeting.targets",
       "Present": true,
       "Active": false,
-      "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
-      "ObservedPrimitives": []
+      "ObservedPrimitives": null
     }
   ],
   "IncompleteReasons": [],
@@ -806,7 +890,7 @@ OUTPUT:
 }
 
 COMMAND: dotnet run --project .\tests\KeelMatrix.PackageSurface.Probe.Tests\KeelMatrix.PackageSurface.Probe.Tests.csproj --configuration Release --no-build -- .\fixtures\consumer\SingleTarget\obj\project.assets.json BuildProps,BuildTargets,BuildTransitive,BuildMultiTargeting,CompilerExtension,CompileSourceInjection,NativeRuntime,ToolOrScriptPresent
-DURATION_MS: 1652
+DURATION_MS: 972
 EXIT_CODE: 0
 OUTPUT:
 condition-case unconditional import: complete=True; active=net8.0
@@ -827,10 +911,11 @@ condition-case nested arbitrary condition: complete=False; active=
 condition-case unproven Exists: complete=False; active=
 condition-case empty TFM project context: complete=True; active=True
 condition-exit incomplete analysis: 2
-{"entries":22,"complete":true}
+generated-import filename mismatch: incomplete
+{"entries":26,"complete":true}
 
 COMMAND: dotnet run --project .\src\KeelMatrix.PackageSurface.Probe\KeelMatrix.PackageSurface.Probe.csproj --configuration Release --no-build -- .\fixtures\consumer\MultiTarget\obj\project.assets.json .\fixtures\consumer\MultiTarget
-DURATION_MS: 677
+DURATION_MS: 585
 EXIT_CODE: 0
 OUTPUT:
 {
@@ -866,7 +951,7 @@ OUTPUT:
       "PackageRelativePath": "build/net9.0/KeelMatrix.Phase0.BuildProps.props",
       "Present": true,
       "Active": false,
-      "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -903,7 +988,24 @@ OUTPUT:
       "PackageRelativePath": "build/net9.0/KeelMatrix.Phase0.BuildTargets.targets",
       "Present": true,
       "Active": false,
-      "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
+      "Sha256": null,
+      "Incomplete": false,
+      "IncompleteReason": null,
+      "Project": null,
+      "ObservedPrimitives": []
+    },
+    {
+      "TargetFramework": "net8.0",
+      "RuntimeIdentifier": null,
+      "Context": "Target",
+      "PackageId": "KeelMatrix.Phase0.BuildTransitive",
+      "Version": "1.0.0",
+      "Relationship": "transitive",
+      "Capability": "BuildTransitive",
+      "PackageRelativePath": "buildTransitive/KeelMatrix.Phase0.BuildTransitive.props",
+      "Present": true,
+      "Active": true,
+      "Sha256": "f7955d35d163f8e5514c83d30f8dbca8a4474fd128e8908eb0e54a83169176c6",
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -934,10 +1036,27 @@ OUTPUT:
       "Version": "1.0.0",
       "Relationship": "transitive",
       "Capability": "BuildTransitive",
+      "PackageRelativePath": "buildTransitive/net9.0/KeelMatrix.Phase0.BuildTransitive.props",
+      "Present": true,
+      "Active": false,
+      "Sha256": null,
+      "Incomplete": false,
+      "IncompleteReason": null,
+      "Project": null,
+      "ObservedPrimitives": []
+    },
+    {
+      "TargetFramework": "net8.0",
+      "RuntimeIdentifier": null,
+      "Context": "Target",
+      "PackageId": "KeelMatrix.Phase0.BuildTransitive",
+      "Version": "1.0.0",
+      "Relationship": "transitive",
+      "Capability": "BuildTransitive",
       "PackageRelativePath": "buildTransitive/net9.0/KeelMatrix.Phase0.BuildTransitive.targets",
       "Present": true,
       "Active": false,
-      "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -954,7 +1073,7 @@ OUTPUT:
       "PackageRelativePath": "analyzers/dotnet/cs/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": true,
-      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
+      "Sha256": "3f7edad522822d363c0a144afe90aa919c763277dbe79a1a0f752bf3e64ca271",
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -971,7 +1090,7 @@ OUTPUT:
       "PackageRelativePath": "analyzers/dotnet/vb/KeelMatrix.Phase0.VisualBasicOnly.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -988,7 +1107,7 @@ OUTPUT:
       "PackageRelativePath": "analyzers/net9.0/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1022,7 +1141,7 @@ OUTPUT:
       "PackageRelativePath": "contentFiles/cs/net9.0/Inactive.cs",
       "Present": true,
       "Active": false,
-      "Sha256": "fc36196931f5436d6edfc6c5c868c9023ba6343777b37afbcb7c9d67da4310c3",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1039,7 +1158,7 @@ OUTPUT:
       "PackageRelativePath": "runtimes/linux-x64/native/inactive.so",
       "Present": true,
       "Active": false,
-      "Sha256": "7684ab6de8fcf1723cfdaad2a6740e8bee7d0aa246a71bbf54446028421ac7e2",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1056,7 +1175,7 @@ OUTPUT:
       "PackageRelativePath": "runtimes/win-x64/native/active.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "90699fe43727b321e3f9552559f93d213499ae7d5f44ed18cfa5440652e53d5a",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1073,7 +1192,7 @@ OUTPUT:
       "PackageRelativePath": "runtimes/linux-x64/native/inactive.so",
       "Present": true,
       "Active": false,
-      "Sha256": "7684ab6de8fcf1723cfdaad2a6740e8bee7d0aa246a71bbf54446028421ac7e2",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1090,7 +1209,7 @@ OUTPUT:
       "PackageRelativePath": "runtimes/win-x64/native/active.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "90699fe43727b321e3f9552559f93d213499ae7d5f44ed18cfa5440652e53d5a",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1107,7 +1226,7 @@ OUTPUT:
       "PackageRelativePath": "tools/phase0-tool.ps1",
       "Present": true,
       "Active": false,
-      "Sha256": "f9261d0928c26cd0a92454e4e34d2ce9f8eda8a3c480faaa779c515bf3fa73ef",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1144,7 +1263,7 @@ OUTPUT:
       "PackageRelativePath": "build/net9.0/KeelMatrix.Phase0.BuildProps.props",
       "Present": true,
       "Active": false,
-      "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1181,7 +1300,24 @@ OUTPUT:
       "PackageRelativePath": "build/net9.0/KeelMatrix.Phase0.BuildTargets.targets",
       "Present": true,
       "Active": false,
-      "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
+      "Sha256": null,
+      "Incomplete": false,
+      "IncompleteReason": null,
+      "Project": null,
+      "ObservedPrimitives": []
+    },
+    {
+      "TargetFramework": "net8.0-windows7.0",
+      "RuntimeIdentifier": null,
+      "Context": "Target",
+      "PackageId": "KeelMatrix.Phase0.BuildTransitive",
+      "Version": "1.0.0",
+      "Relationship": "transitive",
+      "Capability": "BuildTransitive",
+      "PackageRelativePath": "buildTransitive/KeelMatrix.Phase0.BuildTransitive.props",
+      "Present": true,
+      "Active": true,
+      "Sha256": "f7955d35d163f8e5514c83d30f8dbca8a4474fd128e8908eb0e54a83169176c6",
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1212,10 +1348,27 @@ OUTPUT:
       "Version": "1.0.0",
       "Relationship": "transitive",
       "Capability": "BuildTransitive",
+      "PackageRelativePath": "buildTransitive/net9.0/KeelMatrix.Phase0.BuildTransitive.props",
+      "Present": true,
+      "Active": false,
+      "Sha256": null,
+      "Incomplete": false,
+      "IncompleteReason": null,
+      "Project": null,
+      "ObservedPrimitives": []
+    },
+    {
+      "TargetFramework": "net8.0-windows7.0",
+      "RuntimeIdentifier": null,
+      "Context": "Target",
+      "PackageId": "KeelMatrix.Phase0.BuildTransitive",
+      "Version": "1.0.0",
+      "Relationship": "transitive",
+      "Capability": "BuildTransitive",
       "PackageRelativePath": "buildTransitive/net9.0/KeelMatrix.Phase0.BuildTransitive.targets",
       "Present": true,
       "Active": false,
-      "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1232,7 +1385,7 @@ OUTPUT:
       "PackageRelativePath": "analyzers/dotnet/cs/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1249,7 +1402,7 @@ OUTPUT:
       "PackageRelativePath": "analyzers/dotnet/vb/KeelMatrix.Phase0.VisualBasicOnly.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1266,7 +1419,7 @@ OUTPUT:
       "PackageRelativePath": "analyzers/net9.0/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1300,7 +1453,7 @@ OUTPUT:
       "PackageRelativePath": "contentFiles/cs/net9.0/Inactive.cs",
       "Present": true,
       "Active": false,
-      "Sha256": "fc36196931f5436d6edfc6c5c868c9023ba6343777b37afbcb7c9d67da4310c3",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1317,7 +1470,7 @@ OUTPUT:
       "PackageRelativePath": "runtimes/linux-x64/native/inactive.so",
       "Present": true,
       "Active": false,
-      "Sha256": "7684ab6de8fcf1723cfdaad2a6740e8bee7d0aa246a71bbf54446028421ac7e2",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1334,7 +1487,7 @@ OUTPUT:
       "PackageRelativePath": "runtimes/win-x64/native/active.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "90699fe43727b321e3f9552559f93d213499ae7d5f44ed18cfa5440652e53d5a",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1351,7 +1504,7 @@ OUTPUT:
       "PackageRelativePath": "runtimes/linux-x64/native/inactive.so",
       "Present": true,
       "Active": false,
-      "Sha256": "7684ab6de8fcf1723cfdaad2a6740e8bee7d0aa246a71bbf54446028421ac7e2",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1368,7 +1521,7 @@ OUTPUT:
       "PackageRelativePath": "runtimes/win-x64/native/active.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "90699fe43727b321e3f9552559f93d213499ae7d5f44ed18cfa5440652e53d5a",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1385,7 +1538,24 @@ OUTPUT:
       "PackageRelativePath": "tools/phase0-tool.ps1",
       "Present": true,
       "Active": false,
-      "Sha256": "f9261d0928c26cd0a92454e4e34d2ce9f8eda8a3c480faaa779c515bf3fa73ef",
+      "Sha256": null,
+      "Incomplete": false,
+      "IncompleteReason": null,
+      "Project": null,
+      "ObservedPrimitives": null
+    },
+    {
+      "TargetFramework": null,
+      "RuntimeIdentifier": null,
+      "Context": "Project",
+      "PackageId": "KeelMatrix.Phase0.BuildMultiTargeting",
+      "Version": "1.0.0",
+      "Relationship": "direct",
+      "Capability": "BuildMultiTargeting",
+      "PackageRelativePath": "buildMultiTargeting/KeelMatrix.Phase0.BuildMultiTargeting.props",
+      "Present": true,
+      "Active": true,
+      "Sha256": "17866f589de403509af1f243bc10cbb159d2bceaec030065a08267ac369cf60f",
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1406,7 +1576,24 @@ OUTPUT:
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
-      "ObservedPrimitives": []
+      "ObservedPrimitives": null
+    },
+    {
+      "TargetFramework": null,
+      "RuntimeIdentifier": null,
+      "Context": "Project",
+      "PackageId": "KeelMatrix.Phase0.BuildMultiTargeting",
+      "Version": "1.0.0",
+      "Relationship": "direct",
+      "Capability": "BuildMultiTargeting",
+      "PackageRelativePath": "buildMultiTargeting/net9.0/KeelMatrix.Phase0.BuildMultiTargeting.props",
+      "Present": true,
+      "Active": false,
+      "Sha256": null,
+      "Incomplete": false,
+      "IncompleteReason": null,
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": null,
@@ -1419,11 +1606,11 @@ OUTPUT:
       "PackageRelativePath": "buildMultiTargeting/net9.0/KeelMatrix.Phase0.BuildMultiTargeting.targets",
       "Present": true,
       "Active": false,
-      "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
-      "ObservedPrimitives": []
+      "ObservedPrimitives": null
     }
   ],
   "IncompleteReasons": [],
@@ -1432,7 +1619,7 @@ OUTPUT:
 }
 
 COMMAND: dotnet run --project .\tests\KeelMatrix.PackageSurface.Probe.Tests\KeelMatrix.PackageSurface.Probe.Tests.csproj --configuration Release --no-build -- .\fixtures\consumer\MultiTarget\obj\project.assets.json BuildProps,BuildTargets,BuildTransitive,BuildMultiTargeting,CompilerExtension,CompileSourceInjection,NativeRuntime,ToolOrScriptPresent
-DURATION_MS: 1443
+DURATION_MS: 1134
 EXIT_CODE: 0
 OUTPUT:
 condition-case unconditional import: complete=True; active=net8.0,net8.0-windows7.0
@@ -1453,10 +1640,11 @@ condition-case nested arbitrary condition: complete=False; active=
 condition-case unproven Exists: complete=False; active=
 condition-case empty TFM project context: complete=True; active=True
 condition-exit incomplete analysis: 2
-{"entries":34,"complete":true}
+generated-import filename mismatch: incomplete
+{"entries":40,"complete":true}
 
 COMMAND: dotnet run --project .\src\KeelMatrix.PackageSurface.Probe\KeelMatrix.PackageSurface.Probe.csproj --configuration Release --no-build -- .\fixtures\consumer\RidTarget\obj\project.assets.json .\fixtures\consumer\RidTarget
-DURATION_MS: 705
+DURATION_MS: 624
 EXIT_CODE: 0
 OUTPUT:
 {
@@ -1492,7 +1680,7 @@ OUTPUT:
       "PackageRelativePath": "build/net9.0/KeelMatrix.Phase0.BuildProps.props",
       "Present": true,
       "Active": false,
-      "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1529,7 +1717,24 @@ OUTPUT:
       "PackageRelativePath": "build/net9.0/KeelMatrix.Phase0.BuildTargets.targets",
       "Present": true,
       "Active": false,
-      "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
+      "Sha256": null,
+      "Incomplete": false,
+      "IncompleteReason": null,
+      "Project": null,
+      "ObservedPrimitives": []
+    },
+    {
+      "TargetFramework": "net8.0",
+      "RuntimeIdentifier": null,
+      "Context": "Target",
+      "PackageId": "KeelMatrix.Phase0.BuildTransitive",
+      "Version": "1.0.0",
+      "Relationship": "transitive",
+      "Capability": "BuildTransitive",
+      "PackageRelativePath": "buildTransitive/KeelMatrix.Phase0.BuildTransitive.props",
+      "Present": true,
+      "Active": true,
+      "Sha256": "f7955d35d163f8e5514c83d30f8dbca8a4474fd128e8908eb0e54a83169176c6",
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1560,10 +1765,27 @@ OUTPUT:
       "Version": "1.0.0",
       "Relationship": "transitive",
       "Capability": "BuildTransitive",
+      "PackageRelativePath": "buildTransitive/net9.0/KeelMatrix.Phase0.BuildTransitive.props",
+      "Present": true,
+      "Active": false,
+      "Sha256": null,
+      "Incomplete": false,
+      "IncompleteReason": null,
+      "Project": null,
+      "ObservedPrimitives": []
+    },
+    {
+      "TargetFramework": "net8.0",
+      "RuntimeIdentifier": null,
+      "Context": "Target",
+      "PackageId": "KeelMatrix.Phase0.BuildTransitive",
+      "Version": "1.0.0",
+      "Relationship": "transitive",
+      "Capability": "BuildTransitive",
       "PackageRelativePath": "buildTransitive/net9.0/KeelMatrix.Phase0.BuildTransitive.targets",
       "Present": true,
       "Active": false,
-      "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1580,7 +1802,7 @@ OUTPUT:
       "PackageRelativePath": "analyzers/dotnet/cs/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": true,
-      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
+      "Sha256": "3f7edad522822d363c0a144afe90aa919c763277dbe79a1a0f752bf3e64ca271",
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1597,7 +1819,7 @@ OUTPUT:
       "PackageRelativePath": "analyzers/dotnet/vb/KeelMatrix.Phase0.VisualBasicOnly.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1614,7 +1836,7 @@ OUTPUT:
       "PackageRelativePath": "analyzers/net9.0/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1648,7 +1870,7 @@ OUTPUT:
       "PackageRelativePath": "contentFiles/cs/net9.0/Inactive.cs",
       "Present": true,
       "Active": false,
-      "Sha256": "fc36196931f5436d6edfc6c5c868c9023ba6343777b37afbcb7c9d67da4310c3",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1665,7 +1887,7 @@ OUTPUT:
       "PackageRelativePath": "runtimes/linux-x64/native/inactive.so",
       "Present": true,
       "Active": false,
-      "Sha256": "7684ab6de8fcf1723cfdaad2a6740e8bee7d0aa246a71bbf54446028421ac7e2",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1682,7 +1904,7 @@ OUTPUT:
       "PackageRelativePath": "runtimes/win-x64/native/active.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "90699fe43727b321e3f9552559f93d213499ae7d5f44ed18cfa5440652e53d5a",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1699,7 +1921,7 @@ OUTPUT:
       "PackageRelativePath": "runtimes/linux-x64/native/inactive.so",
       "Present": true,
       "Active": false,
-      "Sha256": "7684ab6de8fcf1723cfdaad2a6740e8bee7d0aa246a71bbf54446028421ac7e2",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1716,7 +1938,7 @@ OUTPUT:
       "PackageRelativePath": "runtimes/win-x64/native/active.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "90699fe43727b321e3f9552559f93d213499ae7d5f44ed18cfa5440652e53d5a",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1733,7 +1955,7 @@ OUTPUT:
       "PackageRelativePath": "tools/phase0-tool.ps1",
       "Present": true,
       "Active": false,
-      "Sha256": "f9261d0928c26cd0a92454e4e34d2ce9f8eda8a3c480faaa779c515bf3fa73ef",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1770,7 +1992,7 @@ OUTPUT:
       "PackageRelativePath": "build/net9.0/KeelMatrix.Phase0.BuildProps.props",
       "Present": true,
       "Active": false,
-      "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1807,7 +2029,24 @@ OUTPUT:
       "PackageRelativePath": "build/net9.0/KeelMatrix.Phase0.BuildTargets.targets",
       "Present": true,
       "Active": false,
-      "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
+      "Sha256": null,
+      "Incomplete": false,
+      "IncompleteReason": null,
+      "Project": null,
+      "ObservedPrimitives": []
+    },
+    {
+      "TargetFramework": "net8.0",
+      "RuntimeIdentifier": "win-x64",
+      "Context": "Target",
+      "PackageId": "KeelMatrix.Phase0.BuildTransitive",
+      "Version": "1.0.0",
+      "Relationship": "transitive",
+      "Capability": "BuildTransitive",
+      "PackageRelativePath": "buildTransitive/KeelMatrix.Phase0.BuildTransitive.props",
+      "Present": true,
+      "Active": true,
+      "Sha256": "f7955d35d163f8e5514c83d30f8dbca8a4474fd128e8908eb0e54a83169176c6",
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1838,10 +2077,27 @@ OUTPUT:
       "Version": "1.0.0",
       "Relationship": "transitive",
       "Capability": "BuildTransitive",
+      "PackageRelativePath": "buildTransitive/net9.0/KeelMatrix.Phase0.BuildTransitive.props",
+      "Present": true,
+      "Active": false,
+      "Sha256": null,
+      "Incomplete": false,
+      "IncompleteReason": null,
+      "Project": null,
+      "ObservedPrimitives": []
+    },
+    {
+      "TargetFramework": "net8.0",
+      "RuntimeIdentifier": "win-x64",
+      "Context": "Target",
+      "PackageId": "KeelMatrix.Phase0.BuildTransitive",
+      "Version": "1.0.0",
+      "Relationship": "transitive",
+      "Capability": "BuildTransitive",
       "PackageRelativePath": "buildTransitive/net9.0/KeelMatrix.Phase0.BuildTransitive.targets",
       "Present": true,
       "Active": false,
-      "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1858,7 +2114,7 @@ OUTPUT:
       "PackageRelativePath": "analyzers/dotnet/cs/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": true,
-      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
+      "Sha256": "3f7edad522822d363c0a144afe90aa919c763277dbe79a1a0f752bf3e64ca271",
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1875,7 +2131,7 @@ OUTPUT:
       "PackageRelativePath": "analyzers/dotnet/vb/KeelMatrix.Phase0.VisualBasicOnly.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1892,7 +2148,7 @@ OUTPUT:
       "PackageRelativePath": "analyzers/net9.0/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1926,7 +2182,7 @@ OUTPUT:
       "PackageRelativePath": "contentFiles/cs/net9.0/Inactive.cs",
       "Present": true,
       "Active": false,
-      "Sha256": "fc36196931f5436d6edfc6c5c868c9023ba6343777b37afbcb7c9d67da4310c3",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1943,7 +2199,7 @@ OUTPUT:
       "PackageRelativePath": "runtimes/linux-x64/native/inactive.so",
       "Present": true,
       "Active": false,
-      "Sha256": "7684ab6de8fcf1723cfdaad2a6740e8bee7d0aa246a71bbf54446028421ac7e2",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1960,7 +2216,7 @@ OUTPUT:
       "PackageRelativePath": "runtimes/win-x64/native/active.dll",
       "Present": true,
       "Active": true,
-      "Sha256": "90699fe43727b321e3f9552559f93d213499ae7d5f44ed18cfa5440652e53d5a",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1977,7 +2233,7 @@ OUTPUT:
       "PackageRelativePath": "runtimes/linux-x64/native/inactive.so",
       "Present": true,
       "Active": false,
-      "Sha256": "7684ab6de8fcf1723cfdaad2a6740e8bee7d0aa246a71bbf54446028421ac7e2",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1994,7 +2250,7 @@ OUTPUT:
       "PackageRelativePath": "runtimes/win-x64/native/active.dll",
       "Present": true,
       "Active": true,
-      "Sha256": "90699fe43727b321e3f9552559f93d213499ae7d5f44ed18cfa5440652e53d5a",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -2011,7 +2267,24 @@ OUTPUT:
       "PackageRelativePath": "tools/phase0-tool.ps1",
       "Present": true,
       "Active": false,
-      "Sha256": "f9261d0928c26cd0a92454e4e34d2ce9f8eda8a3c480faaa779c515bf3fa73ef",
+      "Sha256": null,
+      "Incomplete": false,
+      "IncompleteReason": null,
+      "Project": null,
+      "ObservedPrimitives": null
+    },
+    {
+      "TargetFramework": null,
+      "RuntimeIdentifier": null,
+      "Context": "Project",
+      "PackageId": "KeelMatrix.Phase0.BuildMultiTargeting",
+      "Version": "1.0.0",
+      "Relationship": "transitive",
+      "Capability": "BuildMultiTargeting",
+      "PackageRelativePath": "buildMultiTargeting/KeelMatrix.Phase0.BuildMultiTargeting.props",
+      "Present": true,
+      "Active": false,
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -2028,11 +2301,28 @@ OUTPUT:
       "PackageRelativePath": "buildMultiTargeting/KeelMatrix.Phase0.BuildMultiTargeting.targets",
       "Present": true,
       "Active": false,
-      "Sha256": "e6698f2eee309f4b348053bd1d292574696ebc7ed140dfc32df96da7de37bff1",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
-      "ObservedPrimitives": []
+      "ObservedPrimitives": null
+    },
+    {
+      "TargetFramework": null,
+      "RuntimeIdentifier": null,
+      "Context": "Project",
+      "PackageId": "KeelMatrix.Phase0.BuildMultiTargeting",
+      "Version": "1.0.0",
+      "Relationship": "transitive",
+      "Capability": "BuildMultiTargeting",
+      "PackageRelativePath": "buildMultiTargeting/net9.0/KeelMatrix.Phase0.BuildMultiTargeting.props",
+      "Present": true,
+      "Active": false,
+      "Sha256": null,
+      "Incomplete": false,
+      "IncompleteReason": null,
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": null,
@@ -2045,11 +2335,11 @@ OUTPUT:
       "PackageRelativePath": "buildMultiTargeting/net9.0/KeelMatrix.Phase0.BuildMultiTargeting.targets",
       "Present": true,
       "Active": false,
-      "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
-      "ObservedPrimitives": []
+      "ObservedPrimitives": null
     }
   ],
   "IncompleteReasons": [],
@@ -2058,7 +2348,7 @@ OUTPUT:
 }
 
 COMMAND: dotnet run --project .\tests\KeelMatrix.PackageSurface.Probe.Tests\KeelMatrix.PackageSurface.Probe.Tests.csproj --configuration Release --no-build -- .\fixtures\consumer\RidTarget\obj\project.assets.json BuildProps,BuildTargets,BuildTransitive,BuildMultiTargeting,CompilerExtension,CompileSourceInjection,NativeRuntime,ToolOrScriptPresent
-DURATION_MS: 1384
+DURATION_MS: 1238
 EXIT_CODE: 0
 OUTPUT:
 condition-case unconditional import: complete=True; active=net8.0
@@ -2079,10 +2369,11 @@ condition-case nested arbitrary condition: complete=False; active=
 condition-case unproven Exists: complete=False; active=
 condition-case empty TFM project context: complete=True; active=True
 condition-exit incomplete analysis: 2
-{"entries":34,"complete":true}
+generated-import filename mismatch: incomplete
+{"entries":40,"complete":true}
 
 COMMAND: dotnet run --project .\src\KeelMatrix.PackageSurface.Probe\KeelMatrix.PackageSurface.Probe.csproj --configuration Release --no-build -- .\fixtures\consumer\AnalyzerExcluded\obj\project.assets.json .\fixtures\consumer\AnalyzerExcluded
-DURATION_MS: 829
+DURATION_MS: 555
 EXIT_CODE: 0
 OUTPUT:
 {
@@ -2098,7 +2389,7 @@ OUTPUT:
       "PackageRelativePath": "analyzers/dotnet/cs/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -2115,7 +2406,7 @@ OUTPUT:
       "PackageRelativePath": "analyzers/dotnet/vb/KeelMatrix.Phase0.VisualBasicOnly.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -2132,7 +2423,7 @@ OUTPUT:
       "PackageRelativePath": "analyzers/net9.0/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -2145,7 +2436,7 @@ OUTPUT:
 }
 
 COMMAND: dotnet run --project .\src\KeelMatrix.PackageSurface.Probe\KeelMatrix.PackageSurface.Probe.csproj --configuration Release --no-build -- .\fixtures\consumer\AnalyzerExcludedTransitive\obj\project.assets.json .\fixtures\consumer\AnalyzerExcludedTransitive
-DURATION_MS: 794
+DURATION_MS: 579
 EXIT_CODE: 0
 OUTPUT:
 {
@@ -2181,7 +2472,7 @@ OUTPUT:
       "PackageRelativePath": "build/net9.0/KeelMatrix.Phase0.BuildProps.props",
       "Present": true,
       "Active": false,
-      "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -2218,7 +2509,24 @@ OUTPUT:
       "PackageRelativePath": "build/net9.0/KeelMatrix.Phase0.BuildTargets.targets",
       "Present": true,
       "Active": false,
-      "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
+      "Sha256": null,
+      "Incomplete": false,
+      "IncompleteReason": null,
+      "Project": null,
+      "ObservedPrimitives": []
+    },
+    {
+      "TargetFramework": "net8.0",
+      "RuntimeIdentifier": null,
+      "Context": "Target",
+      "PackageId": "KeelMatrix.Phase0.BuildTransitive",
+      "Version": "1.0.0",
+      "Relationship": "transitive",
+      "Capability": "BuildTransitive",
+      "PackageRelativePath": "buildTransitive/KeelMatrix.Phase0.BuildTransitive.props",
+      "Present": true,
+      "Active": true,
+      "Sha256": "f7955d35d163f8e5514c83d30f8dbca8a4474fd128e8908eb0e54a83169176c6",
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -2249,10 +2557,27 @@ OUTPUT:
       "Version": "1.0.0",
       "Relationship": "transitive",
       "Capability": "BuildTransitive",
+      "PackageRelativePath": "buildTransitive/net9.0/KeelMatrix.Phase0.BuildTransitive.props",
+      "Present": true,
+      "Active": false,
+      "Sha256": null,
+      "Incomplete": false,
+      "IncompleteReason": null,
+      "Project": null,
+      "ObservedPrimitives": []
+    },
+    {
+      "TargetFramework": "net8.0",
+      "RuntimeIdentifier": null,
+      "Context": "Target",
+      "PackageId": "KeelMatrix.Phase0.BuildTransitive",
+      "Version": "1.0.0",
+      "Relationship": "transitive",
+      "Capability": "BuildTransitive",
       "PackageRelativePath": "buildTransitive/net9.0/KeelMatrix.Phase0.BuildTransitive.targets",
       "Present": true,
       "Active": false,
-      "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -2269,7 +2594,7 @@ OUTPUT:
       "PackageRelativePath": "analyzers/dotnet/cs/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -2286,7 +2611,7 @@ OUTPUT:
       "PackageRelativePath": "analyzers/dotnet/vb/KeelMatrix.Phase0.VisualBasicOnly.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -2303,7 +2628,7 @@ OUTPUT:
       "PackageRelativePath": "analyzers/net9.0/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "8deb9e2000e8a124b42a3ed2f3290a362b4fec0ae62fa465e94120151bd472b9",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -2337,7 +2662,7 @@ OUTPUT:
       "PackageRelativePath": "contentFiles/cs/net9.0/Inactive.cs",
       "Present": true,
       "Active": false,
-      "Sha256": "fc36196931f5436d6edfc6c5c868c9023ba6343777b37afbcb7c9d67da4310c3",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -2354,7 +2679,7 @@ OUTPUT:
       "PackageRelativePath": "runtimes/linux-x64/native/inactive.so",
       "Present": true,
       "Active": false,
-      "Sha256": "7684ab6de8fcf1723cfdaad2a6740e8bee7d0aa246a71bbf54446028421ac7e2",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -2371,7 +2696,7 @@ OUTPUT:
       "PackageRelativePath": "runtimes/win-x64/native/active.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "90699fe43727b321e3f9552559f93d213499ae7d5f44ed18cfa5440652e53d5a",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -2388,7 +2713,7 @@ OUTPUT:
       "PackageRelativePath": "runtimes/linux-x64/native/inactive.so",
       "Present": true,
       "Active": false,
-      "Sha256": "7684ab6de8fcf1723cfdaad2a6740e8bee7d0aa246a71bbf54446028421ac7e2",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -2405,7 +2730,7 @@ OUTPUT:
       "PackageRelativePath": "runtimes/win-x64/native/active.dll",
       "Present": true,
       "Active": false,
-      "Sha256": "90699fe43727b321e3f9552559f93d213499ae7d5f44ed18cfa5440652e53d5a",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -2422,7 +2747,24 @@ OUTPUT:
       "PackageRelativePath": "tools/phase0-tool.ps1",
       "Present": true,
       "Active": false,
-      "Sha256": "f9261d0928c26cd0a92454e4e34d2ce9f8eda8a3c480faaa779c515bf3fa73ef",
+      "Sha256": null,
+      "Incomplete": false,
+      "IncompleteReason": null,
+      "Project": null,
+      "ObservedPrimitives": null
+    },
+    {
+      "TargetFramework": null,
+      "RuntimeIdentifier": null,
+      "Context": "Project",
+      "PackageId": "KeelMatrix.Phase0.BuildMultiTargeting",
+      "Version": "1.0.0",
+      "Relationship": "transitive",
+      "Capability": "BuildMultiTargeting",
+      "PackageRelativePath": "buildMultiTargeting/KeelMatrix.Phase0.BuildMultiTargeting.props",
+      "Present": true,
+      "Active": false,
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -2439,11 +2781,28 @@ OUTPUT:
       "PackageRelativePath": "buildMultiTargeting/KeelMatrix.Phase0.BuildMultiTargeting.targets",
       "Present": true,
       "Active": false,
-      "Sha256": "e6698f2eee309f4b348053bd1d292574696ebc7ed140dfc32df96da7de37bff1",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
-      "ObservedPrimitives": []
+      "ObservedPrimitives": null
+    },
+    {
+      "TargetFramework": null,
+      "RuntimeIdentifier": null,
+      "Context": "Project",
+      "PackageId": "KeelMatrix.Phase0.BuildMultiTargeting",
+      "Version": "1.0.0",
+      "Relationship": "transitive",
+      "Capability": "BuildMultiTargeting",
+      "PackageRelativePath": "buildMultiTargeting/net9.0/KeelMatrix.Phase0.BuildMultiTargeting.props",
+      "Present": true,
+      "Active": false,
+      "Sha256": null,
+      "Incomplete": false,
+      "IncompleteReason": null,
+      "Project": null,
+      "ObservedPrimitives": null
     },
     {
       "TargetFramework": null,
@@ -2456,11 +2815,11 @@ OUTPUT:
       "PackageRelativePath": "buildMultiTargeting/net9.0/KeelMatrix.Phase0.BuildMultiTargeting.targets",
       "Present": true,
       "Active": false,
-      "Sha256": "17284cb74605517cbec8a8153505da71a685b28694b67b5ef80608cd79b1c0ea",
+      "Sha256": null,
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
-      "ObservedPrimitives": []
+      "ObservedPrimitives": null
     }
   ],
   "IncompleteReasons": [],
@@ -2469,56 +2828,56 @@ OUTPUT:
 }
 
 COMMAND: pwsh -NoProfile -File .\scripts\verify-no-execution.ps1
-DURATION_MS: 2212
+DURATION_MS: 1613
 EXIT_CODE: 0
 OUTPUT:
 PASS: classifier assembly has no forbidden assembly, process-start, assembly-load, MSBuild, or network references.
 PASS: NUGET_PACKAGES=.\.phase0\packages
 
 COMMAND: pwsh -NoProfile -File .\scripts\test-history-hygiene-regressions.ps1
-DURATION_MS: 6760
+DURATION_MS: 6188
 EXIT_CODE: 0
 OUTPUT:
 CASE: git-call-failure
 EXIT_CODE: 1
-DURATION_MS: 477
+DURATION_MS: 452
 PASS: git-call-failure rejected with the expected diagnostic class 'git rev-parse'.
 CASE: empty-tracked-output
 EXIT_CODE: 1
-DURATION_MS: 556
+DURATION_MS: 398
 PASS: empty-tracked-output rejected with the expected diagnostic class 'returned no required output'.
 CASE: empty-history-output
 EXIT_CODE: 1
-DURATION_MS: 532
+DURATION_MS: 407
 PASS: empty-history-output rejected with the expected diagnostic class 'returned no required output'.
 CASE: incomplete-history-output
 EXIT_CODE: 1
-DURATION_MS: 464
+DURATION_MS: 400
 PASS: incomplete-history-output rejected with the expected diagnostic class 'does not include HEAD'.
 CASE: git-grep-failure
 EXIT_CODE: 1
-DURATION_MS: 467
+DURATION_MS: 493
 PASS: git-grep-failure rejected with the expected diagnostic class 'git grep'.
 CASE: empty-log-output
 EXIT_CODE: 1
-DURATION_MS: 444
+DURATION_MS: 530
 PASS: empty-log-output rejected with the expected diagnostic class 'git log --all'.
 CASE: git-log-failure
 EXIT_CODE: 1
-DURATION_MS: 534
+DURATION_MS: 670
 PASS: git-log-failure rejected with the expected diagnostic class 'git log'.
 CASE: shallow-repository
 EXIT_CODE: 1
-DURATION_MS: 713
+DURATION_MS: 555
 PASS: shallow-repository rejected with the expected diagnostic class 'repository is shallow'.
 CASE: restricted-marker
 EXIT_CODE: 1
-DURATION_MS: 766
+DURATION_MS: 704
 PASS: restricted-marker rejected with the expected diagnostic class 'Restricted text found'.
 PASS: hygiene gate rejects command failure, shallow history, and a tracked restricted marker in disposable repositories.
 
 COMMAND: pwsh -NoProfile -File .\scripts\test-history-hygiene.ps1
-DURATION_MS: 6190
+DURATION_MS: 5007
 EXIT_CODE: 0
 OUTPUT:
 PASS: tracked material and complete non-shallow history contain no restricted developer-coordination markers.

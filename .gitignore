@@ -10,3 +10,13 @@ artifacts/
 *.cache
 .phase0/packages/
 evidence/generated/
+.env
+.env.*
+!.env.example
+*.local
+appsettings.local*
+secrets/
+secrets.*
+TestResults/
+coverage/
+.DS_Store

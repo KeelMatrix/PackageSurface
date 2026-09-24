@@ -101,6 +101,12 @@ try {
     Invoke-GateStep 'CLI contract and resource tests' {
         & dotnet run --project $cliTests --configuration Release --no-build
     }
+    Invoke-GateStep 'release contract regressions' {
+        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-release-contract.ps1')
+    }
+    Invoke-GateStep 'vulnerability audit regressions' {
+        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-vulnerability-audit.ps1')
+    }
 
     $singleProject = Join-Path $root 'fixtures/consumer/SingleTarget'
     $singleAssets = Join-Path $singleProject 'obj/project.assets.json'
@@ -183,14 +189,9 @@ try {
         & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-package-content-gate.ps1') -PackagePath $nupkgs[0].FullName -ArtifactDirectory $feed
     }
 
-    $sensitiveInput = Join-Path (Split-Path -Parent $cliProject) '.env'
-    try {
-        [IO.File]::WriteAllText($sensitiveInput, 'LOCAL_SECRET=must-not-pack', [Text.UTF8Encoding]::new($false))
-        $sensitiveOutput = @(& dotnet pack $cliProject --configuration Release --no-restore --output (Join-Path $scratch 'sensitive-pack') 2>&1)
-        if ($LASTEXITCODE -eq 0) { throw 'Pack accepted an injected sensitive/local configuration file.' }
-        Write-Output 'NEGATIVE_TEST: sensitive/local configuration rejected at pack time.'
+    Invoke-GateStep 'sensitive/local pack-input regressions' {
+        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-sensitive-pack-inputs.ps1') -ProjectFile $cliProject
     }
-    finally { if (Test-Path -LiteralPath $sensitiveInput) { Remove-Item -LiteralPath $sensitiveInput -Force } }
 
     $auditTimer = [Diagnostics.Stopwatch]::StartNew()
     $auditOutput = @(& dotnet list $cliProject package --vulnerable --include-transitive --configfile (Join-Path $root 'NuGet.config') --format json 2>&1)
@@ -287,7 +288,7 @@ try {
     Copy-Item -LiteralPath $inactiveAsset -Destination $inactiveAssetBackup -Force
     try {
         [IO.File]::AppendAllText($inactiveAsset, '<!-- strict-inactive-repro -->' + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
-        Invoke-GateStep 'strict present-but-inactive content difference' { & $tool check $singleProject --baseline $baselineA --format text --no-telemetry } 1
+        Invoke-GateStep 'strict inactive content remains informational' { & $tool check $singleProject --baseline $baselineA --format text --no-telemetry }
     }
     finally { Copy-Item -LiteralPath $inactiveAssetBackup -Destination $inactiveAsset -Force }
 
@@ -298,7 +299,7 @@ try {
     try {
         [IO.File]::WriteAllBytes($toolAsset, [byte[]]::new(16 * 1024 * 1024 + 1))
         Invoke-GateStep 'strict retry ordinary scan remains complete' { & $tool scan $singleProject --format json --no-telemetry }
-        Invoke-GateStep 'strict retry incomplete analysis' { & $tool check $singleProject --baseline $baselineA --format text --no-telemetry } 2
+        Invoke-GateStep 'strict retry informational tool content remains complete' { & $tool check $singleProject --baseline $baselineA --format text --no-telemetry }
     }
     finally { Copy-Item -LiteralPath $toolBackup -Destination $toolAsset -Force }
 

@@ -77,19 +77,23 @@ public static class CommandLine
             var report = ReportDocument.Create(options.Command, current, diagnostics);
             WriteOutput(report, options.Format);
 
-            if (diagnostics.Count > 0)
-            {
-                return diagnostics.Any(diagnostic => diagnostic.Id == "PS007") ? 2 : 1;
-            }
-
-            if (options.Command == CommandKind.Baseline)
+            var incomplete = diagnostics.Any(diagnostic => diagnostic.Id == "PS007");
+            if (options.Command == CommandKind.Baseline && !incomplete)
             {
                 BaselineDocument.Write(options.OutputPath!, current);
             }
 
-            if ((options.Command is CommandKind.Baseline or CommandKind.Check) && current.ResolvedPackageCount > 0 && options.TelemetryEnabled)
+            if (!incomplete &&
+                (options.Command is CommandKind.Baseline or CommandKind.Check) &&
+                current.ResolvedPackageCount > 0 &&
+                options.TelemetryEnabled)
             {
                 TrackActivation();
+            }
+
+            if (diagnostics.Count > 0)
+            {
+                return incomplete ? 2 : 1;
             }
 
             return 0;
@@ -128,10 +132,18 @@ public static class CommandLine
         return SurfaceSnapshot.Create(entries, reasons, strictContent, resolvedPackages);
     }
 
+    private static Action? TelemetryHook { get; set; }
+
     private static void TrackActivation()
     {
         try
         {
+            if (TelemetryHook is not null)
+            {
+                TelemetryHook();
+                return;
+            }
+
             new Client("PackageSurface", typeof(CommandLine)).TrackActivation();
         }
         catch
@@ -186,7 +198,7 @@ public sealed record Options(
 
         Options:
           --format text|json|sarif  Report format (default: text).
-          --strict-content          Record SHA-256 content fingerprints for classified assets.
+          --strict-content          Record SHA-256 fingerprints for present, active build/compiler execution assets.
           --project <path>          Select one project when a solution contains several projects.
           --telemetry on|off        Enable or disable best-effort activation telemetry.
           --no-telemetry             Disable best-effort activation telemetry.
@@ -509,7 +521,8 @@ public sealed record BaselineDocument(
             ValidateRelativeText(entry.PackageRelativePath, "packageRelativePath");
             if (entry.Incomplete || entry.IncompleteReason is not null) throw new InvalidDataException("Baseline contains an incomplete entry.");
             if (entry.Active && !entry.Present) throw new InvalidDataException("Baseline contains an active asset that is not present.");
-            if (document.StrictContent && entry.Present && !IsSha256(entry.Sha256)) throw new InvalidDataException("Strict baseline entries require SHA-256 fingerprints.");
+            if (document.StrictContent && CapabilityPolicy.IsStrictContentEligible(entry.Capability, entry.Present, entry.Active) && !IsSha256(entry.Sha256)) throw new InvalidDataException("Strict baseline execution-surface entries require SHA-256 fingerprints.");
+            if (document.StrictContent && !CapabilityPolicy.IsStrictContentEligible(entry.Capability, entry.Present, entry.Active) && entry.Sha256 is not null) throw new InvalidDataException("Strict baselines cannot fingerprint ineligible capability entries.");
             if (entry.Sha256 is not null && !IsSha256(entry.Sha256)) throw new InvalidDataException("Baseline contains an invalid SHA-256 fingerprint.");
             if (entry.ObservedPrimitives is not null && (entry.ObservedPrimitives.Count > 16 || entry.ObservedPrimitives.Any(primitive => primitive is not ("Exec" or "Import" or "InlineTaskFactory" or "UsingTask")))) throw new InvalidDataException("Baseline contains invalid observed XML primitives.");
         }
@@ -570,7 +583,7 @@ public sealed record BaselineEntry(
     string? IncompleteReason,
     IReadOnlyList<string>? ObservedPrimitives = null)
 {
-    public static BaselineEntry From(SurfaceEntry entry) => new(entry.Project, entry.Context, entry.TargetFramework, entry.RuntimeIdentifier, entry.PackageId, entry.Version, entry.Relationship, entry.Capability, entry.PackageRelativePath, entry.Present, entry.Active, entry.Sha256, entry.Incomplete, entry.IncompleteReason, entry.ObservedPrimitives);
+    public static BaselineEntry From(SurfaceEntry entry) => new(entry.Project, entry.Context, entry.TargetFramework, entry.RuntimeIdentifier, entry.PackageId, entry.Version, entry.Relationship, entry.Capability, entry.PackageRelativePath, entry.Present, entry.Active, CapabilityPolicy.IsStrictContentEligible(entry) ? entry.Sha256 : null, entry.Incomplete, entry.IncompleteReason, entry.ObservedPrimitives);
 }
 
 public sealed record Diagnostic(
@@ -608,8 +621,8 @@ public static class DiffEngine
 
         if (strictContent)
         {
-            var approvedContent = baseline.Where(entry => entry.Present).ToDictionary(Key, StringComparer.OrdinalIgnoreCase);
-            var observedContent = current.Where(entry => entry.Present).ToDictionary(Key, StringComparer.OrdinalIgnoreCase);
+            var approvedContent = baseline.Where(entry => CapabilityPolicy.IsStrictContentEligible(entry.Capability, entry.Present, entry.Active)).ToDictionary(Key, StringComparer.OrdinalIgnoreCase);
+            var observedContent = current.Where(CapabilityPolicy.IsStrictContentEligible).ToDictionary(Key, StringComparer.OrdinalIgnoreCase);
             foreach (var pair in observedContent)
             {
                 if (!approvedContent.TryGetValue(pair.Key, out var prior) || string.Equals(prior.Sha256, pair.Value.Sha256, StringComparison.OrdinalIgnoreCase)) continue;

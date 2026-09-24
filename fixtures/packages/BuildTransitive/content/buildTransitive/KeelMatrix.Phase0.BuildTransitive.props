@@ -1,0 +1,5 @@
+<Project>
+  <PropertyGroup>
+    <Phase0BuildTransitiveProps>true</Phase0BuildTransitiveProps>
+  </PropertyGroup>
+</Project>

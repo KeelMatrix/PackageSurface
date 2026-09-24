@@ -33,6 +33,8 @@ The capability classes are `BuildProps`, `BuildTargets`, `BuildTransitive`, `Bui
 
 Schema version `1` requires `schemaVersion`, `toolVersion`, `strictContent`, `entries`, and `incompleteReasons`. Each entry requires its context, project, target framework when target-scoped, package identity, relationship, capability, safe package-relative path, presence/active flags, and valid incomplete/hash markers. Null entries, incomplete baselines, invalid hashes, active-but-missing assets, oversized input, unsafe paths, and unsupported schema values return exit `2`; versions other than `1` are not upgraded. `--strict-content` requires a baseline created with strict fingerprints; a strict baseline enables strict hashing even when the check flag is omitted.
 
+Strict-content eligibility is explicit and identical during scanning, baseline validation, and comparison: only present and active `BuildProps`, `BuildTargets`, `BuildTransitive`, `BuildMultiTargeting`, `CompilerExtension`, and `CompileSourceInjection` entries carry fingerprints. Inactive build assets, native runtime assets, and informational `ToolOrScriptPresent` entries remain visible as classified facts but are not hashed or compared by `PS005`.
+
 ## Safety, privacy, and scope
 
 Analysis does not load dependency assemblies, execute MSBuild or package-provided build code, crawl the global cache, or use the network after restore. XML, file, graph, metadata, and hashing work is bounded. Traversal-looking paths, unsafe links, malformed XML, corrupt metadata, and invalid PE metadata fail closed. The tool targets modern SDK-style `PackageReference` projects on `net8.0`; Windows, Linux, and macOS are intended platforms, and the public CI matrix validates all three on pushes to `main` and pull requests.

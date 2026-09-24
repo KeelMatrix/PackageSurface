@@ -18,6 +18,21 @@ public enum SurfaceContextKind
     Project
 }
 
+public static class CapabilityPolicy
+{
+    public static bool IsStrictContentEligible(SurfaceEntry entry) =>
+        IsStrictContentEligible(entry.Capability, entry.Present, entry.Active);
+
+    public static bool IsStrictContentEligible(CapabilityKind capability, bool present, bool active) =>
+        present && active && capability is
+            CapabilityKind.BuildProps or
+            CapabilityKind.BuildTargets or
+            CapabilityKind.BuildTransitive or
+            CapabilityKind.BuildMultiTargeting or
+            CapabilityKind.CompilerExtension or
+            CapabilityKind.CompileSourceInjection;
+}
+
 public sealed record SurfaceEntry(
     string? TargetFramework,
     string? RuntimeIdentifier,

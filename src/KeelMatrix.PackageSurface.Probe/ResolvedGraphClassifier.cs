@@ -54,7 +54,7 @@ public static class ResolvedGraphClassifier
             var generatedImports = ReadGeneratedImports(root, projectRoot, incomplete, budget, generatedImportSources, expectedGeneratedImportSources);
             var projectLanguage = ReadProjectLanguage(root, projectRoot, incomplete);
             var entries = new List<SurfaceEntry>();
-            var projectEntries = new Dictionary<string, SurfaceEntry>(StringComparer.OrdinalIgnoreCase);
+            var projectEntries = new Dictionary<string, List<SurfaceEntry>>(StringComparer.OrdinalIgnoreCase);
             var resolvedPackages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             if (!root.TryGetProperty("targets", out var targets))
@@ -86,7 +86,7 @@ public static class ResolvedGraphClassifier
                 {
                     var (packageId, version) = SplitPackageKey(package.Name);
                     var libraryKey = packageId + "/" + version;
-                    if (!libraries.TryGetProperty(libraryKey, out var library))
+                    if (!TryGetPropertyIgnoreCase(libraries, libraryKey, out var library))
                     {
                         incomplete.Add($"Target {target.Name} refers to missing library {libraryKey}.");
                         continue;
@@ -175,7 +175,9 @@ public static class ResolvedGraphClassifier
                         }
 
                         var active = IsActive(capability, relativePath, packageId, analyzerPackages, packageRoot, targetAssets, context, targetAlias, generatedImports, generatedImportSources, expectedGeneratedImportSources, isMultiTargetingProject, projectLanguage, incomplete, libraryKey);
-                        var sha = present && strictContent ? ComputeSha256(physicalPath, budget) : null;
+                        var sha = present && strictContent && CapabilityPolicy.IsStrictContentEligible(capability, present, active)
+                            ? ComputeSha256(physicalPath, budget)
+                            : null;
                         var entry = new SurfaceEntry(
                             context == SurfaceContextKind.Project ? null : tfm,
                             context == SurfaceContextKind.Project ? null : rid,
@@ -195,7 +197,13 @@ public static class ResolvedGraphClassifier
                         if (context == SurfaceContextKind.Project)
                         {
                             var key = string.Join("|", entry.PackageId, entry.Version, entry.Capability, entry.PackageRelativePath);
-                            projectEntries[key] = entry;
+                            if (!projectEntries.TryGetValue(key, out var candidates))
+                            {
+                                candidates = new List<SurfaceEntry>();
+                                projectEntries.Add(key, candidates);
+                            }
+
+                            candidates.Add(entry);
                         }
                         else
                         {
@@ -205,7 +213,7 @@ public static class ResolvedGraphClassifier
                 }
             }
 
-            entries.AddRange(projectEntries.Values);
+            entries.AddRange(projectEntries.Values.Select(AggregateProjectEntries));
             return new ProbeResult(Deduplicate(entries), incomplete.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray(), resolvedPackages.Count);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidDataException or NotSupportedException or InvalidOperationException or ArgumentException or FormatException or OverflowException or KeyNotFoundException)
@@ -245,6 +253,38 @@ public static class ResolvedGraphClassifier
         .ThenBy(entry => entry.Capability)
         .ThenBy(entry => entry.PackageRelativePath, StringComparer.OrdinalIgnoreCase)
         .ToArray();
+
+    private static SurfaceEntry AggregateProjectEntries(IEnumerable<SurfaceEntry> candidates)
+    {
+        var ordered = candidates
+            .OrderByDescending(entry => entry.Relationship.Equals("direct", StringComparison.OrdinalIgnoreCase))
+            .ThenByDescending(entry => entry.Active)
+            .ThenByDescending(entry => entry.Present)
+            .ThenBy(entry => entry.Sha256, StringComparer.Ordinal)
+            .ThenBy(entry => entry.IncompleteReason, StringComparer.Ordinal)
+            .ToArray();
+        var first = ordered[0];
+        var incomplete = ordered.Any(entry => entry.Incomplete);
+        var reason = ordered.Select(entry => entry.IncompleteReason).FirstOrDefault(value => value is not null);
+        var eligible = CapabilityPolicy.IsStrictContentEligible(first.Capability, ordered.All(entry => entry.Present), ordered.Any(entry => entry.Active));
+        var hash = eligible ? ordered.Select(entry => entry.Sha256).FirstOrDefault(value => value is not null) : null;
+        var primitives = ordered
+            .SelectMany(entry => entry.ObservedPrimitives ?? Array.Empty<string>())
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        return first with
+        {
+            Relationship = ordered.Any(entry => entry.Relationship.Equals("direct", StringComparison.OrdinalIgnoreCase)) ? "direct" : "transitive",
+            Present = ordered.All(entry => entry.Present),
+            Active = ordered.Any(entry => entry.Active),
+            Sha256 = hash,
+            Incomplete = incomplete,
+            IncompleteReason = reason,
+            ObservedPrimitives = primitives.Length == 0 ? null : primitives
+        };
+    }
 
     private static Dictionary<string, Dictionary<string, PackageAssetRule>> ReadDirectPackageAssetRules(JsonElement root)
     {
@@ -357,7 +397,7 @@ public static class ResolvedGraphClassifier
                 return;
             }
 
-            if (!targetAssets.TryGetProperty(packageKey, out var package) || package.ValueKind != JsonValueKind.Object)
+            if (!TryGetPropertyIgnoreCase(targetAssets, packageKey, out var package) || package.ValueKind != JsonValueKind.Object)
             {
                 throw new InvalidDataException($"Target package {packageKey} is not an object.");
             }
@@ -435,15 +475,13 @@ public static class ResolvedGraphClassifier
         }
 
         projectPath ??= Directory.EnumerateFiles(projectRoot, "*proj", SearchOption.TopDirectoryOnly).FirstOrDefault();
-        if (projectPath is null || projectPath.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)) return ProjectLanguage.CSharp;
-        if (projectPath.EndsWith(".vbproj", StringComparison.OrdinalIgnoreCase)) return ProjectLanguage.VisualBasic;
-        if (projectPath.EndsWith(".fsproj", StringComparison.OrdinalIgnoreCase))
+        if (projectPath is not null && projectPath.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)) return ProjectLanguage.CSharp;
+        if (projectPath is not null && projectPath.EndsWith(".vbproj", StringComparison.OrdinalIgnoreCase)) return ProjectLanguage.VisualBasic;
+        if (projectPath is not null && projectPath.EndsWith(".fsproj", StringComparison.OrdinalIgnoreCase))
         {
-            incomplete.Add("F# compiler-extension applicability is unsupported; use a C# or Visual Basic project.");
             return ProjectLanguage.Unknown;
         }
 
-        incomplete.Add("The consuming project language could not be determined for analyzer applicability.");
         return ProjectLanguage.Unknown;
     }
 
@@ -482,6 +520,12 @@ public static class ResolvedGraphClassifier
             if (file.ValueKind != JsonValueKind.String || !TryNormalizeRelativePath(file.GetString()!, out var normalized))
             {
                 incomplete.Add($"Library {libraryKey} contains an invalid relative asset path.");
+                continue;
+            }
+
+            if (result.Any(existing => existing.Equals(normalized, StringComparison.OrdinalIgnoreCase)))
+            {
+                incomplete.Add($"{libraryKey} contains a duplicate asset path: {normalized}.");
                 continue;
             }
 
@@ -672,7 +716,7 @@ public static class ResolvedGraphClassifier
                         normalizedImport.EndsWith('\\' + relativePath.Replace('/', '\\'), StringComparison.OrdinalIgnoreCase)) &&
                          import.AppliesTo(context, targetFramework, capability == CapabilityKind.BuildMultiTargeting);
             });
-            var importSource = capability == CapabilityKind.BuildProps ? ".props" : ".targets";
+            var importSource = Path.GetExtension(relativePath);
             var hasGeneratedImportSource = expectedGeneratedImportSources.Count == 0
                 ? generatedImportSources.Any(source => source.EndsWith(importSource, StringComparison.OrdinalIgnoreCase))
                 : expectedGeneratedImportSources
@@ -689,7 +733,7 @@ public static class ResolvedGraphClassifier
         var assetName = relativePath.Replace('\\', '/');
         return capability switch
         {
-            CapabilityKind.CompilerExtension => IsConventionalAnalyzerPath(assetName, projectLanguage) && analyzerPackages.Contains(packageId),
+            CapabilityKind.CompilerExtension => IsCompilerExtensionActive(assetName, projectLanguage, analyzerPackages, packageId, incomplete, libraryKey),
             CapabilityKind.CompileSourceInjection => IsCompileContentFile(targetAssets, assetName, incomplete, libraryKey),
             CapabilityKind.NativeRuntime => ContainsAsset(targetAssets, "native", assetName) || ContainsAsset(targetAssets, "runtime", assetName),
             _ => false
@@ -706,7 +750,7 @@ public static class ResolvedGraphClassifier
             return true;
         }
 
-        var expectedSuffix = capability == CapabilityKind.BuildProps ? ".props" : ".targets";
+        var expectedSuffix = Path.GetExtension(sourceFile);
         return sourceFile.EndsWith(expectedSuffix, StringComparison.OrdinalIgnoreCase) &&
             expectedGeneratedImportSources.Contains(sourceFile);
     }
@@ -783,6 +827,25 @@ public static class ResolvedGraphClassifier
         if (path.StartsWith("analyzers/dotnet/cs/", StringComparison.OrdinalIgnoreCase)) return language == ProjectLanguage.CSharp;
         if (path.StartsWith("analyzers/dotnet/vb/", StringComparison.OrdinalIgnoreCase)) return language == ProjectLanguage.VisualBasic;
         return path.StartsWith("analyzers/dotnet/", StringComparison.OrdinalIgnoreCase) && path.Count(character => character == '/') == 2;
+    }
+
+    private static bool IsCompilerExtensionActive(
+        string path,
+        ProjectLanguage language,
+        HashSet<string> analyzerPackages,
+        string packageId,
+        List<string> incomplete,
+        string libraryKey)
+    {
+        var languageSpecific = path.StartsWith("analyzers/dotnet/cs/", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("analyzers/dotnet/vb/", StringComparison.OrdinalIgnoreCase);
+        if (languageSpecific && language == ProjectLanguage.Unknown)
+        {
+            incomplete.Add($"{libraryKey}: consuming project language is required to determine analyzer applicability for {path}.");
+            return false;
+        }
+
+        return IsConventionalAnalyzerPath(path, language) && analyzerPackages.Contains(packageId);
     }
 
     private static bool IsCompileContentFile(JsonElement targetAssets, string assetName, List<string> incomplete, string libraryKey)
@@ -921,6 +984,24 @@ public static class ResolvedGraphClassifier
     }
 
     private static string NormalizeText(string value) => value.Replace('\\', '/').Trim();
+
+    private static bool TryGetPropertyIgnoreCase(JsonElement objectElement, string propertyName, out JsonElement value)
+    {
+        if (objectElement.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in objectElement.EnumerateObject())
+            {
+                if (property.Name.Equals(propertyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = property.Value;
+                    return true;
+                }
+            }
+        }
+
+        value = default;
+        return false;
+    }
 
     private static ImportApplicability DetermineApplicability(
         IReadOnlyList<ConditionClause> conditions,

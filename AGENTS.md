@@ -39,4 +39,4 @@ Run the focused console tests after classifier or CLI changes, then run `scripts
 
 ## Change boundaries
 
-Keep changes limited to the classifier, CLI/schema/report structures, fixture corpus, tests, release validation, package-content enforcement, local gate, documentation, or release workflow required by the approved product scope. Do not publish packages, create tags/releases, or trigger private GitHub Actions from local engineering work.
+Keep changes limited to the classifier, CLI/schema/report structures, fixture corpus, tests, release validation, package-content enforcement, local gate, documentation, or release workflow required by the approved product scope. Public CI runs on pushes to `main` and pull requests. Do not publish packages, create tags/releases, or trigger deployments from local engineering work.

@@ -71,7 +71,7 @@ Activation telemetry is best effort and occurs only after a successful baseline 
 
 ## Supported scope and limitations
 
-The tool targets `net8.0` and SDK-style `PackageReference` restore outputs. Windows, Linux, and macOS are the intended platforms; the current repository validation covers Windows and Linux, while macOS verification remains unverified. Legacy project systems, `packages.config`, automatic restore, feed queries, vulnerability scanning, license analysis, malware detection, decompilation, dynamic sandboxing, and package safety judgments are outside the supported scope.
+The tool targets `net8.0` and SDK-style `PackageReference` restore outputs. Windows, Linux, and macOS are the intended platforms, and the public CI matrix validates all three on pushes to `main` and pull requests. Legacy project systems, `packages.config`, automatic restore, feed queries, vulnerability scanning, license analysis, malware detection, decompilation, dynamic sandboxing, and package safety judgments are outside the supported scope.
 
 ## Troubleshooting
 

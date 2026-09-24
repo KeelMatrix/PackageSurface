@@ -74,6 +74,7 @@ if (result.Entries.Any(entry => entry.Capability == CapabilityKind.ToolOrScriptP
 
 RunGeneratedImportConditionRegression(assets);
 RunGeneratedImportFileIdentityRegression(assets);
+RunGeneratedImportPhaseCrossWireRegression(assets);
 
 var malformed = Path.Combine(Path.GetTempPath(), "packagesurface-malformed-assets.json");
 try
@@ -267,6 +268,81 @@ static void RunGeneratedImportFileIdentityRegression(string baselineAssets)
         }
 
         Console.WriteLine("generated-import filename mismatch: incomplete");
+    }
+    finally
+    {
+        if (Directory.Exists(scratch))
+        {
+            Directory.Delete(scratch, recursive: true);
+        }
+    }
+}
+
+static void RunGeneratedImportPhaseCrossWireRegression(string baselineAssets)
+{
+    using var document = JsonDocument.Parse(File.ReadAllText(baselineAssets));
+    var root = document.RootElement;
+    var projectPath = root.GetProperty("project").GetProperty("restore").GetProperty("projectPath").GetString()!;
+    var normalizedProjectPath = projectPath.Replace('\\', '/');
+    var projectFileName = normalizedProjectPath[(normalizedProjectPath.LastIndexOf('/') + 1)..];
+    var packageFolder = root.GetProperty("packageFolders").EnumerateObject().Select(property => property.Name).First();
+    var scenarios = new[]
+    {
+        ("BuildProps", "KeelMatrix.Phase0.BuildProps/1.0.0", "build/KeelMatrix.Phase0.BuildProps.props"),
+        ("BuildProps TFM", "KeelMatrix.Phase0.BuildProps/1.0.0", "build/net9.0/KeelMatrix.Phase0.BuildProps.props"),
+        ("BuildTargets", "KeelMatrix.Phase0.BuildTargets/1.0.0", "build/KeelMatrix.Phase0.BuildTargets.targets"),
+        ("BuildTargets TFM", "KeelMatrix.Phase0.BuildTargets/1.0.0", "build/net9.0/KeelMatrix.Phase0.BuildTargets.targets"),
+        ("BuildTransitive props", "KeelMatrix.Phase0.BuildTransitive/1.0.0", "buildTransitive/KeelMatrix.Phase0.BuildTransitive.props"),
+        ("BuildTransitive props TFM", "KeelMatrix.Phase0.BuildTransitive/1.0.0", "buildTransitive/net9.0/KeelMatrix.Phase0.BuildTransitive.props"),
+        ("BuildTransitive targets", "KeelMatrix.Phase0.BuildTransitive/1.0.0", "buildTransitive/KeelMatrix.Phase0.BuildTransitive.targets"),
+        ("BuildTransitive targets TFM", "KeelMatrix.Phase0.BuildTransitive/1.0.0", "buildTransitive/net9.0/KeelMatrix.Phase0.BuildTransitive.targets"),
+        ("BuildMultiTargeting props", "KeelMatrix.Phase0.BuildMultiTargeting/1.0.0", "buildMultiTargeting/KeelMatrix.Phase0.BuildMultiTargeting.props"),
+        ("BuildMultiTargeting props TFM", "KeelMatrix.Phase0.BuildMultiTargeting/1.0.0", "buildMultiTargeting/net9.0/KeelMatrix.Phase0.BuildMultiTargeting.props"),
+        ("BuildMultiTargeting targets", "KeelMatrix.Phase0.BuildMultiTargeting/1.0.0", "buildMultiTargeting/KeelMatrix.Phase0.BuildMultiTargeting.targets"),
+        ("BuildMultiTargeting targets TFM", "KeelMatrix.Phase0.BuildMultiTargeting/1.0.0", "buildMultiTargeting/net9.0/KeelMatrix.Phase0.BuildMultiTargeting.targets")
+    };
+
+    var scratch = Path.Combine(Path.GetTempPath(), "packagesurface-generated-import-phase-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(Path.Combine(scratch, "obj"));
+    try
+    {
+        File.Copy(baselineAssets, Path.Combine(scratch, "obj", "project.assets.json"));
+        var generatedProps = Path.Combine(scratch, projectFileName + ".nuget.g.props");
+        var generatedTargets = Path.Combine(scratch, projectFileName + ".nuget.g.targets");
+        foreach (var (label, libraryKey, relativePath) in scenarios)
+        {
+            if (!root.GetProperty("libraries").TryGetProperty(libraryKey, out var library))
+            {
+                throw new InvalidOperationException($"Cross-wire scenario {label} is missing library {libraryKey}.");
+            }
+
+            var packageRoot = Path.Combine(packageFolder, library.GetProperty("path").GetString()!.Replace('/', Path.DirectorySeparatorChar));
+            var assetPath = Path.Combine(packageRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
+            if (!File.Exists(assetPath))
+            {
+                throw new InvalidOperationException($"Cross-wire scenario {label} is missing asset {relativePath}.");
+            }
+
+            var importPath = System.Security.SecurityElement.Escape(assetPath) ?? assetPath;
+            var assetExtension = Path.GetExtension(relativePath);
+            var wrongPhaseFile = assetExtension.Equals(".props", StringComparison.OrdinalIgnoreCase) ? generatedTargets : generatedProps;
+            var correctPhaseFile = assetExtension.Equals(".props", StringComparison.OrdinalIgnoreCase) ? generatedProps : generatedTargets;
+            File.WriteAllText(correctPhaseFile, "<Project />");
+            File.WriteAllText(wrongPhaseFile, $"<Project><Import Project=\"{importPath}\" /></Project>");
+
+            var analyzed = ResolvedGraphClassifier.Analyze(Path.Combine(scratch, "obj", "project.assets.json"), scratch, strictContent: false);
+            var entries = analyzed.Entries.Where(entry =>
+                entry.PackageId.Equals(libraryKey.Split('/')[0], StringComparison.OrdinalIgnoreCase) &&
+                entry.PackageRelativePath.Equals(relativePath, StringComparison.OrdinalIgnoreCase)).ToArray();
+            var tfmSpecific = relativePath.Contains("/net9.0/", StringComparison.OrdinalIgnoreCase);
+            var missingIncompleteEvidence = !tfmSpecific && !entries.Any(entry => entry.Incomplete);
+            if (entries.Length == 0 || entries.Any(entry => entry.Active) || missingIncompleteEvidence)
+            {
+                throw new InvalidOperationException($"Cross-wire phase regression failed for {label}: entries={entries.Length}, complete={analyzed.IsComplete}, active={string.Join(',', entries.Select(entry => entry.Active))}, incomplete={string.Join(',', entries.Select(entry => entry.Incomplete))}, reasons={string.Join("; ", analyzed.IncompleteReasons)}");
+            }
+
+            Console.WriteLine($"generated-import cross-wire {label}: inactive/{(tfmSpecific ? "unreachable-variant" : "incomplete")}");
+        }
     }
     finally
     {

@@ -10,13 +10,20 @@ artifacts/
 *.cache
 .phase0/packages/
 evidence/generated/
+# BEGIN GENERATED SENSITIVE INPUT POLICY
 .env
 .env.*
-!.env.example
 *.local
 appsettings.local*
 secrets/
 secrets.*
+*.user
+*.suo
+*.pfx
+*.snk
+*.key
+!.env.example
+# END GENERATED SENSITIVE INPUT POLICY
 TestResults/
 coverage/
 .DS_Store

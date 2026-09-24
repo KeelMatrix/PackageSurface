@@ -15,9 +15,10 @@ OUTPUT:
 ## main...origin/main
 
 COMMAND: git ls-tree -r --name-only HEAD | Select-String "^\.github/"
-EXIT_CODE: 1
+EXIT_CODE: 0
 OUTPUT:
-NO WORKFLOW FILES
+.github/workflows/ci.yml
+.github/workflows/release.yml
 ```
 
 ## Repository checks

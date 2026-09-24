@@ -357,6 +357,17 @@ try {
     }
     Write-Output 'TELEMETRY_PRIVACY=PASS PackageSurface passes no analyzed dependency identity or content to the shared client; the shared policy documents its anonymous hash fields. Local gate uses --no-telemetry.'
 
+    Invoke-GateStep 'working tree cleanliness' {
+        $status = @(git status --porcelain --untracked-files=all)
+        if ($LASTEXITCODE -ne 0) {
+            throw "Unable to verify working tree cleanliness (git exit code $LASTEXITCODE)."
+        }
+        if ($status.Count -ne 0) {
+            throw "Working tree is not clean after the gate:`n$($status -join "`n")"
+        }
+        Write-Output 'WORKTREE_STATUS=CLEAN'
+    }
+
     $timer.Stop()
     Write-Output "LOCAL_GATE=PASS"
     Write-Output "LOCAL_GATE_DURATION_MS=$($timer.ElapsedMilliseconds)"

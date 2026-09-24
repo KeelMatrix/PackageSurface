@@ -15,6 +15,16 @@ function Convert-ToPortableText {
     return $portable
 }
 
+function Write-Utf8LfLines {
+    param(
+        [Parameter(Mandatory)] [string] $Path,
+        [Parameter(Mandatory)] [System.Collections.IEnumerable] $Lines
+    )
+
+    $text = (@($Lines) -join "`n") + "`n"
+    [IO.File]::WriteAllText($Path, $text, [Text.UTF8Encoding]::new($false))
+}
+
 function Invoke-Recorded {
     param([string]$Command, [scriptblock]$Action, [switch]$AllowFailure)
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
@@ -306,7 +316,7 @@ foreach ($row in $expected) {
         $matrix.Add("| $($row.category) | $($row.relationship) | $($row.seededState) | $context | $tfm/$rid | fixtures/consumer/$($row.consumer)/$($row.package):$($row.path) |")
     }
 }
-[IO.File]::WriteAllLines((Join-Path $root 'fixtures/corpus-matrix.md'), $matrix)
+Write-Utf8LfLines (Join-Path $root 'fixtures/corpus-matrix.md') $matrix
 
 $allComplete = @($classified.Values | Where-Object { -not $_.IsComplete }).Count -eq 0
 $verdict = if ($disagreements.Count -eq 0 -and $allComplete -and $historyResult.ExitCode -eq 0) { '**PASS** — the complete classifier output agrees with the restored graph, both generated import files, package contents, and the committed corpus matrix.' } else { '**FAIL** — source ledger, classifier completeness, matrix coverage, or repository hygiene checks require correction.' }
@@ -337,7 +347,7 @@ foreach ($line in @(
     '', '## Residual uncertainty', '',
     'This is a bounded Phase 0 fixture, not a complete NuGet/MSBuild semantic implementation. The active rules are proven only for SDK-style PackageReference graphs represented by this corpus; broader hostile-input and cross-platform gates belong to the next implementation phase.'
 )) { $report.Add([string]$line) }
-[IO.File]::WriteAllLines((Join-Path $root 'evidence/phase0.md'), $report)
+Write-Utf8LfLines (Join-Path $root 'evidence/phase0.md') $report
 Write-Output "Phase 0 complete. Report: $(Join-Path $root 'evidence/phase0.md')"
 if ($historyResult.ExitCode -ne 0) { throw 'Repository hygiene gate failed.' }
 if ($disagreements.Count -ne 0 -or -not $allComplete) { throw 'Phase 0 comparison failed.' }

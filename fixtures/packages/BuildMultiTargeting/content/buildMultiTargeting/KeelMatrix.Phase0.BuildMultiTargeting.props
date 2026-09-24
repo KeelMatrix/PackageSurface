@@ -1,0 +1,5 @@
+<Project>
+  <PropertyGroup>
+    <Phase0BuildMultiTargetingProps>true</Phase0BuildMultiTargetingProps>
+  </PropertyGroup>
+</Project>

@@ -9,12 +9,12 @@ permissions:
   contents: read
 
 env:
-  DOTNET_VERSION: '8.0.x'
   PACKAGE_VERSION: '0.1.0'
 
 jobs:
   validate:
     name: Validate and package
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -26,7 +26,7 @@ jobs:
       - name: Set up .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
+          global-json-file: global.json
       - name: Validate tag, version, and finalized changelog
         shell: pwsh
         run: |
@@ -66,6 +66,7 @@ jobs:
     name: Publish package
     needs: validate
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       id-token: write
@@ -87,10 +88,16 @@ jobs:
     name: Create GitHub Release
     needs: publish
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
+      - name: Download validated release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: artifacts/release
       - name: Create release after successful publication
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" --verify-tag --generate-notes --title "${{ github.ref_name }}"
+        run: gh release create "${{ github.ref_name }}" artifacts/release/KeelMatrix.PackageSurface.${{ env.PACKAGE_VERSION }}.nupkg artifacts/release/KeelMatrix.PackageSurface.${{ env.PACKAGE_VERSION }}.snupkg --verify-tag --generate-notes --title "${{ github.ref_name }}"

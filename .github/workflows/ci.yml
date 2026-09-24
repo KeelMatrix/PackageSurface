@@ -22,6 +22,7 @@ concurrency:
 jobs:
   validate:
     name: Validate on ${{ matrix.os }}
+    timeout-minutes: 45
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

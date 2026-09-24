@@ -11,6 +11,8 @@
   <ItemGroup>
     <None Include="content/buildTransitive/KeelMatrix.Phase0.BuildTransitive.targets" Pack="true" PackagePath="buildTransitive/KeelMatrix.Phase0.BuildTransitive.targets" />
     <None Include="content/buildTransitive/net9.0/KeelMatrix.Phase0.BuildTransitive.targets" Pack="true" PackagePath="buildTransitive/net9.0/KeelMatrix.Phase0.BuildTransitive.targets" />
+    <None Include="content/buildTransitive/KeelMatrix.Phase0.BuildTransitive.props" Pack="true" PackagePath="buildTransitive/KeelMatrix.Phase0.BuildTransitive.props" />
+    <None Include="content/buildTransitive/net9.0/KeelMatrix.Phase0.BuildTransitive.props" Pack="true" PackagePath="buildTransitive/net9.0/KeelMatrix.Phase0.BuildTransitive.props" />
     <None Include="content/lib/net9.0/_._" Pack="true" PackagePath="lib/net9.0/_._" />
   </ItemGroup>
 </Project>

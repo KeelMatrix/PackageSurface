@@ -27,7 +27,7 @@ PackageSurface is not a malware or vulnerability scanner. A reported capability 
 
 ## What it reports
 
-The versioned `package-surface.json` baseline records project context, TFM, RID, package identity, direct or transitive relationship, capability category, normalized package-relative asset path, and whether the asset is present and active. `--strict-content` adds SHA-256 fingerprints for every present classified asset; fingerprints do not include machine cache paths.
+The versioned `package-surface.json` baseline records project context, TFM, RID, package identity, direct or transitive relationship, capability category, normalized package-relative asset path, and whether the asset is present and active. `--strict-content` adds SHA-256 fingerprints only for present, active build/compiler execution assets (`BuildProps`, `BuildTargets`, `BuildTransitive`, `BuildMultiTargeting`, `CompilerExtension`, and `CompileSourceInjection`). Inactive assets, native runtime assets, and informational `ToolOrScriptPresent` entries are not strict-content eligible; fingerprints do not include machine cache paths.
 
 The taxonomy is:
 

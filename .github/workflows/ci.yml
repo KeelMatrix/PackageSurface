@@ -1,18 +1,23 @@
-name: Platform validation
+name: CI
 
 on:
+  push:
+    branches:
+      - main
+  pull_request:
   workflow_dispatch:
     inputs:
       commit_sha:
-        description: Full 40-character candidate commit SHA to validate
-        required: true
+        description: Full 40-character commit SHA to validate (manual dispatch only)
+        required: false
         type: string
 
 permissions:
   contents: read
 
-env:
-  DOTNET_VERSION: '8.0.x'
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   validate:
@@ -28,14 +33,15 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Check out exact candidate commit
+      - name: Check out source
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.commit_sha }}
+          ref: ${{ inputs.commit_sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify checked out commit
+      - name: Verify manually selected commit
+        if: ${{ inputs.commit_sha != '' }}
         shell: pwsh
         env:
           EXPECTED_SHA: ${{ inputs.commit_sha }}
@@ -50,10 +56,10 @@ jobs:
               throw "Checked out commit '$actualSha' does not match requested commit '$env:EXPECTED_SHA'."
           }
 
-      - name: Set up .NET SDK
+      - name: Set up .NET SDK from global.json
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
+          global-json-file: global.json
 
       - name: Restore with repository NuGet configuration
         shell: pwsh

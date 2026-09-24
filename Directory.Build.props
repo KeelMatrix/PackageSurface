@@ -1,4 +1,5 @@
 <Project>
+  <Import Project="$(MSBuildThisFileDirectory)SensitiveInputPatterns.props" />
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
@@ -10,8 +11,11 @@
     <TreatWarningsAsErrors Condition="'$(Configuration)' == 'Release'">true</TreatWarningsAsErrors>
     <LangVersion>latestMajor</LangVersion>
   </PropertyGroup>
-  <Target Name="ValidateSensitivePackInputs" BeforeTargets="_IntermediatePack" Condition="'$(IsPackable)' == 'true'">
-    <Error Condition="$([System.String]::Copy('%(None.Filename)').ToLowerInvariant()) == '.env' Or $([System.String]::Copy('%(None.Identity)').ToLowerInvariant().EndsWith('.env')) Or '%(None.Extension)' == '.user' Or '%(None.Extension)' == '.suo' Or '%(None.Extension)' == '.pfx' Or '%(None.Extension)' == '.snk' Or '%(None.Extension)' == '.key' Or $([System.String]::Copy('%(None.Filename)').ToLowerInvariant().StartsWith('appsettings.local')) Or $([System.String]::Copy('%(None.Filename)').ToLowerInvariant()) == 'secrets'" Text="Sensitive or machine-local file '%(None.Identity)' cannot be included in the package." />
-    <Error Condition="$([System.String]::Copy('%(Content.Filename)').ToLowerInvariant()) == '.env' Or $([System.String]::Copy('%(Content.Identity)').ToLowerInvariant().EndsWith('.env')) Or '%(Content.Extension)' == '.user' Or '%(Content.Extension)' == '.suo' Or '%(Content.Extension)' == '.pfx' Or '%(Content.Extension)' == '.snk' Or '%(Content.Extension)' == '.key' Or $([System.String]::Copy('%(Content.Filename)').ToLowerInvariant().StartsWith('appsettings.local')) Or $([System.String]::Copy('%(Content.Filename)').ToLowerInvariant()) == 'secrets'" Text="Sensitive or machine-local file '%(Content.Identity)' cannot be included in the package." />
+  <Target Name="ValidateSensitivePackInputs" AfterTargets="_GetPackageFiles" Condition="'$(IsPackable)' == 'true'">
+    <ItemGroup>
+      <_SensitivePackFile Include="@(_PackageFiles)"
+        Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('%(_PackageFiles.Identity)', '$(SensitivePackInputRegex)')) And !$([System.Text.RegularExpressions.Regex]::IsMatch('%(_PackageFiles.Identity)', '$(SensitivePackInputExceptionRegex)'))" />
+    </ItemGroup>
+    <Error Condition="'@(_SensitivePackFile)' != ''" Text="Sensitive or machine-local file '%(_SensitivePackFile.Identity)' cannot be included in the package." />
   </Target>
 </Project>

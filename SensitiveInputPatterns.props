@@ -1,0 +1,46 @@
+<Project>
+  <ItemGroup>
+    <SensitivePackInputPattern Include="env-file">
+      <Pattern>.env</Pattern>
+    </SensitivePackInputPattern>
+    <SensitivePackInputPattern Include="env-family">
+      <Pattern>.env.*</Pattern>
+    </SensitivePackInputPattern>
+    <SensitivePackInputPattern Include="local-suffix">
+      <Pattern>*.local</Pattern>
+    </SensitivePackInputPattern>
+    <SensitivePackInputPattern Include="local-appsettings">
+      <Pattern>appsettings.local*</Pattern>
+    </SensitivePackInputPattern>
+    <SensitivePackInputPattern Include="secrets-directory">
+      <Pattern>secrets/</Pattern>
+    </SensitivePackInputPattern>
+    <SensitivePackInputPattern Include="secrets-family">
+      <Pattern>secrets.*</Pattern>
+    </SensitivePackInputPattern>
+    <SensitivePackInputPattern Include="user-file">
+      <Pattern>*.user</Pattern>
+    </SensitivePackInputPattern>
+    <SensitivePackInputPattern Include="suo-file">
+      <Pattern>*.suo</Pattern>
+    </SensitivePackInputPattern>
+    <SensitivePackInputPattern Include="pfx-file">
+      <Pattern>*.pfx</Pattern>
+    </SensitivePackInputPattern>
+    <SensitivePackInputPattern Include="snk-file">
+      <Pattern>*.snk</Pattern>
+    </SensitivePackInputPattern>
+    <SensitivePackInputPattern Include="key-file">
+      <Pattern>*.key</Pattern>
+    </SensitivePackInputPattern>
+    <SensitivePackInputException Include="example-env">
+      <Pattern>.env.example</Pattern>
+    </SensitivePackInputException>
+  </ItemGroup>
+
+  <!-- Generated from SensitivePackInputPattern/SensitivePackInputException. -->
+  <PropertyGroup>
+    <SensitivePackInputRegex>(?i)(^|[\\/])(?:\.env(?:\..*)?|.*\.local|appsettings\.local.*|secrets(?:$|[\\/].*|\..*)|.*\.(?:user|suo|pfx|snk|key))$</SensitivePackInputRegex>
+    <SensitivePackInputExceptionRegex>(?i)(^|[\\/])\.env\.example$</SensitivePackInputExceptionRegex>
+  </PropertyGroup>
+</Project>

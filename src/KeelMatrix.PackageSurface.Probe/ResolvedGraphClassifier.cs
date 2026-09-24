@@ -174,7 +174,7 @@ public static class ResolvedGraphClassifier
                             }
                         }
 
-                        var active = IsActive(capability, relativePath, packageId, analyzerPackages, packageRoot, targetAssets, context, targetAlias, generatedImports, generatedImportSources, expectedGeneratedImportSources, isMultiTargetingProject, projectLanguage, incomplete, libraryKey);
+                        var active = IsActive(capability, relativePath, packageId, analyzerPackages, packageRoot, targetAssets, context, targetAlias, generatedImports, generatedImportSources, expectedGeneratedImportSources, isMultiTargetingProject, projectLanguage, ref reason, incomplete, libraryKey);
                         var sha = present && strictContent && CapabilityPolicy.IsStrictContentEligible(capability, present, active)
                             ? ComputeSha256(physicalPath, budget)
                             : null;
@@ -695,6 +695,7 @@ public static class ResolvedGraphClassifier
         IReadOnlySet<string> expectedGeneratedImportSources,
         bool isMultiTargetingProject,
         ProjectLanguage projectLanguage,
+        ref string? reason,
         List<string> incomplete,
         string libraryKey)
     {
@@ -710,11 +711,20 @@ public static class ResolvedGraphClassifier
             var imported = generatedImports.Any(import =>
             {
                 var normalizedImport = NormalizeText(import.Project);
-                return IsExpectedGeneratedImportSource(import.SourceFile, capability, expectedGeneratedImportSources) &&
-                       (normalizedImport.Contains(fullAsset, StringComparison.OrdinalIgnoreCase) ||
-                        normalizedImport.EndsWith('/' + relativePath, StringComparison.OrdinalIgnoreCase) ||
-                        normalizedImport.EndsWith('\\' + relativePath.Replace('/', '\\'), StringComparison.OrdinalIgnoreCase)) &&
+                var referencesAsset = normalizedImport.Contains(fullAsset, StringComparison.OrdinalIgnoreCase) ||
+                    normalizedImport.EndsWith('/' + relativePath, StringComparison.OrdinalIgnoreCase) ||
+                    normalizedImport.EndsWith('\\' + relativePath.Replace('/', '\\'), StringComparison.OrdinalIgnoreCase);
+                return IsExpectedGeneratedImportSource(import.SourceFile, relativePath, expectedGeneratedImportSources) &&
+                       referencesAsset &&
                          import.AppliesTo(context, targetFramework, capability == CapabilityKind.BuildMultiTargeting);
+            });
+            var hasWrongPhaseImport = generatedImports.Any(import =>
+            {
+                var normalizedImport = NormalizeText(import.Project);
+                var referencesAsset = normalizedImport.Contains(fullAsset, StringComparison.OrdinalIgnoreCase) ||
+                    normalizedImport.EndsWith('/' + relativePath, StringComparison.OrdinalIgnoreCase) ||
+                    normalizedImport.EndsWith('\\' + relativePath.Replace('/', '\\'), StringComparison.OrdinalIgnoreCase);
+                return referencesAsset && !IsExpectedGeneratedImportSource(import.SourceFile, relativePath, expectedGeneratedImportSources);
             });
             var importSource = Path.GetExtension(relativePath);
             var hasGeneratedImportSource = expectedGeneratedImportSources.Count == 0
@@ -722,9 +732,12 @@ public static class ResolvedGraphClassifier
                 : expectedGeneratedImportSources
                     .Where(source => source.EndsWith(importSource, StringComparison.OrdinalIgnoreCase))
                     .Any(generatedImportSources.Contains);
-            if (!imported && reachableBuildAsset && RequiresGeneratedImportEvidence(capability, relativePath, isMultiTargetingProject) && !hasGeneratedImportSource)
+            if (!imported &&
+                (hasWrongPhaseImport ||
+                 (reachableBuildAsset && RequiresGeneratedImportEvidence(capability, relativePath, isMultiTargetingProject) && !hasGeneratedImportSource)))
             {
-                incomplete.Add($"{libraryKey}: required generated NuGet import evidence is missing for {relativePath}.");
+                reason = $"Required generated NuGet import evidence is missing or phase-mismatched: {relativePath}.";
+                incomplete.Add($"{libraryKey}: {reason}");
             }
 
             return imported;
@@ -742,17 +755,23 @@ public static class ResolvedGraphClassifier
 
     private static bool IsExpectedGeneratedImportSource(
         string sourceFile,
-        CapabilityKind capability,
+        string relativePath,
         IReadOnlySet<string> expectedGeneratedImportSources)
     {
-        if (expectedGeneratedImportSources.Count == 0)
+        var assetExtension = Path.GetExtension(relativePath);
+        if (!assetExtension.Equals(".props", StringComparison.OrdinalIgnoreCase) &&
+            !assetExtension.Equals(".targets", StringComparison.OrdinalIgnoreCase))
         {
-            return true;
+            return false;
         }
 
-        var expectedSuffix = Path.GetExtension(sourceFile);
-        return sourceFile.EndsWith(expectedSuffix, StringComparison.OrdinalIgnoreCase) &&
-            expectedGeneratedImportSources.Contains(sourceFile);
+        var expectedGeneratedImportSuffix = ".nuget.g" + assetExtension;
+        if (!sourceFile.EndsWith(expectedGeneratedImportSuffix, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return expectedGeneratedImportSources.Count == 0 || expectedGeneratedImportSources.Contains(sourceFile);
     }
 
     private static IEnumerable<string> GetExpectedGeneratedImportSources(JsonElement root, string projectRoot)

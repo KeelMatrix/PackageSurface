@@ -2,6 +2,7 @@
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <AssemblyName>Phase0.SingleTarget</AssemblyName>
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="KeelMatrix.Phase0.BuildProps" Version="1.0.0" />

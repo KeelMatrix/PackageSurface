@@ -1,6 +1,10 @@
+**PackageSurface tells you when a NuGet dependency starts participating in your build in a new way.** It baselines package-provided MSBuild, compiler-extension, source/content, and native capabilities and fails when that reviewed surface changes.
+
+PackageSurface is not a malware or vulnerability scanner. A reported capability can be completely legitimate; the tool makes the capability change explicit so dependency updates can be reviewed.
+
 # KeelMatrix.PackageSurface
 
-PackageSurface makes dependency-provided build and compiler behavior visible during dependency review. It is a .NET global tool for SDK-style `PackageReference` projects that already have restore output.
+It is a .NET global tool for SDK-style `PackageReference` projects that already have restore output.
 
 ## Install
 
@@ -23,8 +27,6 @@ package-surface check MySolution.sln --baseline package-surface.json
 
 PackageSurface never restores packages, evaluates MSBuild, loads dependency assemblies, runs package code, or queries a feed. The restore artifacts must already exist. Commit `package-surface.json` after review and update it explicitly when a capability change is approved.
 
-PackageSurface is not a malware or vulnerability scanner. A reported capability can be completely legitimate; the tool makes the capability change explicit so dependency updates can be reviewed.
-
 ## What it reports
 
 The versioned `package-surface.json` baseline records project context, TFM, RID, package identity, direct or transitive relationship, capability category, normalized package-relative asset path, and whether the asset is present and active. `--strict-content` adds SHA-256 fingerprints only for present, active build/compiler execution assets (`BuildProps`, `BuildTargets`, `BuildTransitive`, `BuildMultiTargeting`, `CompilerExtension`, and `CompileSourceInjection`). Inactive assets, native runtime assets, and informational `ToolOrScriptPresent` entries are not strict-content eligible; fingerprints do not include machine cache paths.
@@ -33,7 +35,7 @@ The taxonomy is:
 
 - `BuildProps`, `BuildTargets`, `BuildTransitive`, and `BuildMultiTargeting` for package MSBuild imports.
 - `CompilerExtension` for conventional analyzer/compiler-extension assets.
-- `CompileSourceInjection` for `contentFiles` C# source assets.
+- `CompileSourceInjection` for validated `contentFiles` Compile assets applicable to C#, Visual Basic, F#, or `any` language selectors.
 - `NativeRuntime` for native runtime assets applicable to a restored RID.
 - `ToolOrScriptPresent` for recognized tools or scripts that are present but are not treated as automatically active.
 
@@ -43,7 +45,22 @@ Present and active are separate facts. Active means the resolved project/TFM/RID
 
 Use `scan <path>` to report facts. Use `baseline <path> --output <file>` to write an approved state. Use `check <path> --baseline <file>` to compare without rewriting the baseline. Solutions, projects, directories containing an existing `obj/project.assets.json`, and individual `project.assets.json` files are supported; `--project <path>` selects one project when a solution is ambiguous.
 
-Reports support `--format text|json|sarif`. JSON and SARIF report schemas are versioned. Exit code `0` means a successful scan/baseline or passing check, `1` means a check found a surface or policy difference, and `2` means invalid invocation, missing restore artifacts, unsupported input, incomplete analysis, or an environment error. `PS007 AnalysisIncomplete` always fails closed; it is never a clean check.
+The command contract is:
+
+```text
+package-surface scan <path>
+package-surface baseline <path> --output <baseline>
+package-surface check <path> --baseline <baseline>
+--format text|json|sarif
+--strict-content
+--project <path>
+--telemetry on|off
+--no-telemetry
+```
+
+Exit code `0` means a scan or baseline succeeded, or a check passed. A check difference returns exit code `1`; invalid invocation, missing restore artifacts, unsupported input, incomplete analysis, or an environment error returns exit code `2`.
+
+Reports support `--format text|json|sarif`. JSON and SARIF report schemas are versioned; SARIF scan and baseline output contains `PS-SURFACE` note results for classified facts, while check output contains diagnostics. Exit code `0` means a successful scan/baseline or passing check, `1` means a check found a surface or policy difference, and `2` means invalid invocation, missing restore artifacts, unsupported input, incomplete analysis, or an environment error. `PS007 AnalysisIncomplete` always fails closed; it is never a clean check.
 
 ### Baseline contract
 

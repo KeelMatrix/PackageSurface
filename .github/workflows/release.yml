@@ -10,6 +10,7 @@ permissions:
 
 env:
   PACKAGE_VERSION: '0.1.0'
+  KEELMATRIX_TELEMETRY: 'off'
 
 jobs:
   validate:
@@ -33,28 +34,9 @@ jobs:
           $version = "${{ github.ref_name }}".Substring(1)
           if ($version -ne "${{ env.PACKAGE_VERSION }}") { throw 'Tag version does not match the repository package version.' }
           ./scripts/validate-release.ps1 -Version $version -RequireFinalized
-      - name: Restore
-        run: dotnet restore KeelMatrix.PackageSurface.sln --configfile NuGet.config --force
-      - name: Release build
-        run: dotnet build KeelMatrix.PackageSurface.sln --configuration Release --no-restore
-      - name: Controlled fixture validation
-        shell: pwsh
-        run: ./scripts/run-phase0.ps1
-      - name: Console contract tests
-        run: |
-          dotnet run --project tests/KeelMatrix.PackageSurface.Cli.Tests/KeelMatrix.PackageSurface.Cli.Tests.csproj --configuration Release --no-build --no-restore
-          dotnet run --project tests/KeelMatrix.PackageSurface.Probe.Tests/KeelMatrix.PackageSurface.Probe.Tests.csproj --configuration Release --no-build --no-restore -- fixtures/consumer/SingleTarget/obj/project.assets.json BuildProps,BuildTargets,BuildTransitive,BuildMultiTargeting,CompilerExtension,CompileSourceInjection,NativeRuntime,ToolOrScriptPresent
       - name: Installed package and artifact gate
         shell: pwsh
-        run: ./scripts/run-local-gate.ps1
-      - name: Pack exact release artifacts
-        run: dotnet pack src/KeelMatrix.PackageSurface.Cli/KeelMatrix.PackageSurface.Cli.csproj --configuration Release --no-restore --output artifacts/release
-      - name: Validate artifact set
-        shell: pwsh
-        run: |
-          $files = @(Get-ChildItem artifacts/release -File | Select-Object -ExpandProperty Name)
-          $expected = @("KeelMatrix.PackageSurface.${{ env.PACKAGE_VERSION }}.nupkg", "KeelMatrix.PackageSurface.${{ env.PACKAGE_VERSION }}.snupkg")
-          if (@(Compare-Object $expected $files).Count -ne 0) { throw "Unexpected release artifact set: $($files -join ', ')" }
+        run: ./scripts/run-local-gate.ps1 -ArtifactDirectory artifacts/release
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -100,4 +82,5 @@ jobs:
       - name: Create release after successful publication
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" artifacts/release/KeelMatrix.PackageSurface.${{ env.PACKAGE_VERSION }}.nupkg artifacts/release/KeelMatrix.PackageSurface.${{ env.PACKAGE_VERSION }}.snupkg --verify-tag --generate-notes --title "${{ github.ref_name }}"
+          GH_REPO: ${{ github.repository }}
+        run: gh release create --repo "${{ github.repository }}" "${{ github.ref_name }}" artifacts/release/KeelMatrix.PackageSurface.${{ env.PACKAGE_VERSION }}.nupkg artifacts/release/KeelMatrix.PackageSurface.${{ env.PACKAGE_VERSION }}.snupkg --verify-tag --generate-notes --title "${{ github.ref_name }}"

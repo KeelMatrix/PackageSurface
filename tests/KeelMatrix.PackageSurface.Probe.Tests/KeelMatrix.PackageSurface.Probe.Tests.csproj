@@ -2,6 +2,7 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <AssemblyName>KeelMatrix.PackageSurface.Probe.Tests</AssemblyName>
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/KeelMatrix.PackageSurface.Probe/KeelMatrix.PackageSurface.Probe.csproj" />

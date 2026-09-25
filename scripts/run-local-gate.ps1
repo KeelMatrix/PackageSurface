@@ -1,8 +1,15 @@
+param(
+    [string] $ArtifactDirectory
+)
+
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Set-Location -LiteralPath $root
 $timer = [Diagnostics.Stopwatch]::StartNew()
-$artifactRoot = Join-Path $root 'artifacts/gate'
+$previousCi = $env:CI
+$previousTelemetry = $env:KEELMATRIX_TELEMETRY
+$previousNugetPackages = $env:NUGET_PACKAGES
+$artifactRoot = if ([string]::IsNullOrWhiteSpace($ArtifactDirectory)) { Join-Path $root 'artifacts/gate' } else { [IO.Path]::GetFullPath($ArtifactDirectory) }
 New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('packagesurface-gate-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $scratch | Out-Null
@@ -63,6 +70,7 @@ function Ensure-DotnetRootForInstalledTool {
 }
 
 try {
+    $env:CI = 'true'
     $env:KEELMATRIX_TELEMETRY = 'off'
     $env:NUGET_PACKAGES = $shippingPackages
     Invoke-GateStep 'shipping restore' {
@@ -91,6 +99,12 @@ try {
     Invoke-GateStep 'format verification' {
         & dotnet format $solution --verify-no-changes --no-restore
     }
+    Invoke-GateStep 'packability graph audit' {
+        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-packability.ps1')
+    }
+    Invoke-GateStep 'CLI documentation contract' {
+        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-cli-documentation.ps1')
+    }
     Invoke-GateStep 'Release build' {
         & dotnet build $solution --configuration Release --no-restore
     }
@@ -111,8 +125,10 @@ try {
     $singleProject = Join-Path $root 'fixtures/consumer/SingleTarget'
     $singleAssets = Join-Path $singleProject 'obj/project.assets.json'
     $cliProject = Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/KeelMatrix.PackageSurface.Cli.csproj'
-    $feed = Join-Path $artifactRoot 'feed'
-    New-Item -ItemType Directory -Force -Path $feed | Out-Null
+    $feed = $artifactRoot
+    Get-ChildItem -LiteralPath $feed -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Extension -in '.nupkg', '.snupkg' } |
+        Remove-Item -Force
     Invoke-GateStep 'package build' {
         & dotnet pack $cliProject --configuration Release --no-restore --output $feed
     }
@@ -185,6 +201,10 @@ try {
     }
     finally { $snupkg.Dispose() }
 
+    Invoke-GateStep 'final package metadata and symbol contract' {
+        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/validate-package-artifact.ps1') -PackagePath $nupkgs[0].FullName -SymbolsPath $snupkgs[0].FullName -ExpectedVersion $packageVersion
+    }
+
     Invoke-GateStep 'package-content negative regressions' {
         & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-package-content-gate.ps1') -PackagePath $nupkgs[0].FullName -ArtifactDirectory $feed
     }
@@ -193,20 +213,30 @@ try {
         & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-sensitive-pack-inputs.ps1') -ProjectFile $cliProject
     }
 
-    $auditTimer = [Diagnostics.Stopwatch]::StartNew()
-    $auditOutput = @(& dotnet list $cliProject package --vulnerable --include-transitive --configfile (Join-Path $root 'NuGet.config') --format json 2>&1)
-    $auditExitCode = $LASTEXITCODE
-    $auditTimer.Stop()
-    Write-Output 'STEP: dependency vulnerability audit'
-    Write-Output "COMMAND_EXIT_CODE: $auditExitCode"
-    Write-Output "DURATION_MS: $($auditTimer.ElapsedMilliseconds)"
-    $auditText = $auditOutput -join [Environment]::NewLine
-    if ($auditOutput.Count -gt 0) { $auditOutput | ForEach-Object { Write-Output ([string]$_) } }
-    if ($auditExitCode -ne 0) { throw "Vulnerability audit failed with exit code $auditExitCode." }
+    $expectedAuditProjects = @(
+        (Join-Path $root 'src/KeelMatrix.PackageSurface.Probe/KeelMatrix.PackageSurface.Probe.csproj'),
+        (Join-Path $root 'src/KeelMatrix.PackageSurface.Core/KeelMatrix.PackageSurface.Core.csproj'),
+        (Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/KeelMatrix.PackageSurface.Cli.csproj'),
+        (Join-Path $root 'tests/KeelMatrix.PackageSurface.Probe.Tests/KeelMatrix.PackageSurface.Probe.Tests.csproj'),
+        (Join-Path $root 'tests/KeelMatrix.PackageSurface.Cli.Tests/KeelMatrix.PackageSurface.Cli.Tests.csproj'),
+        (Join-Path $root 'tools/NoExecutionProof/NoExecutionProof.csproj')
+    )
+    $coverageFile = Join-Path $scratch 'package-graph-report.json'
     $auditFile = Join-Path $scratch 'vulnerability-report.json'
-    [IO.File]::WriteAllText($auditFile, $auditText, [Text.UTF8Encoding]::new($false))
+    Invoke-GateStep 'dependency graph coverage audit' {
+        $coverage = @(& dotnet list $solution package --include-transitive --configfile $nugetConfig --format json 2>&1)
+        $coverageExitCode = $LASTEXITCODE
+        if ($coverageExitCode -ne 0) { $coverage | ForEach-Object { Write-Output ([string]$_) }; throw "Dependency graph coverage failed with exit code $coverageExitCode." }
+        [IO.File]::WriteAllText($coverageFile, ($coverage -join [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+    }
+    Invoke-GateStep 'dependency vulnerability audit' {
+        $audit = @(& dotnet list $solution package --vulnerable --include-transitive --configfile $nugetConfig --format json 2>&1)
+        $auditExitCode = $LASTEXITCODE
+        if ($auditExitCode -ne 0) { $audit | ForEach-Object { Write-Output ([string]$_) }; throw "Vulnerability audit failed with exit code $auditExitCode." }
+        [IO.File]::WriteAllText($auditFile, ($audit -join [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+    }
     Invoke-GateStep 'vulnerability finding policy' {
-        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/assert-no-vulnerabilities.ps1') -InputPath $auditFile
+        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/assert-no-vulnerabilities.ps1') -InputPath $auditFile -CoveragePath $coverageFile -ExpectedProjectPath ($expectedAuditProjects -join '|') -ExpectedFramework net8.0
     }
 
     $toolConfig = Join-Path $scratch 'tool.config'
@@ -379,4 +409,10 @@ catch {
     Write-Output 'LOCAL_GATE=FAIL'
     Write-Output "LOCAL_GATE_DURATION_MS=$($timer.ElapsedMilliseconds)"
     exit 1
+}
+finally {
+    if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue }
+    if ($null -eq $previousCi) { Remove-Item Env:CI -ErrorAction SilentlyContinue } else { $env:CI = $previousCi }
+    if ($null -eq $previousTelemetry) { Remove-Item Env:KEELMATRIX_TELEMETRY -ErrorAction SilentlyContinue } else { $env:KEELMATRIX_TELEMETRY = $previousTelemetry }
+    if ($null -eq $previousNugetPackages) { Remove-Item Env:NUGET_PACKAGES -ErrorAction SilentlyContinue } else { $env:NUGET_PACKAGES = $previousNugetPackages }
 }

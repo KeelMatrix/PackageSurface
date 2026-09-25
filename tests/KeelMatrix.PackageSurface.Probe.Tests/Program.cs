@@ -132,7 +132,7 @@ static void RunGeneratedImportConditionRegression(string baselineAssets)
     try
     {
         File.Copy(baselineAssets, Path.Combine(scratch, "obj", "project.assets.json"));
-        File.WriteAllText(Path.Combine(scratch, generatedTargetsFileName), "<Project />");
+        File.WriteAllText(Path.Combine(scratch, "obj", generatedTargetsFileName), "<Project />");
         AssertTarget("unconditional import", CreateImports(buildPropsImport, null, null), true, null, allTargetFrameworks);
         AssertTarget("TFM equality", CreateImports(buildPropsImport, "'$(TargetFramework)' == 'net8.0'", null), true, null, "net8.0");
         AssertTarget("TFM inequality", CreateImports(buildPropsImport, "'$(TargetFramework)' != 'net8.0'", null), true, null, nonNet8TargetFrameworks);
@@ -150,10 +150,10 @@ static void RunGeneratedImportConditionRegression(string baselineAssets)
         AssertTarget("nested arbitrary condition", CreateImports(buildPropsImport, "'$(Configuration)' == 'Debug'", null, nested: true), false, "Configuration", string.Empty);
         AssertTarget("unproven Exists", CreateImports(buildPropsImport, null, "Exists('$(SomeRoot)/unknown.props')"), false, "Exists(...)", string.Empty);
 
-        File.WriteAllText(Path.Combine(scratch, generatedPropsFileName), "<Project />");
+        File.WriteAllText(Path.Combine(scratch, "obj", generatedPropsFileName), "<Project />");
         AssertProject("empty TFM project context", CreateImports(buildMultiImport, "'$(TargetFramework)' == ''", null), complete: true, active: true, buildMultiPath);
 
-        CreateImports(buildPropsImport, "'$(TargetFramework)' == 'net8.0' AND '$(Configuration)' == 'Debug'", null).Save(Path.Combine(scratch, generatedPropsFileName));
+        CreateImports(buildPropsImport, "'$(TargetFramework)' == 'net8.0' AND '$(Configuration)' == 'Debug'", null).Save(Path.Combine(scratch, "obj", generatedPropsFileName));
         AssertTargetExitCode(scratch, expected: 2);
     }
     finally
@@ -192,7 +192,7 @@ static void RunGeneratedImportConditionRegression(string baselineAssets)
 
     void AssertTarget(string scenario, XDocument generatedImports, bool complete, string? reason, string activeTargetFrameworks)
     {
-        generatedImports.Save(Path.Combine(scratch, generatedPropsFileName));
+        generatedImports.Save(Path.Combine(scratch, "obj", generatedPropsFileName));
         var analyzed = ResolvedGraphClassifier.Analyze(Path.Combine(scratch, "obj", "project.assets.json"), scratch);
         var entries = analyzed.Entries.Where(entry =>
             entry.Context == SurfaceContextKind.Target &&
@@ -210,7 +210,7 @@ static void RunGeneratedImportConditionRegression(string baselineAssets)
 
     void AssertProject(string scenario, XDocument generatedImports, bool complete, bool active, string relativePath)
     {
-        generatedImports.Save(Path.Combine(scratch, generatedTargetsFileName));
+        generatedImports.Save(Path.Combine(scratch, "obj", generatedTargetsFileName));
         var analyzed = ResolvedGraphClassifier.Analyze(Path.Combine(scratch, "obj", "project.assets.json"), scratch);
         var entries = analyzed.Entries.Where(entry =>
             entry.Context == SurfaceContextKind.Project &&
@@ -307,8 +307,8 @@ static void RunGeneratedImportPhaseCrossWireRegression(string baselineAssets)
     try
     {
         File.Copy(baselineAssets, Path.Combine(scratch, "obj", "project.assets.json"));
-        var generatedProps = Path.Combine(scratch, projectFileName + ".nuget.g.props");
-        var generatedTargets = Path.Combine(scratch, projectFileName + ".nuget.g.targets");
+        var generatedProps = Path.Combine(scratch, "obj", projectFileName + ".nuget.g.props");
+        var generatedTargets = Path.Combine(scratch, "obj", projectFileName + ".nuget.g.targets");
         foreach (var (label, libraryKey, relativePath) in scenarios)
         {
             if (!root.GetProperty("libraries").TryGetProperty(libraryKey, out var library))

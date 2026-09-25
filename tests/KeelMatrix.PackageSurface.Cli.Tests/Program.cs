@@ -25,6 +25,7 @@ if (expected.Any(id => !ids.Contains(id)))
 }
 
 RunStrictContentEligibilityMatrixTests();
+RunIdentityAndReportContractTests();
 
 var ps007 = new[] { Diagnostic.Create("PS007", "restore evidence is incomplete") };
 var incompleteReasons = new[] { "restore evidence is incomplete" };
@@ -44,6 +45,7 @@ if (!Options.HelpText.Contains("passes no analyzed dependency identity or conten
 
 RunClassifierHardeningTests();
 RunTelemetryStateMachineTests();
+RunParserMessageRegression();
 
 Console.WriteLine($"PASS: diagnostics {string.Join(", ", expected)}");
 return 0;
@@ -77,11 +79,11 @@ static void RunClassifierHardeningTests()
         var assets = Path.Combine(obj, "project.assets.json");
         WriteAssets(assets, cache, "XmlPackage", Array.Empty<string>());
 
-        File.WriteAllText(Path.Combine(obj, "project.nuget.g.props"), "<!DOCTYPE Project [<!ENTITY external SYSTEM 'file:///outside'>]><Project><Import Project='&external;' /></Project>");
+        File.WriteAllText(Path.Combine(obj, "Test.csproj.nuget.g.props"), "<!DOCTYPE Project [<!ENTITY external SYSTEM 'file:///outside'>]><Project><Import Project='&external;' /></Project>");
         var dtdResult = ResolvedGraphClassifier.Analyze(assets, scratch, strictContent: false);
         Require(!dtdResult.IsComplete, "DTD input was not rejected as incomplete.");
 
-        File.WriteAllText(Path.Combine(obj, "project.nuget.g.props"), "<Project />");
+        File.WriteAllText(Path.Combine(obj, "Test.csproj.nuget.g.props"), "<Project />");
         var deepXml = new StringBuilder("<Project>");
         for (var depth = 0; depth < 80; depth++)
         {
@@ -93,11 +95,11 @@ static void RunClassifierHardeningTests()
             deepXml.Append("</ImportGroup>");
         }
         deepXml.Append("</Project>");
-        File.WriteAllText(Path.Combine(obj, "project.nuget.g.props"), deepXml.ToString());
+        File.WriteAllText(Path.Combine(obj, "Test.csproj.nuget.g.props"), deepXml.ToString());
         var deepXmlResult = ResolvedGraphClassifier.Analyze(assets, scratch, strictContent: false);
         Require(!deepXmlResult.IsComplete && deepXmlResult.IncompleteReasons.Any(reason => reason.Contains("XML depth", StringComparison.OrdinalIgnoreCase)),
             "Deep XML nesting was not bounded during parsing.");
-        File.WriteAllText(Path.Combine(obj, "project.nuget.g.props"), "<Project />");
+        File.WriteAllText(Path.Combine(obj, "Test.csproj.nuget.g.props"), "<Project />");
         File.WriteAllText(Path.Combine(scratch, "Test.csproj"), "<Project />");
         RunAnalyzerExclusionRegression(scratch, cache, obj);
         RunMalformedAssetsShapeRegression(assets, scratch);
@@ -132,6 +134,7 @@ static void RunClassifierHardeningTests()
         timer.Stop();
         Require(largeResult.IsComplete && largeResult.ResolvedPackageCount == packageCount, "Reachable graph coverage did not classify the complete graph.");
         Require(timer.Elapsed < TimeSpan.FromSeconds(10), $"Reachable graph analysis exceeded the resource test limit: {timer.Elapsed}.");
+        RunInlineTaskConventionRegression(scratch);
     }
     finally
     {
@@ -139,6 +142,40 @@ static void RunClassifierHardeningTests()
         {
             Directory.Delete(scratch, recursive: true);
         }
+    }
+}
+
+static void RunInlineTaskConventionRegression(string scratch)
+{
+    var root = Path.Combine(scratch, "inline-task");
+    var cache = Path.Combine(root, "cache");
+    var obj = Path.Combine(root, "obj");
+    Directory.CreateDirectory(obj);
+    var assets = Path.Combine(obj, "project.assets.json");
+    var relativePath = "build/inline.targets";
+    WriteAssets(assets, cache, "Inline.Package", new[] { relativePath }, createFiles: true);
+    var document = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
+    document["targets"]!["net8.0"]!["Inline.Package/1.0.0"]!["build"] = new JsonObject { [relativePath] = new JsonObject() };
+    File.WriteAllText(assets, document.ToJsonString());
+    var assetPath = Path.Combine(cache, "Inline.Package", "1.0.0", relativePath.Replace('/', Path.DirectorySeparatorChar));
+    File.WriteAllText(Path.Combine(obj, "Test.csproj.nuget.g.targets"), "<Project><Import Project=\"$(NuGetPackageRoot)/Inline.Package/1.0.0/build/inline.targets\" /></Project>");
+
+    var fixtures = new[]
+    {
+        ("positive", "<Project><UsingTask TaskName=\"Inline\" TaskFactory=\"CodeTaskFactory\"><Task><Code Type=\"Fragment\" Language=\"cs\">Log.LogMessage(\"ok\");</Code></Task></UsingTask></Project>", true),
+        ("custom-factory", "<Project><UsingTask TaskName=\"Inline\" TaskFactory=\"CustomFactory\"><Task><Code>Log.LogMessage(\"text\");</Code></Task></UsingTask></Project>", false),
+        ("factory-only", "<Project><UsingTask TaskName=\"Inline\" TaskFactory=\"CodeTaskFactory\" /></Project>", false),
+        ("comment-only", "<Project><UsingTask TaskName=\"Inline\" TaskFactory=\"CodeTaskFactory\"><Task><!-- Code --></Task></UsingTask></Project>", false),
+        ("text-only", "<Project><UsingTask TaskName=\"Inline\" TaskFactory=\"CodeTaskFactory\"><Task>Code text</Task></UsingTask></Project>", false)
+    };
+
+    foreach (var (name, xml, expected) in fixtures)
+    {
+        File.WriteAllText(assetPath, xml);
+        var result = ResolvedGraphClassifier.Analyze(assets, root, strictContent: false);
+        var entry = result.Entries.Single(candidate => candidate.Capability == CapabilityKind.BuildTargets);
+        var observed = entry.ObservedPrimitives?.Contains("InlineTaskFactory") == true;
+        Require(result.IsComplete && observed == expected, $"Inline task fixture '{name}' was misclassified.");
     }
 }
 
@@ -158,6 +195,148 @@ static void RunStrictContentEligibilityMatrixTests()
                 Require(observed == expected, $"Strict-content eligibility mismatch for {capability}, present={present}, active={active}.");
             }
         }
+    }
+}
+
+static void RunIdentityAndReportContractTests()
+{
+    var baselineEntry = Entry(CapabilityKind.BuildTargets, "build/common.targets", "a") with { Project = "Consumer.csproj" };
+    var versionBump = baselineEntry with { Version = "1.1.0" };
+    Require(DiffEngine.Compare(new[] { BaselineEntry.From(baselineEntry) }, new[] { versionBump }, strictContent: false).Count == 0,
+        "A version-only update changed non-strict capability identity.");
+    Require(DiffEngine.Compare(new[] { BaselineEntry.From(baselineEntry) }, new[] { versionBump }, strictContent: true).Count == 0,
+        "A version-only update changed strict capability identity.");
+
+    var changedContent = versionBump with { Sha256 = "b" };
+    var changedDiagnostics = DiffEngine.Compare(new[] { BaselineEntry.From(baselineEntry) }, new[] { changedContent }, strictContent: true);
+    Require(changedDiagnostics.Count(diagnostic => diagnostic.Id == "PS005") == 1 && changedDiagnostics.All(diagnostic => diagnostic.Id == "PS005"),
+        "A version bump with changed content did not produce only PS005.");
+
+    var addedPath = versionBump with { PackageRelativePath = "build/new.targets" };
+    var addedDiagnostics = DiffEngine.Compare(new[] { BaselineEntry.From(baselineEntry) }, new[] { addedPath }, strictContent: false);
+    Require(addedDiagnostics.Any(diagnostic => diagnostic.Id == "PS002") && addedDiagnostics.Any(diagnostic => diagnostic.Id == "PS003"),
+        "A new active path did not produce scoped capability diagnostics.");
+
+    var differentPackage = versionBump with { PackageId = "Other.Package" };
+    Require(DiffEngine.Compare(new[] { BaselineEntry.From(baselineEntry) }, new[] { differentPackage }, strictContent: false).Any(diagnostic => diagnostic.Id == "PS001"),
+        "A package identity change was incorrectly treated as a version-only update.");
+
+    var relationshipChange = versionBump with { Relationship = "transitive" };
+    Require(DiffEngine.Compare(new[] { BaselineEntry.From(baselineEntry) }, new[] { relationshipChange }, strictContent: false).Any(diagnostic => diagnostic.Id == "PS003"),
+        "A direct/transitive relationship change was incorrectly ignored.");
+
+    var reportEntry = baselineEntry with { Present = false, Active = false, ObservedPrimitives = new[] { "Import", "UsingTask" } };
+    var report = ReportDocument.Create(CommandKind.Scan, new SurfaceSnapshot(new[] { reportEntry }, Array.Empty<string>(), false, 1), Array.Empty<Diagnostic>());
+    var text = report.ToText();
+    Require(text.Contains("present=False", StringComparison.Ordinal) && text.Contains("active=False", StringComparison.Ordinal) &&
+            text.Contains("project=Consumer.csproj", StringComparison.Ordinal) && text.Contains("target=net8.0", StringComparison.Ordinal) &&
+            text.Contains("primitives=Import,UsingTask", StringComparison.Ordinal),
+        "Default report omitted independent state or target context.");
+    var sarif = report.ToSarif();
+    Require(sarif.Runs.Single().Results.Count == 1 && sarif.Runs.Single().Results[0].RuleId == "PS-SURFACE",
+        "Successful scan SARIF silently discarded classified surface facts.");
+
+    var scratch = Path.Combine(Path.GetTempPath(), "packagesurface-schema-tests-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(scratch);
+    try
+    {
+        var invalidRid = BaselineEntry.From(baselineEntry with { Context = SurfaceContextKind.Project, TargetFramework = null, RuntimeIdentifier = "win-x64" });
+        var invalidPrimitive = BaselineEntry.From(baselineEntry with { Capability = CapabilityKind.NativeRuntime, ObservedPrimitives = new List<string> { "Import" } });
+        var duplicate = BaselineEntry.From(baselineEntry);
+        foreach (var (name, entriesToWrite) in new[]
+        {
+            ("rid", new[] { invalidRid }),
+            ("primitive", new[] { invalidPrimitive }),
+            ("duplicate", new[] { duplicate, duplicate })
+        })
+        {
+            var path = Path.Combine(scratch, name + ".json");
+            File.WriteAllText(path, JsonSerializer.Serialize(new BaselineDocument(1, "0.1.0", false, entriesToWrite, Array.Empty<string>()), JsonOptions.Indented));
+            try { _ = BaselineDocument.Read(path); throw new InvalidOperationException($"Invalid baseline '{name}' was accepted."); }
+            catch (InvalidDataException) { }
+        }
+    }
+    finally
+    {
+        if (Directory.Exists(scratch)) Directory.Delete(scratch, recursive: true);
+    }
+}
+
+static void RunParserMessageRegression()
+{
+    var error = new StringWriter(CultureInfo.InvariantCulture);
+    var priorError = Console.Error;
+    try
+    {
+        Console.SetError(error);
+        var arguments = new[] { "scan", "safe-input", "--format" };
+        Require(CommandLine.Run(arguments) == 2, "Missing option value did not return exit code 2.");
+    }
+    finally
+    {
+        Console.SetError(priorError);
+    }
+
+    var text = error.ToString();
+    Require(text.Contains("--format requires a value", StringComparison.Ordinal) &&
+            !text.Contains("invalid command-line arguments", StringComparison.Ordinal) &&
+            !text.Contains("safe-input", StringComparison.Ordinal),
+        "Missing option value lost its safe specific parser message or echoed input text.");
+}
+
+static void RunLanguageConventionRegression(string scratch)
+{
+    var analyzerCases = new[]
+    {
+        (Language: "cs", Project: "Test.csproj", Path: "analyzers/dotnet/cs/valid.dll", Active: true),
+        (Language: "vb", Project: "Test.vbproj", Path: "analyzers/dotnet/vb/valid.dll", Active: true),
+        (Language: "fs", Project: "Test.fsproj", Path: "analyzers/dotnet/fs/valid.dll", Active: true),
+        (Language: "cross", Project: "Test.csproj", Path: "analyzers/dotnet/vb/valid.dll", Active: false),
+        (Language: "neutral", Project: "Test.unknown", Path: "analyzers/dotnet/neutral.dll", Active: true),
+        (Language: "exe", Project: "Test.csproj", Path: "analyzers/dotnet/neutral.exe", Active: false),
+        (Language: "optional", Project: "Test.csproj", Path: "analyzers/dotnet/roslyn4.0/cs/valid.dll", Active: true),
+        (Language: "casing", Project: "Test.csproj", Path: "ANALYZERS/DOTNET/CS/VALID.DLL", Active: true)
+    };
+
+    foreach (var testCase in analyzerCases)
+    {
+        var root = Path.Combine(scratch, "analyzer-" + testCase.Language);
+        var assets = Path.Combine(root, "obj", "project.assets.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(assets)!);
+        WriteAnalyzerAssets(assets, Path.Combine(root, "cache"), true, testCase.Path, testCase.Project, includeAnalyzers: true);
+        var result = ResolvedGraphClassifier.Analyze(assets, root, strictContent: false);
+        var entry = result.Entries.Single(candidate => candidate.Capability == CapabilityKind.CompilerExtension);
+        Require(result.IsComplete && entry.Active == testCase.Active, $"Analyzer convention case '{testCase.Language}' was misclassified. Complete={result.IsComplete}; entries={result.Entries.Count}; reasons={string.Join(" | ", result.IncompleteReasons)}");
+    }
+
+    var contentCases = new[]
+    {
+        (Language: "cs", Project: "Test.csproj", Path: "contentFiles/cs/any/active.cs", CodeLanguage: "cs", BuildAction: "Compile", Active: true),
+        (Language: "vb", Project: "Test.vbproj", Path: "contentFiles/vb/any/active.vb", CodeLanguage: "vb", BuildAction: "Compile", Active: true),
+        (Language: "fs", Project: "Test.fsproj", Path: "contentFiles/fs/any/active.fs", CodeLanguage: "fs", BuildAction: "Compile", Active: true),
+        (Language: "any", Project: "Test.vbproj", Path: "contentFiles/any/any/active.vb", CodeLanguage: "any", BuildAction: "Compile", Active: true),
+        (Language: "none", Project: "Test.csproj", Path: "contentFiles/cs/any/none.cs", CodeLanguage: "cs", BuildAction: "None", Active: false)
+    };
+
+    foreach (var testCase in contentCases)
+    {
+        var root = Path.Combine(scratch, "content-" + testCase.Language);
+        var assets = Path.Combine(root, "obj", "project.assets.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(assets)!);
+        WriteContentAssets(assets, Path.Combine(root, "cache"), testCase.Project, testCase.Path, testCase.CodeLanguage, testCase.BuildAction);
+        var result = ResolvedGraphClassifier.Analyze(assets, root, strictContent: false);
+        var entry = result.Entries.Single(candidate => candidate.Capability == CapabilityKind.CompileSourceInjection);
+        Require(result.IsComplete && entry.Active == testCase.Active, $"contentFiles convention case '{testCase.Language}' was misclassified.");
+    }
+
+    foreach (var malformed in new[] { "buildAction", "codeLanguage" })
+    {
+        var root = Path.Combine(scratch, "content-malformed-" + malformed);
+        var assets = Path.Combine(root, "obj", "project.assets.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(assets)!);
+        WriteContentAssets(assets, Path.Combine(root, "cache"), "Test.csproj", "contentFiles/cs/any/bad.cs", "cs", "Compile", malformed);
+        var result = ResolvedGraphClassifier.Analyze(assets, root, strictContent: false);
+        Require(!result.IsComplete, $"Malformed contentFiles {malformed} metadata was accepted.");
     }
 }
 
@@ -199,10 +378,12 @@ static void RunApplicabilityHardeningRegressions(string scratch)
     var unknownObj = Path.Combine(unknownRoot, "obj");
     Directory.CreateDirectory(unknownObj);
     var unknownAssets = Path.Combine(unknownObj, "project.assets.json");
-    WriteAnalyzerAssets(unknownAssets, unknownCache, direct: true, "analyzers/dotnet/cs/unknown.dll");
+    WriteAnalyzerAssets(unknownAssets, unknownCache, true, "analyzers/dotnet/cs/unknown.dll");
+    var unknownDocument = JsonNode.Parse(File.ReadAllText(unknownAssets))!.AsObject();
+    unknownDocument["project"]!.AsObject().Remove("restore");
+    File.WriteAllText(unknownAssets, unknownDocument.ToJsonString());
     var unknownResult = ResolvedGraphClassifier.Analyze(unknownAssets, unknownRoot, strictContent: false);
-    Require(!unknownResult.IsComplete && unknownResult.IncompleteReasons.Any(reason => reason.Contains("project language", StringComparison.OrdinalIgnoreCase)),
-        "Language-specific compiler applicability did not fail closed when language evidence was unavailable.");
+    Require(!unknownResult.IsComplete, "Language-specific compiler applicability did not fail closed when language evidence was unavailable.");
     var languageIndependentRoot = Path.Combine(scratch, "language-independent");
     var languageIndependentCache = Path.Combine(languageIndependentRoot, "cache");
     Directory.CreateDirectory(languageIndependentRoot);
@@ -210,6 +391,8 @@ static void RunApplicabilityHardeningRegressions(string scratch)
     WriteAssets(languageIndependentAssets, languageIndependentCache, "Inventory.Package", new List<string> { "tools/inventory.ps1" }, createFiles: true);
     var languageIndependentResult = ResolvedGraphClassifier.Analyze(languageIndependentAssets, languageIndependentRoot, strictContent: false);
     Require(languageIndependentResult.IsComplete, "Unknown project language unnecessarily failed a language-independent graph.");
+
+    RunLanguageConventionRegression(scratch);
 
     RunProjectAggregationRegression(scratch);
     RunReparsePointRegression(scratch);
@@ -230,7 +413,7 @@ static void RunProjectAggregationRegression(string scratch)
     var targetPackage = new JsonObject
     {
         ["type"] = "package",
-        ["buildMultiTargeting"] = new JsonArray(relativePath)
+        ["buildMultiTargeting"] = new JsonObject { [relativePath] = new JsonObject() }
     };
     var targets = new JsonObject
     {
@@ -249,6 +432,7 @@ static void RunProjectAggregationRegression(string scratch)
     var projectFile = Path.Combine(root, "Aggregate.csproj");
     File.WriteAllText(projectFile, "<Project />");
     File.WriteAllText(Path.Combine(obj, "Aggregate.csproj.nuget.g.props"), "<Project><Import Project='$(NuGetPackageRoot)/Aggregate.Package/1.0.0/buildMultiTargeting/Aggregate.props' /></Project>");
+    File.WriteAllText(Path.Combine(obj, "Aggregate.csproj.nuget.g.targets"), "<Project />");
     var document = new JsonObject
     {
         ["targets"] = targets,
@@ -421,13 +605,13 @@ static void RunAnalyzerExclusionRegression(string scratch, string cache, string 
 {
     var analyzerRelativePath = "analyzers/dotnet/cs/valid.dll";
     var directAssets = Path.Combine(obj, "analyzer-excluded-direct.assets.json");
-    WriteAnalyzerAssets(directAssets, cache, direct: true, analyzerRelativePath);
+    WriteAnalyzerAssets(directAssets, cache, true, analyzerRelativePath);
     var directResult = ResolvedGraphClassifier.Analyze(directAssets, scratch, strictContent: false);
     Require(directResult.IsComplete && directResult.Entries.Single(entry => entry.Capability == CapabilityKind.CompilerExtension).Active == false,
         "Direct ExcludeAssets=analyzers was not honored.");
 
     var transitiveAssets = Path.Combine(obj, "analyzer-excluded-transitive.assets.json");
-    WriteAnalyzerAssets(transitiveAssets, cache, direct: false, analyzerRelativePath);
+    WriteAnalyzerAssets(transitiveAssets, cache, false, analyzerRelativePath);
     var transitiveResult = ResolvedGraphClassifier.Analyze(transitiveAssets, scratch, strictContent: false);
     Require(transitiveResult.IsComplete && transitiveResult.Entries.Single(entry => entry.Capability == CapabilityKind.CompilerExtension).Active == false,
         "Transitive ExcludeAssets=analyzers was not honored.");
@@ -471,7 +655,7 @@ static void RunMalformedAssetsShapeRegression(string assets, string scratch)
     Require(cliExitCode == 2, $"Malformed assets CLI invocation returned {cliExitCode}, expected 2.");
 }
 
-static void WriteAssets(string path, string cache, string packageId, IReadOnlyList<string> files, bool createFiles = false)
+static void WriteAssets(string path, string cache, string packageId, IReadOnlyList<string> files, bool createFiles = false, string projectFileName = "Test.csproj")
 {
     var packageKey = packageId + "/1.0.0";
     var filesNode = new JsonArray();
@@ -508,12 +692,13 @@ static void WriteAssets(string path, string cache, string packageId, IReadOnlyLi
         ["targets"] = targets,
         ["libraries"] = libraries,
         ["packageFolders"] = packageFolders,
-        ["project"] = new JsonObject { ["frameworks"] = frameworks }
+        ["project"] = new JsonObject { ["restore"] = new JsonObject { ["projectPath"] = Path.Combine(Directory.GetParent(Path.GetDirectoryName(path)!)!.FullName, projectFileName) }, ["frameworks"] = frameworks }
     };
     File.WriteAllText(path, root.ToJsonString());
+    WriteGeneratedImportEvidence(path, projectFileName);
 }
 
-static void WriteAnalyzerAssets(string path, string cache, bool direct, string analyzerRelativePath)
+static void WriteAnalyzerAssets(string path, string cache, bool direct, string analyzerRelativePath, string projectFileName = "Test.csproj", bool includeAnalyzers = false)
 {
     const string compilerId = "CompilerPackage";
     const string rootId = "RootPackage";
@@ -543,11 +728,11 @@ static void WriteAnalyzerAssets(string path, string cache, bool direct, string a
         directPackageId = rootId;
     }
 
-    var packageRoot = Path.Combine(cache, compilerId, version, "analyzers", "dotnet", "cs");
+    var packageRoot = Path.Combine(cache, compilerId, version, Path.GetDirectoryName(analyzerRelativePath)!.Replace('/', Path.DirectorySeparatorChar));
     Directory.CreateDirectory(packageRoot);
-    File.Copy(typeof(ResolvedGraphClassifier).Assembly.Location, Path.Combine(packageRoot, "valid.dll"), overwrite: true);
+    File.Copy(typeof(ResolvedGraphClassifier).Assembly.Location, Path.Combine(packageRoot, Path.GetFileName(analyzerRelativePath)), overwrite: true);
     Directory.CreateDirectory(Path.Combine(cache, rootId, version));
-    var dependency = new JsonObject { ["include"] = "Runtime, Compile, Build, Native, ContentFiles, BuildTransitive" };
+    var dependency = new JsonObject { ["include"] = includeAnalyzers ? "analyzers" : "Runtime, Compile, Build, Native, ContentFiles, BuildTransitive" };
     var frameworks = new JsonObject
     {
         ["net8.0"] = new JsonObject { ["dependencies"] = new JsonObject { [directPackageId] = dependency } }
@@ -557,9 +742,34 @@ static void WriteAnalyzerAssets(string path, string cache, bool direct, string a
         ["targets"] = new JsonObject { ["net8.0"] = target },
         ["libraries"] = libraries,
         ["packageFolders"] = new JsonObject { [cache] = new JsonObject() },
-        ["project"] = new JsonObject { ["frameworks"] = frameworks }
+        ["project"] = new JsonObject { ["restore"] = new JsonObject { ["projectPath"] = Path.Combine(Directory.GetParent(Path.GetDirectoryName(path)!)!.FullName, projectFileName) }, ["frameworks"] = frameworks }
     };
     File.WriteAllText(path, root.ToJsonString());
+    WriteGeneratedImportEvidence(path, projectFileName);
+}
+
+static void WriteContentAssets(
+    string path,
+    string cache,
+    string projectFileName,
+    string contentRelativePath,
+    string codeLanguage,
+    string buildAction,
+    string? malformedMetadata = null)
+{
+    var packageId = "Content.Package";
+    WriteAssets(path, cache, packageId, new[] { contentRelativePath }, createFiles: true, projectFileName: projectFileName);
+    var document = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+    var package = document["targets"]!["net8.0"]![packageId + "/1.0.0"]!.AsObject();
+    var metadata = new JsonObject
+    {
+        ["buildAction"] = buildAction,
+        ["codeLanguage"] = codeLanguage
+    };
+    if (malformedMetadata == "buildAction") metadata["buildAction"] = new JsonArray { JsonValue.Create("Compile") };
+    if (malformedMetadata == "codeLanguage") metadata["codeLanguage"] = new JsonArray { JsonValue.Create("cs") };
+    package["contentFiles"] = new JsonObject { [contentRelativePath] = metadata };
+    File.WriteAllText(path, document.ToJsonString());
 }
 
 static void WriteLargeAssets(string path, string cache, int packageCount)
@@ -585,9 +795,17 @@ static void WriteLargeAssets(string path, string cache, int packageCount)
         ["targets"] = new JsonObject { ["net8.0"] = target },
         ["libraries"] = libraries,
         ["packageFolders"] = new JsonObject { [cache] = new JsonObject() },
-        ["project"] = new JsonObject { ["frameworks"] = new JsonObject { ["net8.0"] = new JsonObject { ["dependencies"] = new JsonObject() } } }
+        ["project"] = new JsonObject { ["restore"] = new JsonObject { ["projectPath"] = Path.Combine(Directory.GetParent(Path.GetDirectoryName(path)!)!.FullName, "Test.csproj") }, ["frameworks"] = new JsonObject { ["net8.0"] = new JsonObject { ["dependencies"] = new JsonObject() } } }
     };
     File.WriteAllText(path, root.ToJsonString());
+    WriteGeneratedImportEvidence(path);
+}
+
+static void WriteGeneratedImportEvidence(string assetsPath, string projectFileName = "Test.csproj")
+{
+    var directory = Path.GetDirectoryName(assetsPath)!;
+    File.WriteAllText(Path.Combine(directory, projectFileName + ".nuget.g.props"), "<Project />");
+    File.WriteAllText(Path.Combine(directory, projectFileName + ".nuget.g.targets"), "<Project />");
 }
 
 static void Require(bool condition, string message)

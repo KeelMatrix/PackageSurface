@@ -3,6 +3,7 @@
     <OutputType>Exe</OutputType>
     <AssemblyName>KeelMatrix.PackageSurface.Probe</AssemblyName>
     <RootNamespace>KeelMatrix.PackageSurface.Probe</RootNamespace>
+    <IsPackable>false</IsPackable>
     <NoWarn>$(NoWarn);CA1849</NoWarn>
   </PropertyGroup>
   <ItemGroup>

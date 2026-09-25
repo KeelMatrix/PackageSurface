@@ -3,6 +3,7 @@
     <TargetFrameworks>net8.0;net8.0-windows</TargetFrameworks>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <AssemblyName>Phase0.MultiTarget</AssemblyName>
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="KeelMatrix.Phase0.BuildMultiTargeting" Version="1.0.0" />

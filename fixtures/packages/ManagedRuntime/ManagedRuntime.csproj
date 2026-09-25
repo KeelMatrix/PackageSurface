@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
+    <IsPackable>true</IsPackable>
     <AssemblyName>KeelMatrix.Phase0.ManagedRuntime</AssemblyName>
     <PackageId>KeelMatrix.Phase0.ManagedRuntime</PackageId>
     <PackageVersion>1.0.0</PackageVersion>

@@ -105,16 +105,26 @@ try {
         'global-json-file: global.json',
         'timeout-minutes: 45',
         'actions/download-artifact@v4',
+        'KEELMATRIX_TELEMETRY: ''off''',
+        'run-local-gate.ps1 -ArtifactDirectory artifacts/release',
+        'path: artifacts/release/*',
         'KeelMatrix.PackageSurface.${{ env.PACKAGE_VERSION }}.nupkg',
         'KeelMatrix.PackageSurface.${{ env.PACKAGE_VERSION }}.snupkg')) {
         if (-not $releaseWorkflow.Contains($required, [StringComparison]::Ordinal)) { throw "Release workflow is missing '$required'." }
     }
+    if ($releaseWorkflow.Contains('run-phase0.ps1', [StringComparison]::Ordinal)) { throw 'Release workflow runs a mutating standalone Phase 0 step.' }
+    if ($releaseWorkflow -match '(?m)dotnet\s+run\s+--project\s+tests/') { throw 'Release workflow duplicates console leaf tests beside the canonical gate.' }
+    if ($releaseWorkflow -match '(?m)^\s*run:\s*dotnet\s+pack\b') { throw 'Release workflow repacks a separately validated artifact.' }
+    if (-not $releaseWorkflow.Contains('--repo "${{ github.repository }}"', [StringComparison]::Ordinal) -and
+        -not $releaseWorkflow.Contains('GH_REPO: ${{ github.repository }}', [StringComparison]::Ordinal)) { throw 'GitHub release job has no explicit repository context.' }
     if ($releaseWorkflow.Contains("dotnet-version: 8.0.x", [StringComparison]::Ordinal)) { throw 'Release workflow uses a floating SDK version instead of global.json.' }
 
     $localGate = Get-Content -LiteralPath (Join-Path $root 'scripts/run-local-gate.ps1') -Raw
     foreach ($requiredGate in @('scripts/test-release-contract.ps1', 'scripts/test-vulnerability-audit.ps1')) {
         if (-not $localGate.Contains($requiredGate, [StringComparison]::Ordinal)) { throw "Canonical local gate does not invoke '$requiredGate'." }
     }
+    if ($localGate -notmatch '(?s)finally\s*\{.*packagesurface-gate|finally') { throw 'Canonical local gate does not clean run-owned scratch state in finally.' }
+    if (-not $localGate.Contains('validate-package-artifact.ps1', [StringComparison]::Ordinal)) { throw 'Canonical local gate does not invoke the reusable final-artifact validator.' }
 
     Write-Output 'PASS: release contract rejects tag-mode Unreleased, finalized mismatch, and permits frontier Unreleased entries.'
 }

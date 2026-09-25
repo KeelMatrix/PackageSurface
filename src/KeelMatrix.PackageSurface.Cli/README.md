@@ -1,8 +1,8 @@
-# KeelMatrix.PackageSurface
-
 **PackageSurface tells you when a NuGet dependency starts participating in your build in a new way.** It baselines package-provided MSBuild, compiler-extension, source/content, and native capabilities and fails when that reviewed surface changes.
 
 PackageSurface is not a malware or vulnerability scanner. A reported capability can be completely legitimate; the tool makes the capability change explicit so dependency updates can be reviewed.
+
+# KeelMatrix.PackageSurface
 
 ## Install
 
@@ -22,6 +22,23 @@ package-surface scan MySolution.sln
 package-surface baseline MySolution.sln --output package-surface.json
 package-surface check MySolution.sln --baseline package-surface.json
 ```
+
+The command contract is:
+
+```text
+package-surface scan <path>
+package-surface baseline <path> --output <baseline>
+package-surface check <path> --baseline <baseline>
+--format text|json|sarif
+--strict-content
+--project <path>
+--telemetry on|off
+--no-telemetry
+```
+
+Supported options are `--format text|json|sarif`, `--strict-content`, `--project <path>`, `--telemetry on|off`, and `--no-telemetry`. SARIF scan and baseline output contains `PS-SURFACE` note results for classified facts; check output contains diagnostics. Exit code `0` means success, `1` means a check found a reviewed surface or policy difference, and `2` means invalid invocation or incomplete analysis.
+
+Exit code `0` means a scan or baseline succeeded, or a check passed. A check difference returns exit code `1`; invalid invocation, missing restore artifacts, unsupported input, incomplete analysis, or an environment error returns exit code `2`.
 
 Review and commit the baseline. A later dependency update that changes active build, compiler, source-injection, or native capability produces `PS001`–`PS006` and exit code `1`. Missing or incomplete restore evidence produces `PS007` and exit code `2`.
 

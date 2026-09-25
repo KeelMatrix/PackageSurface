@@ -31,9 +31,12 @@ The packable CLI requires the repository-root `icon.png`. Packing fails with an 
 
 ## Project roles
 
-- `src/KeelMatrix.PackageSurface.Cli` is the only packable project and produces the `KeelMatrix.PackageSurface` .NET tool.
+- `src/KeelMatrix.PackageSurface.Cli` is the only shipping packable project and produces the `KeelMatrix.PackageSurface` .NET tool.
 - `src/KeelMatrix.PackageSurface.Core` contains the non-executing graph classifier and is not packable on its own.
 - `src/KeelMatrix.PackageSurface.Probe` preserves the Phase 0 executable probe.
-- `fixtures`, `tests`, and `tools` are validation inputs and are non-packable.
+- `src/KeelMatrix.PackageSurface.Cli` is the shipping packable tool. The controlled projects under
+  `fixtures/packages` are deliberately packable test-package fixtures used to build the local feed; fixture
+  consumers, tests, probes, and tools are explicitly non-packable. `scripts/test-packability.ps1` audits this
+  allowlist so a new project cannot silently become another NuGet artifact.
 
 No restore, MSBuild evaluation, dependency assembly loading, process execution, or package-feed access is performed by the classifier.

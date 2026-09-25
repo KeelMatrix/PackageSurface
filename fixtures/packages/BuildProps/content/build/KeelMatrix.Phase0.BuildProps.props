@@ -1,6 +1,10 @@
 <Project>
   <!-- UsingTask Exec Import InlineTaskFactory: names in comments are not observations. -->
-  <UsingTask TaskName="Phase0.Noop" TaskFactory="Phase0.InlineFactory" AssemblyFile="$(MSBuildThisFileDirectory)missing-task.dll" />
+  <UsingTask TaskName="Phase0.Inline" TaskFactory="CodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <Task>
+      <Code Type="Fragment" Language="cs"><![CDATA[Log.LogMessage("Phase 0 inline fixture");]]></Code>
+    </Task>
+  </UsingTask>
   <PropertyGroup>
     <Phase0BuildProps>true</Phase0BuildProps>
     <Phase0Description>UsingTask Exec Import InlineTaskFactory</Phase0Description>

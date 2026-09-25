@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="KeelMatrix.Phase0.CompilerExtensionLanguages" Version="1.0.0" />
+    <PackageReference Include="KeelMatrix.Phase0.ContentInjectionLanguages" Version="1.0.0" />
+  </ItemGroup>
+</Project>

@@ -15,6 +15,9 @@ on:
 permissions:
   contents: read
 
+env:
+  KEELMATRIX_TELEMETRY: 'off'
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true

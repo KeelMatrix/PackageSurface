@@ -27,3 +27,8 @@ secrets.*
 TestResults/
 coverage/
 .DS_Store
+.vs/
+.idea/
+*.log
+Thumbs.db
+*.pid

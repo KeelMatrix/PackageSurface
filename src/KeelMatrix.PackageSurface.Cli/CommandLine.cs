@@ -19,9 +19,9 @@ public static class CommandLine
         {
             parsed = Options.Parse(args);
         }
-        catch (ArgumentException)
+        catch (ArgumentException ex)
         {
-            Console.Error.WriteLine("error: invalid command-line arguments.");
+            Console.Error.WriteLine($"error: {ex.Message}");
             return 2;
         }
         if (parsed.Kind == ParseResultKind.Help)
@@ -118,7 +118,7 @@ public static class CommandLine
                 continue;
             }
 
-            var result = ResolvedGraphClassifier.Analyze(project.AssetsPath, project.ProjectRoot, strictContent, project.DisplayPath);
+            var result = ResolvedGraphClassifier.Analyze(project.AssetsPath, project.ProjectRoot, strictContent, project.DisplayPath, project.ProjectPath);
             entries.AddRange(result.Entries);
             reasons.AddRange(result.IncompleteReasons.Select(reason => $"{project.DisplayPath}: {reason}"));
             resolvedPackages += result.ResolvedPackageCount;
@@ -198,6 +198,7 @@ public sealed record Options(
 
         Options:
           --format text|json|sarif  Report format (default: text).
+                                   SARIF scan/baseline output includes one note per classified surface fact.
           --strict-content          Record SHA-256 fingerprints for present, active build/compiler execution assets.
           --project <path>          Select one project when a solution contains several projects.
           --telemetry on|off        Enable or disable best-effort activation telemetry.
@@ -330,7 +331,7 @@ public sealed record Options(
         argument.Equals(option, StringComparison.Ordinal) || argument.StartsWith(option + "=", StringComparison.Ordinal);
 }
 
-public sealed record SelectedProject(string ProjectRoot, string AssetsPath, string DisplayPath);
+public sealed record SelectedProject(string ProjectRoot, string AssetsPath, string DisplayPath, string ProjectPath);
 
 public sealed record ProjectSelection(IReadOnlyList<SelectedProject> Projects)
 {
@@ -397,14 +398,29 @@ public sealed record ProjectSelection(IReadOnlyList<SelectedProject> Projects)
         if (!File.Exists(projectPath)) throw new InvalidDataException("The selected project does not exist.");
         var root = Path.GetDirectoryName(projectPath)!;
         var display = NormalizeDisplay(Path.GetRelativePath(displayRoot, projectPath));
-        return new(root, Path.Combine(root, "obj", "project.assets.json"), display);
+        return new(root, Path.Combine(root, "obj", "project.assets.json"), display, projectPath);
     }
 
     private static SelectedProject ResolveAssets(string assetsPath)
     {
         var obj = Path.GetDirectoryName(assetsPath)!;
         var root = Directory.GetParent(obj)?.FullName ?? obj;
-        return new(root, assetsPath, NormalizeDisplay(Path.GetFileName(root) + ".csproj"));
+        var projectPath = ReadRestoreProjectPath(assetsPath);
+        var display = projectPath is null ? NormalizeDisplay(Path.GetFileName(root) + ".proj") : NormalizeDisplay(Path.GetFileName(projectPath));
+        return new(root, assetsPath, display, projectPath ?? Path.Combine(root, display));
+    }
+
+    private static string? ReadRestoreProjectPath(string assetsPath)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(assetsPath), new JsonDocumentOptions { MaxDepth = 16 });
+            return document.RootElement.GetProperty("project").GetProperty("restore").GetProperty("projectPath").GetString();
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or KeyNotFoundException or InvalidOperationException)
+        {
+            return null;
+        }
     }
 
     private static string NormalizeDisplay(string value) => value.Replace('\\', '/');
@@ -502,6 +518,7 @@ public sealed record BaselineDocument(
         }
 
         if (document.IncompleteReasons.Count > 0) throw new InvalidDataException("An incomplete analysis cannot be used as an approved baseline.");
+        var identities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var entry in document.Entries)
         {
             if (entry is null) throw new InvalidDataException("Baseline contains a null entry.");
@@ -518,6 +535,7 @@ public sealed record BaselineDocument(
             if (entry.RuntimeIdentifier is not null) RequireText(entry.RuntimeIdentifier, "runtimeIdentifier");
             if (entry.Context == SurfaceContextKind.Target && entry.TargetFramework is null) throw new InvalidDataException("Target baseline entries require a target framework.");
             if (entry.Context == SurfaceContextKind.Project && entry.TargetFramework is not null) throw new InvalidDataException("Project baseline entries cannot specify a target framework.");
+            if (entry.Context == SurfaceContextKind.Project && entry.RuntimeIdentifier is not null) throw new InvalidDataException("Project baseline entries cannot specify a runtime identifier.");
             ValidateRelativeText(entry.PackageRelativePath, "packageRelativePath");
             if (entry.Incomplete || entry.IncompleteReason is not null) throw new InvalidDataException("Baseline contains an incomplete entry.");
             if (entry.Active && !entry.Present) throw new InvalidDataException("Baseline contains an active asset that is not present.");
@@ -525,6 +543,8 @@ public sealed record BaselineDocument(
             if (document.StrictContent && !CapabilityPolicy.IsStrictContentEligible(entry.Capability, entry.Present, entry.Active) && entry.Sha256 is not null) throw new InvalidDataException("Strict baselines cannot fingerprint ineligible capability entries.");
             if (entry.Sha256 is not null && !IsSha256(entry.Sha256)) throw new InvalidDataException("Baseline contains an invalid SHA-256 fingerprint.");
             if (entry.ObservedPrimitives is not null && (entry.ObservedPrimitives.Count > 16 || entry.ObservedPrimitives.Any(primitive => primitive is not ("Exec" or "Import" or "InlineTaskFactory" or "UsingTask")))) throw new InvalidDataException("Baseline contains invalid observed XML primitives.");
+            if (entry.ObservedPrimitives is not null && entry.Capability is not (CapabilityKind.BuildProps or CapabilityKind.BuildTargets or CapabilityKind.BuildTransitive or CapabilityKind.BuildMultiTargeting)) throw new InvalidDataException("Observed XML primitives are only valid for build capability entries.");
+            if (!identities.Add(SurfaceIdentityKey.Create(entry))) throw new InvalidDataException("Baseline contains duplicate capability-surface identities.");
         }
     }
 
@@ -584,6 +604,17 @@ public sealed record BaselineEntry(
     IReadOnlyList<string>? ObservedPrimitives = null)
 {
     public static BaselineEntry From(SurfaceEntry entry) => new(entry.Project, entry.Context, entry.TargetFramework, entry.RuntimeIdentifier, entry.PackageId, entry.Version, entry.Relationship, entry.Capability, entry.PackageRelativePath, entry.Present, entry.Active, CapabilityPolicy.IsStrictContentEligible(entry) ? entry.Sha256 : null, entry.Incomplete, entry.IncompleteReason, entry.ObservedPrimitives);
+
+    public string SurfaceIdentity => SurfaceIdentityKey.Create(this);
+}
+
+public static class SurfaceIdentityKey
+{
+    public static string Create(BaselineEntry entry) => Create(entry.Project, entry.Context, entry.TargetFramework, entry.RuntimeIdentifier, entry.PackageId, entry.Relationship, entry.Capability, entry.PackageRelativePath);
+    public static string Create(SurfaceEntry entry) => Create(entry.Project, entry.Context, entry.TargetFramework, entry.RuntimeIdentifier, entry.PackageId, entry.Relationship, entry.Capability, entry.PackageRelativePath);
+
+    private static string Create(string? project, SurfaceContextKind context, string? targetFramework, string? runtimeIdentifier, string packageId, string relationship, CapabilityKind capability, string path) =>
+        string.Join("|", project, context, targetFramework, runtimeIdentifier, packageId, relationship, capability, path);
 }
 
 public sealed record Diagnostic(
@@ -593,48 +624,62 @@ public sealed record Diagnostic(
     string Severity,
     string? Project,
     string? PackageId,
-    string? PackageRelativePath)
+    string? PackageRelativePath,
+    string? Version = null,
+    string? Relationship = null,
+    SurfaceContextKind? Context = null,
+    string? TargetFramework = null,
+    string? RuntimeIdentifier = null,
+    CapabilityKind? Capability = null)
 {
     public static Diagnostic Create(string id, string message, string? project = null, string? packageId = null, string? path = null) =>
         new(id, id switch { "PS001" => "NewCapability", "PS002" => "NewActiveAsset", "PS003" => "BuildSurfaceChanged", "PS004" => "CompilerSurfaceChanged", "PS005" => "ContentFingerprintChanged", "PS006" => "NativeSurfaceChanged", _ => "AnalysisIncomplete" }, message, id == "PS007" ? "error" : "warning", project, packageId, path);
+
+    public static Diagnostic ForEntry(string id, string message, SurfaceEntry entry) =>
+        new(id, id switch { "PS001" => "NewCapability", "PS002" => "NewActiveAsset", "PS003" => "BuildSurfaceChanged", "PS004" => "CompilerSurfaceChanged", "PS005" => "ContentFingerprintChanged", "PS006" => "NativeSurfaceChanged", _ => "AnalysisIncomplete" }, message, id == "PS007" ? "error" : "warning", entry.Project, entry.PackageId, entry.PackageRelativePath, entry.Version, entry.Relationship, entry.Context, entry.TargetFramework, entry.RuntimeIdentifier, entry.Capability);
+
+    public static Diagnostic ForBaseline(string id, string message, BaselineEntry entry) =>
+        new(id, id switch { "PS001" => "NewCapability", "PS002" => "NewActiveAsset", "PS003" => "BuildSurfaceChanged", "PS004" => "CompilerSurfaceChanged", "PS005" => "ContentFingerprintChanged", "PS006" => "NativeSurfaceChanged", _ => "AnalysisIncomplete" }, message, id == "PS007" ? "error" : "warning", entry.Project, entry.PackageId, entry.PackageRelativePath, entry.Version, entry.Relationship, entry.Context, entry.TargetFramework, entry.RuntimeIdentifier, entry.Capability);
 }
 
 public static class DiffEngine
 {
     public static IReadOnlyList<Diagnostic> Compare(IReadOnlyList<BaselineEntry> baseline, IReadOnlyList<SurfaceEntry> current, bool strictContent)
     {
-        var approved = baseline.Where(entry => entry.Active).ToDictionary(Key, StringComparer.OrdinalIgnoreCase);
-        var observed = current.Where(entry => entry.Active).ToDictionary(Key, StringComparer.OrdinalIgnoreCase);
+        var approved = baseline.Where(entry => entry.Active).ToDictionary(SurfaceIdentityKey.Create, StringComparer.OrdinalIgnoreCase);
+        var observed = current.Where(entry => entry.Active).ToDictionary(SurfaceIdentityKey.Create, StringComparer.OrdinalIgnoreCase);
         var diagnostics = new List<Diagnostic>();
         foreach (var added in observed.Where(pair => !approved.ContainsKey(pair.Key)).Select(pair => pair.Value))
         {
             var id = SpecificId(added.Capability);
-            if (!baseline.Any(entry => entry.Active && entry.Capability == added.Capability)) diagnostics.Add(Diagnostic.Create("PS001", $"New capability category {added.Capability} is active.", added.Project, added.PackageId, added.PackageRelativePath));
-            diagnostics.Add(Diagnostic.Create("PS002", $"New active capability asset: {added.Capability} at {added.PackageRelativePath}.", added.Project, added.PackageId, added.PackageRelativePath));
-            diagnostics.Add(Diagnostic.Create(id, $"{added.Capability} surface changed at {added.PackageRelativePath}.", added.Project, added.PackageId, added.PackageRelativePath));
+            if (!baseline.Any(entry => entry.Active && CategoryScope(entry) == CategoryScope(added))) diagnostics.Add(Diagnostic.ForEntry("PS001", FormatEntryMessage("New capability category", added), added));
+            diagnostics.Add(Diagnostic.ForEntry("PS002", FormatEntryMessage("New active capability asset", added), added));
+            diagnostics.Add(Diagnostic.ForEntry(id, FormatEntryMessage("Capability surface changed", added), added));
         }
 
         foreach (var removed in approved.Where(pair => !observed.ContainsKey(pair.Key)).Select(pair => pair.Value))
         {
-            diagnostics.Add(Diagnostic.Create(SpecificId(removed.Capability), $"Approved active capability is no longer active: {removed.PackageRelativePath}.", removed.Project, removed.PackageId, removed.PackageRelativePath));
+            diagnostics.Add(Diagnostic.ForBaseline(SpecificId(removed.Capability), FormatEntryMessage("Approved active capability is no longer active", removed), removed));
         }
 
         if (strictContent)
         {
-            var approvedContent = baseline.Where(entry => CapabilityPolicy.IsStrictContentEligible(entry.Capability, entry.Present, entry.Active)).ToDictionary(Key, StringComparer.OrdinalIgnoreCase);
-            var observedContent = current.Where(CapabilityPolicy.IsStrictContentEligible).ToDictionary(Key, StringComparer.OrdinalIgnoreCase);
+            var approvedContent = baseline.Where(entry => CapabilityPolicy.IsStrictContentEligible(entry.Capability, entry.Present, entry.Active)).ToDictionary(SurfaceIdentityKey.Create, StringComparer.OrdinalIgnoreCase);
+            var observedContent = current.Where(CapabilityPolicy.IsStrictContentEligible).ToDictionary(SurfaceIdentityKey.Create, StringComparer.OrdinalIgnoreCase);
             foreach (var pair in observedContent)
             {
                 if (!approvedContent.TryGetValue(pair.Key, out var prior) || string.Equals(prior.Sha256, pair.Value.Sha256, StringComparison.OrdinalIgnoreCase)) continue;
-                diagnostics.Add(Diagnostic.Create("PS005", $"Approved asset content changed at {pair.Value.PackageRelativePath}.", pair.Value.Project, pair.Value.PackageId, pair.Value.PackageRelativePath));
+                diagnostics.Add(Diagnostic.ForEntry("PS005", FormatEntryMessage("Approved asset content changed", pair.Value), pair.Value));
             }
         }
 
         return diagnostics;
     }
 
-    private static string Key(BaselineEntry entry) => string.Join("|", entry.Project, entry.Context, entry.TargetFramework, entry.RuntimeIdentifier, entry.PackageId, entry.Version, entry.Relationship, entry.Capability, entry.PackageRelativePath);
-    private static string Key(SurfaceEntry entry) => string.Join("|", entry.Project, entry.Context, entry.TargetFramework, entry.RuntimeIdentifier, entry.PackageId, entry.Version, entry.Relationship, entry.Capability, entry.PackageRelativePath);
+    private static string CategoryScope(BaselineEntry entry) => string.Join("|", entry.Project, entry.Context, entry.TargetFramework, entry.RuntimeIdentifier, entry.PackageId, entry.Capability);
+    private static string CategoryScope(SurfaceEntry entry) => string.Join("|", entry.Project, entry.Context, entry.TargetFramework, entry.RuntimeIdentifier, entry.PackageId, entry.Capability);
+    private static string FormatEntryMessage(string prefix, BaselineEntry entry) => $"{prefix}: package {entry.PackageId} version {entry.Version} ({entry.Relationship}), {entry.Capability} {entry.Context} {entry.TargetFramework ?? "project"}{(entry.RuntimeIdentifier is null ? string.Empty : "/" + entry.RuntimeIdentifier)} at {entry.PackageRelativePath}.";
+    private static string FormatEntryMessage(string prefix, SurfaceEntry entry) => $"{prefix}: package {entry.PackageId} version {entry.Version} ({entry.Relationship}), {entry.Capability} {entry.Context} {entry.TargetFramework ?? "project"}{(entry.RuntimeIdentifier is null ? string.Empty : "/" + entry.RuntimeIdentifier)} at {entry.PackageRelativePath}.";
     private static string SpecificId(CapabilityKind kind) => kind switch { CapabilityKind.BuildProps or CapabilityKind.BuildTargets or CapabilityKind.BuildTransitive or CapabilityKind.BuildMultiTargeting => "PS003", CapabilityKind.CompilerExtension or CapabilityKind.CompileSourceInjection => "PS004", CapabilityKind.NativeRuntime => "PS006", _ => "PS002" };
 }
 
@@ -655,7 +700,9 @@ public sealed record ReportDocument(
         builder.AppendLine(string.Format(CultureInfo.InvariantCulture, "Entries: {0}; strict content: {1}", Entries.Count, StrictContent.ToString().ToLowerInvariant()));
         foreach (var entry in Entries)
         {
-            builder.AppendLine(string.Format(CultureInfo.InvariantCulture, "{0} {1} {2} {3} [{4}] {5}", entry.Capability, entry.Active ? "active" : "present", entry.PackageId, entry.Version, entry.Relationship, entry.PackageRelativePath));
+            var target = entry.Context == SurfaceContextKind.Project ? "project" : $"{entry.TargetFramework}{(entry.RuntimeIdentifier is null ? string.Empty : "/" + entry.RuntimeIdentifier)}";
+            var primitives = entry.ObservedPrimitives is { Count: > 0 } ? $" primitives={string.Join(",", entry.ObservedPrimitives)}" : string.Empty;
+            builder.AppendLine(string.Format(CultureInfo.InvariantCulture, "{0} present={1} active={2} project={3} context={4} package={5}@{6} relationship={7} target={8} path={9}{10}", entry.Capability, entry.Present, entry.Active, entry.Project ?? "-", entry.Context, entry.PackageId, entry.Version, entry.Relationship, target, entry.PackageRelativePath, primitives));
         }
         foreach (var diagnostic in Diagnostics)
         {
@@ -664,7 +711,7 @@ public sealed record ReportDocument(
         return builder.ToString().TrimEnd();
     }
 
-    public SarifDocument ToSarif() => new("2.1.0", "https://json.schemastore.org/sarif-2.1.0.json", new[] { new SarifRun(new SarifTool(new SarifDriver("PackageSurface", CommandLine.ToolVersion)), Diagnostics.Select(diagnostic => SarifResult.Create(diagnostic)).ToArray()) });
+    public SarifDocument ToSarif() => new("2.1.0", "https://json.schemastore.org/sarif-2.1.0.json", new[] { new SarifRun(new SarifTool(new SarifDriver("PackageSurface", CommandLine.ToolVersion)), Diagnostics.Select(SarifResult.Create).Concat(Entries.Select(SarifResult.Create)).ToArray()) });
 }
 
 public sealed class SarifDocument
@@ -691,6 +738,7 @@ public sealed record SarifDriver(string Name, string Version);
 public sealed record SarifResult(string RuleId, SarifMessage Message, string Level)
 {
     public static SarifResult Create(Diagnostic diagnostic) => new(diagnostic.Id, new SarifMessage(diagnostic.Message), diagnostic.Severity);
+    public static SarifResult Create(SurfaceEntry entry) => new("PS-SURFACE", new SarifMessage($"{entry.Capability} present={entry.Present} active={entry.Active} package={entry.PackageId}@{entry.Version} relationship={entry.Relationship} path={entry.PackageRelativePath}"), "note");
 }
 public sealed record SarifMessage(string Text);
 

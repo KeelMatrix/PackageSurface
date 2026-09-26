@@ -7,7 +7,7 @@
 - `fixtures/packages/` and `fixtures/consumer/` contain the controlled restored package corpus and consumer projects.
 - `scripts/run-phase0.ps1` builds the permanent fixture corpus, restores consumers, runs the classifier, and writes evidence.
 - `scripts/run-local-gate.ps1` is the validation entrypoint for restore, fixture coverage, formatting, Release build, no-execution proof, package inspection, vulnerability policy, installed-tool smoke, and consumer regressions.
-- `scripts/validate-release.ps1` is the shared package-version/changelog contract used by local checks and the tag-triggered release workflow.
+- `scripts/validate-release.ps1` is the shared package-version/changelog contract used by local checks before any founder-authorized release.
 - `tools/NoExecutionProof/` checks the compiled classifier for forbidden execution, MSBuild, and network references.
 
 ## Commands
@@ -39,4 +39,4 @@ Run the focused console tests after classifier or CLI changes, then run `scripts
 
 ## Change boundaries
 
-Keep changes limited to the classifier, CLI/schema/report structures, fixture corpus, tests, release validation, package-content enforcement, local gate, documentation, or release workflow required by the approved product scope. Public CI runs on pushes to `main` and pull requests. Do not publish packages, create tags/releases, or trigger deployments from local engineering work.
+Keep changes limited to the classifier, CLI/schema/report structures, fixture corpus, tests, release validation, package-content enforcement, local gate, or documentation required by the approved product scope. This private repository has no public CI workflow; use the local gate for repeatable validation. Do not publish packages, create tags/releases, or trigger deployments from local engineering work.

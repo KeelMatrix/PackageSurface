@@ -350,7 +350,7 @@ foreach ($line in @(
     'Raw fixture binary hashes are intentionally not recorded: compiler/packaging outputs can vary with host and SDK details. Deterministic evidence is the pinned SDK, resolved package/file presence, package-relative paths, direct/transitive relationships, target/RID context, active/inactive state, generated-import comparison, and gate verdict.',
     '', '## Recorded commands', '', '```text', ($evidence -join ([Environment]::NewLine + [Environment]::NewLine)), '```',
     '', '## Residual uncertainty', '',
-    'This is a bounded Phase 0 fixture, not a complete NuGet/MSBuild semantic implementation. The active rules are proven for the SDK-style PackageReference graphs represented by this corpus; the hostile-input, no-execution, resource, and cross-platform gates are enforced by the permanent local gate and public CI.'
+    'This is a bounded Phase 0 fixture, not a complete NuGet/MSBuild semantic implementation. The active rules are proven for the SDK-style PackageReference graphs represented by this corpus; the hostile-input, no-execution, and resource gates are enforced by the permanent local gate. Cross-platform coverage outside the current machine remains an explicit verification assumption.'
 )) { $report.Add([string]$line) }
 Write-Utf8LfLines (Join-Path $root 'evidence/phase0.md') $report
 Write-Output "Phase 0 complete. Report: $(Join-Path $root 'evidence/phase0.md')"

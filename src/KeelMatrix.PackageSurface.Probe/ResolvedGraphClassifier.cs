@@ -138,7 +138,7 @@ public static class ResolvedGraphClassifier
                     }
 
                     var files = ReadLibraryFiles(library, libraryKey, incomplete);
-                    var selectedAnalyzers = SelectAnalyzerPaths(files, projectLanguage, targetAlias, analyzerPackages, packageId, libraryKey, incomplete);
+                    var selectedAnalyzers = SelectAnalyzerPaths(files, projectLanguage, analyzerPackages, packageId, libraryKey, incomplete);
                     var targetAssets = package.Value;
                     foreach (var relativePath in files)
                     {
@@ -1224,7 +1224,7 @@ public static class ResolvedGraphClassifier
         var assetName = relativePath.Replace('\\', '/');
         return capability switch
         {
-            CapabilityKind.CompilerExtension => IsCompilerExtensionActive(assetName, projectLanguage, targetFramework, analyzerPackages, selectedAnalyzers, packageId, incomplete, libraryKey),
+            CapabilityKind.CompilerExtension => IsCompilerExtensionActive(assetName, projectLanguage, analyzerPackages, selectedAnalyzers, packageId, incomplete, libraryKey),
             CapabilityKind.CompileSourceInjection => IsCompileContentFile(targetAssets, assetName, projectLanguage, incomplete, libraryKey),
             CapabilityKind.NativeRuntime => ContainsAsset(targetAssets, "native", assetName, incomplete, libraryKey) || ContainsAsset(targetAssets, "runtime", assetName, incomplete, libraryKey),
             _ => false
@@ -1346,13 +1346,12 @@ public static class ResolvedGraphClassifier
     private static HashSet<string> SelectAnalyzerPaths(
         IReadOnlyList<string> files,
         ProjectLanguage projectLanguage,
-        string targetFramework,
         HashSet<string> analyzerPackages,
         string packageId,
         string libraryKey,
         List<string> incomplete)
     {
-        var candidates = new List<(string Path, string? Language, Version? RoslynVersion, string? Framework)>();
+        var candidates = new List<(string Path, Version? RoslynVersion)>();
         foreach (var path in files)
         {
             if (!path.StartsWith("analyzers/", StringComparison.OrdinalIgnoreCase) ||
@@ -1361,126 +1360,73 @@ public static class ResolvedGraphClassifier
                 continue;
             }
 
-            if (!TryParseAnalyzerPath(path, out var language, out var roslynVersion, out var framework))
+            if (!TryParseAnalyzerPath(path, out _, out var roslynVersion))
             {
                 incomplete.Add($"{libraryKey}: analyzer applicability is unavailable for the resolved compiler-extension path.");
                 continue;
             }
 
-            if (framework is not null && !AnalyzerFrameworkApplies(framework, targetFramework))
-            {
-                continue;
-            }
-
-            if (language is not null && projectLanguage != ProjectLanguage.Unknown &&
-                !language.Equals(ProjectLanguageCode(projectLanguage), StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            if (language is not null && projectLanguage == ProjectLanguage.Unknown)
+            if (!IsAnalyzerApplicableToProject(path, projectLanguage, incomplete, libraryKey))
             {
                 continue;
             }
 
             if (analyzerPackages.Contains(packageId))
             {
-                candidates.Add((path, language, roslynVersion, framework));
+                candidates.Add((path, roslynVersion));
             }
         }
 
         var selected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var group in candidates.GroupBy(candidate => candidate.Language ?? string.Empty, StringComparer.OrdinalIgnoreCase))
+        foreach (var candidate in candidates.Where(candidate => candidate.RoslynVersion is null))
         {
-            var versioned = group.Where(candidate => candidate.RoslynVersion is not null).ToArray();
-            var highest = versioned.Length == 0 ? null : versioned.Max(candidate => candidate.RoslynVersion);
-            foreach (var candidate in group)
+            selected.Add(candidate.Path);
+        }
+
+        var versionedCandidates = candidates.Where(candidate => candidate.RoslynVersion is not null).ToArray();
+        var highest = versionedCandidates.Length == 0 ? null : versionedCandidates.Max(candidate => candidate.RoslynVersion);
+        foreach (var candidate in versionedCandidates)
+        {
+            if (candidate.RoslynVersion == highest)
             {
-                if (highest is null ? candidate.RoslynVersion is null : candidate.RoslynVersion == highest)
-                {
-                    selected.Add(candidate.Path);
-                }
+                selected.Add(candidate.Path);
             }
         }
 
         return selected;
     }
 
-    private static bool TryParseAnalyzerPath(string path, out string? language, out Version? roslynVersion, out string? framework)
+    private static bool TryParseAnalyzerPath(string path, out string? language, out Version? roslynVersion)
     {
         language = null;
         roslynVersion = null;
-        framework = null;
         var segments = path.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (segments.Length < 3 || !segments[0].Equals("analyzers", StringComparison.OrdinalIgnoreCase) ||
+        if (segments.Length < 2 || !segments[0].Equals("analyzers", StringComparison.OrdinalIgnoreCase) ||
             !Path.GetExtension(path).Equals(".dll", StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
 
-        var index = 2;
-        if (segments[1].Equals("dotnet", StringComparison.OrdinalIgnoreCase))
+        for (var index = 1; index < segments.Length - 1; index++)
         {
-        }
-        else if (segments[1].Contains('.', StringComparison.Ordinal) &&
-                 (segments[1].StartsWith("net", StringComparison.OrdinalIgnoreCase) ||
-                  segments[1].StartsWith("netstandard", StringComparison.OrdinalIgnoreCase) ||
-                  segments[1].StartsWith("netcoreapp", StringComparison.OrdinalIgnoreCase)))
-        {
-            framework = segments[1];
-        }
-        else
-        {
-            return false;
-        }
+            if (segments[index].StartsWith("roslyn", StringComparison.OrdinalIgnoreCase))
+            {
+                if (roslynVersion is not null || !Version.TryParse(segments[index]["roslyn".Length..], out roslynVersion))
+                {
+                    return false;
+                }
+            }
+            else if (IsAnalyzerLanguage(segments[index]))
+            {
+                if (language is not null)
+                {
+                    return false;
+                }
 
-        if (index < segments.Length - 1 && segments[index].StartsWith("roslyn", StringComparison.OrdinalIgnoreCase))
-        {
-            var versionText = segments[index]["roslyn".Length..];
-            if (!Version.TryParse(versionText, out roslynVersion)) return false;
-            index++;
+                language = segments[index].ToLowerInvariant();
+            }
         }
 
-        if (index < segments.Length - 1 && IsAnalyzerLanguage(segments[index]))
-        {
-            language = segments[index].ToLowerInvariant();
-            index++;
-        }
-
-        return index == segments.Length - 1;
-    }
-
-    private static bool AnalyzerFrameworkApplies(string required, string target)
-    {
-        if (!TryParseFrameworkVersion(required, out var requiredKind, out var requiredVersion) ||
-            !TryParseFrameworkVersion(target, out var targetKind, out var targetVersion))
-        {
-            return false;
-        }
-
-        if (requiredKind.Equals("netstandard", StringComparison.OrdinalIgnoreCase))
-        {
-            return targetKind.StartsWith("net", StringComparison.OrdinalIgnoreCase);
-        }
-
-        return requiredKind.Equals(targetKind, StringComparison.OrdinalIgnoreCase) && targetVersion >= requiredVersion;
-    }
-
-    private static bool TryParseFrameworkVersion(string value, out string kind, out Version version)
-    {
-        kind = string.Empty;
-        version = new Version(0, 0);
-        var separator = -1;
-        for (var index = 0; index < value.Length; index++)
-        {
-            if (!char.IsDigit(value[index])) continue;
-            separator = index;
-            break;
-        }
-
-        if (separator <= 0 || !Version.TryParse(value[separator..], out var parsedVersion) || parsedVersion is null) return false;
-        kind = value[..separator];
-        version = parsedVersion;
         return true;
     }
 
@@ -1489,13 +1435,34 @@ public static class ResolvedGraphClassifier
         value.Equals("vb", StringComparison.OrdinalIgnoreCase) ||
         value.Equals("fs", StringComparison.OrdinalIgnoreCase);
 
+    private static bool IsAnalyzerApplicableToProject(string path, ProjectLanguage language, List<string> incomplete, string libraryKey)
+    {
+        var segments = path.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var hasCSharpSegment = segments.Any(segment => segment.Equals("cs", StringComparison.OrdinalIgnoreCase));
+        var hasVisualBasicSegment = segments.Any(segment => segment.Equals("vb", StringComparison.OrdinalIgnoreCase));
+        return language switch
+        {
+            ProjectLanguage.CSharp => hasCSharpSegment || !hasVisualBasicSegment,
+            ProjectLanguage.VisualBasic => hasVisualBasicSegment || !hasCSharpSegment,
+            ProjectLanguage.FSharp => false,
+            ProjectLanguage.Unknown when !hasCSharpSegment && !hasVisualBasicSegment => true,
+            ProjectLanguage.Unknown => AddUnknownAnalyzerLanguageReason(incomplete, libraryKey),
+            _ => false
+        };
+    }
+
+    private static bool AddUnknownAnalyzerLanguageReason(List<string> incomplete, string libraryKey)
+    {
+        incomplete.Add($"{libraryKey}: consuming project language is required to determine compiler-extension applicability.");
+        return false;
+    }
+
     private static bool IsAnalyzerSatellite(string path) =>
         path.EndsWith(".resources.dll", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsCompilerExtensionActive(
         string path,
         ProjectLanguage language,
-        string targetFramework,
         HashSet<string> analyzerPackages,
         IReadOnlySet<string> selectedAnalyzers,
         string packageId,
@@ -1512,26 +1479,13 @@ public static class ResolvedGraphClassifier
             return false;
         }
 
-        if (!TryParseAnalyzerPath(path, out var analyzerLanguage, out _, out var framework))
+        if (!TryParseAnalyzerPath(path, out _, out _))
         {
             incomplete.Add($"{libraryKey}: analyzer applicability is unavailable for the resolved compiler-extension path.");
             return false;
         }
 
-        if (framework is not null && !AnalyzerFrameworkApplies(framework, targetFramework))
-        {
-            return false;
-        }
-
-        var languageSpecific = analyzerLanguage is not null;
-        if (languageSpecific && language == ProjectLanguage.Unknown)
-        {
-            incomplete.Add($"{libraryKey}: consuming project language is required to determine compiler-extension applicability.");
-            return false;
-        }
-
-        if (!analyzerPackages.Contains(packageId) ||
-            (analyzerLanguage is not null && !analyzerLanguage.Equals(ProjectLanguageCode(language), StringComparison.OrdinalIgnoreCase)))
+        if (!analyzerPackages.Contains(packageId) || !IsAnalyzerApplicableToProject(path, language, incomplete, libraryKey))
         {
             return false;
         }

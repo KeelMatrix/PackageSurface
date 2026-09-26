@@ -203,8 +203,8 @@
     "rid": null,
     "path": "analyzers/net9.0/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
     "relationship": "direct",
-    "seededState": "inactive",
-    "classifierState": "inactive",
+    "seededState": "active",
+    "classifierState": "active",
     "imports": "none",
     "expectedImportState": "not-applicable",
     "version": "1.0.0"
@@ -563,8 +563,8 @@
     "rid": null,
     "path": "analyzers/net9.0/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
     "relationship": "direct",
-    "seededState": "inactive",
-    "classifierState": "inactive",
+    "seededState": "active",
+    "classifierState": "active",
     "imports": "none",
     "expectedImportState": "not-applicable",
     "version": "1.0.0"
@@ -1163,8 +1163,8 @@
     "rid": null,
     "path": "analyzers/net9.0/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
     "relationship": "transitive",
-    "seededState": "inactive",
-    "classifierState": "inactive",
+    "seededState": "active",
+    "classifierState": "active",
     "imports": "none",
     "expectedImportState": "not-applicable",
     "version": "1.0.0"
@@ -1403,8 +1403,8 @@
     "rid": "win-x64",
     "path": "analyzers/net9.0/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
     "relationship": "transitive",
-    "seededState": "inactive",
-    "classifierState": "inactive",
+    "seededState": "active",
+    "classifierState": "active",
     "imports": "none",
     "expectedImportState": "not-applicable",
     "version": "1.0.0"

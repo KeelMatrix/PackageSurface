@@ -28,8 +28,8 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\KeelMatrix.PackageSurface.Core\KeelMatrix.PackageSurface.Core.csproj" />
-    <PackageReference Include="KeelMatrix.Telemetry" Version="0.1.1" />
-    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.401" PrivateAssets="All" />
+    <PackageReference Include="KeelMatrix.Telemetry" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
   </ItemGroup>
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="" />

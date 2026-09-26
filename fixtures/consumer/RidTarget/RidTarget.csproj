@@ -6,7 +6,7 @@
     <AssemblyName>Phase0.RidTarget</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="KeelMatrix.Phase0.NativeRuntime" Version="1.0.0" />
-    <PackageReference Include="KeelMatrix.Phase0.TransitiveRoot" Version="1.0.0" />
+    <PackageReference Include="KeelMatrix.Phase0.NativeRuntime" />
+    <PackageReference Include="KeelMatrix.Phase0.TransitiveRoot" />
   </ItemGroup>
 </Project>

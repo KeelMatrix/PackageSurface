@@ -310,6 +310,7 @@ $matrix = [System.Collections.Generic.List[string]]::new()
 $matrix.Add('# Phase 0 corpus matrix')
 $matrix.Add('')
 $matrix.Add('Each supported capability has direct and transitive active/inactive evidence. `ToolOrScriptPresent` is intentionally informational and inactive in every row. `BuildMultiTargeting` is project-level: the generated outer-target import is direct-only under this NuGet convention, so its transitive fixture is explicitly present/inactive.')
+$matrix.Add('Restore evidence coverage: coherent SDK-style `project.assets.json` formats 1 through 4 are supported. Format 4 additionally requires matching effective framework and target-alias metadata in the project and restore framework maps, plus array-valued project dependency groups.')
 $matrix.Add('')
 $matrix.Add('| Capability | Relationship | State | Context | TFM/RID | Fixture |')
 $matrix.Add('|---|---|---|---|---|---|')
@@ -332,6 +333,7 @@ $report = [System.Collections.Generic.List[string]]::new()
 foreach ($line in @(
     '# Phase 0 feasibility evidence', '', '## Verdict', '', $verdict,
     '', 'The probe reads only reachable entries from `project.assets.json`; it does not restore, evaluate MSBuild, load dependency assemblies, start analysis processes, or query a feed.',
+    '', 'Supported restore evidence formats: coherent SDK-style assets formats 1 through 4. Format 4 framework aliases are mapped to their effective framework for surface entries, while mismatched or incomplete v4 metadata remains `PS007` evidence.',
     '', '## Per-category comparison', '')) { $report.Add([string]$line) }
 $report.AddRange($rows)
 foreach ($line in @(

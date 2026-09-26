@@ -38,7 +38,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $version = $env:RELEASE_TAG.Substring(1)
-          & ./scripts/validate-release.ps1 -Version $version -RequireFinalized
+          & ./scripts/validate-release.ps1 -Version $version -RequireFinalized -FirstRelease
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "version=$version" >> $env:GITHUB_OUTPUT
       - name: Build and validate exact release artifacts

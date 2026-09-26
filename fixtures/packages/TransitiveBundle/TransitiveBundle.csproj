@@ -9,14 +9,14 @@
     <NoWarn>$(NoWarn);NU5128</NoWarn>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="KeelMatrix.Phase0.BuildTransitive" Version="1.0.0" PrivateAssets="none" />
-    <PackageReference Include="KeelMatrix.Phase0.BuildProps" Version="1.0.0" PrivateAssets="none" />
-    <PackageReference Include="KeelMatrix.Phase0.BuildTargets" Version="1.0.0" PrivateAssets="none" />
-    <PackageReference Include="KeelMatrix.Phase0.BuildMultiTargeting" Version="1.0.0" PrivateAssets="none" />
-    <PackageReference Include="KeelMatrix.Phase0.CompilerExtension" Version="1.0.0" PrivateAssets="none" />
-    <PackageReference Include="KeelMatrix.Phase0.ContentInjection" Version="1.0.0" PrivateAssets="none" />
-    <PackageReference Include="KeelMatrix.Phase0.NativeRuntime" Version="1.0.0" PrivateAssets="none" />
-    <PackageReference Include="KeelMatrix.Phase0.NativeRuntimeTransitive" Version="1.0.0" PrivateAssets="none" />
-    <PackageReference Include="KeelMatrix.Phase0.ToolScript" Version="1.0.0" PrivateAssets="none" />
+    <PackageReference Include="KeelMatrix.Phase0.BuildTransitive" PrivateAssets="none" />
+    <PackageReference Include="KeelMatrix.Phase0.BuildProps" PrivateAssets="none" />
+    <PackageReference Include="KeelMatrix.Phase0.BuildTargets" PrivateAssets="none" />
+    <PackageReference Include="KeelMatrix.Phase0.BuildMultiTargeting" PrivateAssets="none" />
+    <PackageReference Include="KeelMatrix.Phase0.CompilerExtension" PrivateAssets="none" />
+    <PackageReference Include="KeelMatrix.Phase0.ContentInjection" PrivateAssets="none" />
+    <PackageReference Include="KeelMatrix.Phase0.NativeRuntime" PrivateAssets="none" />
+    <PackageReference Include="KeelMatrix.Phase0.NativeRuntimeTransitive" PrivateAssets="none" />
+    <PackageReference Include="KeelMatrix.Phase0.ToolScript" PrivateAssets="none" />
   </ItemGroup>
 </Project>

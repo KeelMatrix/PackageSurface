@@ -1,6 +1,7 @@
 # Phase 0 corpus matrix
 
 Each supported capability has direct and transitive active/inactive evidence. `ToolOrScriptPresent` is intentionally informational and inactive in every row. `BuildMultiTargeting` is project-level: the generated outer-target import is direct-only under this NuGet convention, so its transitive fixture is explicitly present/inactive.
+Restore evidence coverage: coherent SDK-style `project.assets.json` formats 1 through 4 are supported. Format 4 additionally requires matching effective framework and target-alias metadata in the project and restore framework maps, plus array-valued project dependency groups.
 
 | Capability | Relationship | State | Context | TFM/RID | Fixture |
 |---|---|---|---|---|---|

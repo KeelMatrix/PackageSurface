@@ -14,7 +14,8 @@ function Invoke-ReleaseValidation {
     param(
         [Parameter(Mandatory)] [string] $Version,
         [Parameter(Mandatory)] [string] $ChangelogPath,
-        [switch] $RequireFinalized
+        [switch] $RequireFinalized,
+        [switch] $FirstRelease
     )
 
     $arguments = @(
@@ -30,6 +31,7 @@ function Invoke-ReleaseValidation {
         $ChangelogPath
     )
     if ($RequireFinalized) { $arguments += '-RequireFinalized' }
+    if ($FirstRelease) { $arguments += '-FirstRelease' }
     $null = & pwsh @arguments 2>$null
     return $LASTEXITCODE
 }
@@ -93,7 +95,7 @@ try {
         'timeout-minutes: 45',
         'actions/download-artifact@v4',
         'KEELMATRIX_TELEMETRY: ''off''',
-        './scripts/validate-release.ps1 -Version $version -RequireFinalized',
+        './scripts/validate-release.ps1 -Version $version -RequireFinalized -FirstRelease',
         './scripts/run-local-gate.ps1 -ArtifactDirectory artifacts/release',
         'path: artifacts/release/*',
         'NuGet/login@v1',
@@ -129,11 +131,29 @@ try {
 
     $candidateChangelog = Join-Path $scratch 'CHANGELOG.finalized.md'
     [IO.File]::WriteAllText($candidateChangelog, "# Changelog`n`n## [$version] - 2026-09-22`n`n- Finalized release notes.`n", [Text.UTF8Encoding]::new($false))
-    Assert-ValidationPass 'real project with finalized version-consistent changelog' (Invoke-ReleaseValidation -Version $version -ChangelogPath $candidateChangelog -RequireFinalized)
+    $candidateFirstRelease = "# Changelog`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Initial release capability review.`n"
+    [IO.File]::WriteAllText($candidateChangelog, $candidateFirstRelease, [Text.UTF8Encoding]::new($false))
+    Assert-ValidationPass 'real project with finalized version-consistent first-release changelog' (Invoke-ReleaseValidation -Version $version -ChangelogPath $candidateChangelog -RequireFinalized -FirstRelease)
+
+    $wholeWordChangelog = Join-Path $scratch 'CHANGELOG.whole-word.md'
+    [IO.File]::WriteAllText($wholeWordChangelog, "# Changelog`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Adds package prefixes and nowhere-only documentation examples.`n", [Text.UTF8Encoding]::new($false))
+    Assert-ValidationPass 'first-release whole-word marker boundaries' (Invoke-ReleaseValidation -Version $version -ChangelogPath $wholeWordChangelog -RequireFinalized -FirstRelease)
+
+    foreach ($marker in @('now', 'no longer', 'previously', 'formerly', 'used to', 'fixed', 'fixes', 'corrected', 'resolved', 'addressed', 'this removes', 'this fixes', 'changed from')) {
+        $markerChangelog = Join-Path $scratch ('CHANGELOG.marker-' + ($marker -replace '[^A-Za-z0-9]+', '-') + '.md')
+        [IO.File]::WriteAllText($markerChangelog, "# Changelog`n`n## [$version] - 2026-09-22`n`n### Added`n`n- $marker release wording.`n", [Text.UTF8Encoding]::new($false))
+        Assert-ValidationRejects "first-release remediation marker '$marker'" (Invoke-ReleaseValidation -Version $version -ChangelogPath $markerChangelog -RequireFinalized -FirstRelease)
+    }
+
+    foreach ($category in @('Changed', 'Fixed', 'Deprecated', 'Removed', 'Security', 'Compatibility')) {
+        $categoryChangelog = Join-Path $scratch ('CHANGELOG.category-' + $category + '.md')
+        [IO.File]::WriteAllText($categoryChangelog, "# Changelog`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Initial release capability review.`n`n### $category`n`n- Release note.`n", [Text.UTF8Encoding]::new($false))
+        Assert-ValidationRejects "first-release category '$category'" (Invoke-ReleaseValidation -Version $version -ChangelogPath $categoryChangelog -RequireFinalized -FirstRelease)
+    }
 
     $mismatchedChangelog = Join-Path $scratch 'CHANGELOG.mismatched.md'
     [IO.File]::WriteAllText($mismatchedChangelog, "# Changelog`n`n## [9.9.9] - 2026-09-22`n`n- Wrong version.`n", [Text.UTF8Encoding]::new($false))
-    Assert-ValidationRejects 'changelog/version disagreement' (Invoke-ReleaseValidation -Version $version -ChangelogPath $mismatchedChangelog -RequireFinalized)
+    Assert-ValidationRejects 'changelog/version disagreement' (Invoke-ReleaseValidation -Version $version -ChangelogPath $mismatchedChangelog -RequireFinalized -FirstRelease)
 
     Write-Output 'PASS: restored CI/release workflows use one shared fail-closed release contract; real candidate, finalized, and version-mismatch cases behave as required.'
 }

@@ -84,7 +84,7 @@ try {
     }
     try {
         Invoke-GateStep 'controlled restore and permanent fixture suite' {
-            & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/run-phase0.ps1')
+            & pwsh -NoLogo -NoProfile -WindowStyle Hidden -File (Join-Path $root 'scripts/run-phase0.ps1')
         }
     }
     finally {
@@ -100,26 +100,26 @@ try {
         & dotnet format $solution --verify-no-changes --no-restore
     }
     Invoke-GateStep 'packability graph audit' {
-        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-packability.ps1')
+        & pwsh -NoLogo -NoProfile -WindowStyle Hidden -File (Join-Path $root 'scripts/test-packability.ps1')
     }
     Invoke-GateStep 'CLI documentation contract' {
-        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-cli-documentation.ps1')
+        & pwsh -NoLogo -NoProfile -WindowStyle Hidden -File (Join-Path $root 'scripts/test-cli-documentation.ps1')
     }
     Invoke-GateStep 'Release build' {
         & dotnet build $solution --configuration Release --no-restore
     }
     Invoke-GateStep 'no-code-execution proof' {
-        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/verify-no-execution.ps1')
+        & pwsh -NoLogo -NoProfile -WindowStyle Hidden -File (Join-Path $root 'scripts/verify-no-execution.ps1')
     }
     $cliTests = Join-Path $root 'tests/KeelMatrix.PackageSurface.Cli.Tests/KeelMatrix.PackageSurface.Cli.Tests.csproj'
     Invoke-GateStep 'CLI contract and resource tests' {
         & dotnet run --project $cliTests --configuration Release --no-build
     }
     Invoke-GateStep 'release contract regressions' {
-        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-release-contract.ps1')
+        & pwsh -NoLogo -NoProfile -WindowStyle Hidden -File (Join-Path $root 'scripts/test-release-contract.ps1')
     }
     Invoke-GateStep 'vulnerability audit regressions' {
-        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-vulnerability-audit.ps1')
+        & pwsh -NoLogo -NoProfile -WindowStyle Hidden -File (Join-Path $root 'scripts/test-vulnerability-audit.ps1')
     }
 
     $singleProject = Join-Path $root 'fixtures/consumer/SingleTarget'
@@ -202,15 +202,15 @@ try {
     finally { $snupkg.Dispose() }
 
     Invoke-GateStep 'final package metadata and symbol contract' {
-        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/validate-package-artifact.ps1') -PackagePath $nupkgs[0].FullName -SymbolsPath $snupkgs[0].FullName -ExpectedVersion $packageVersion
+        & pwsh -NoLogo -NoProfile -WindowStyle Hidden -File (Join-Path $root 'scripts/validate-package-artifact.ps1') -PackagePath $nupkgs[0].FullName -SymbolsPath $snupkgs[0].FullName -ExpectedVersion $packageVersion
     }
 
     Invoke-GateStep 'package-content negative regressions' {
-        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-package-content-gate.ps1') -PackagePath $nupkgs[0].FullName -ArtifactDirectory $feed
+        & pwsh -NoLogo -NoProfile -WindowStyle Hidden -File (Join-Path $root 'scripts/test-package-content-gate.ps1') -PackagePath $nupkgs[0].FullName -ArtifactDirectory $feed
     }
 
     Invoke-GateStep 'sensitive/local pack-input regressions' {
-        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-sensitive-pack-inputs.ps1') -ProjectFile $cliProject
+        & pwsh -NoLogo -NoProfile -WindowStyle Hidden -File (Join-Path $root 'scripts/test-sensitive-pack-inputs.ps1') -ProjectFile $cliProject
     }
 
     $expectedAuditProjects = @(
@@ -236,7 +236,7 @@ try {
         [IO.File]::WriteAllText($auditFile, ($audit -join [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
     }
     Invoke-GateStep 'vulnerability finding policy' {
-        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/assert-no-vulnerabilities.ps1') -InputPath $auditFile -CoveragePath $coverageFile -ExpectedProjectPath ($expectedAuditProjects -join '|') -ExpectedFramework net8.0
+        & pwsh -NoLogo -NoProfile -WindowStyle Hidden -File (Join-Path $root 'scripts/assert-no-vulnerabilities.ps1') -InputPath $auditFile -CoveragePath $coverageFile -ExpectedProjectPath ($expectedAuditProjects -join '|') -ExpectedFramework net8.0
     }
 
     $toolConfig = Join-Path $scratch 'tool.config'

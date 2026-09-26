@@ -7,19 +7,19 @@ try {
     $changelog = Join-Path $scratch 'CHANGELOG.md'
     [IO.File]::WriteAllText($project, '<Project><PropertyGroup><Version>0.1.0</Version></PropertyGroup></Project>')
     [IO.File]::WriteAllText($changelog, "# Changelog`n`n## [Unreleased]`n`n- Candidate capabilities.`n")
-    & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/validate-release.ps1') -Version 0.1.0 -ProjectFile $project -ChangelogPath $changelog
+    & pwsh -NoLogo -NoProfile -WindowStyle Hidden -File (Join-Path $root 'scripts/validate-release.ps1') -Version 0.1.0 -ProjectFile $project -ChangelogPath $changelog
     if ($LASTEXITCODE -ne 0) { throw 'Unreleased candidate validation failed.' }
-    & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/validate-release.ps1') -Version 0.1.0 -RequireFinalized -ProjectFile $project -ChangelogPath $changelog 2>$null
+    & pwsh -NoLogo -NoProfile -WindowStyle Hidden -File (Join-Path $root 'scripts/validate-release.ps1') -Version 0.1.0 -RequireFinalized -ProjectFile $project -ChangelogPath $changelog 2>$null
     if ($LASTEXITCODE -eq 0) { throw 'Tag-mode validation accepted an Unreleased changelog entry.' }
 
     $changelogText = "# Changelog`n`n## [0.1.0] - 2026-09-22`n`n- Initial release.`n"
     [IO.File]::WriteAllText($changelog, $changelogText)
-    & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/validate-release.ps1') -Version 0.1.0 -RequireFinalized -ProjectFile $project -ChangelogPath $changelog
+    & pwsh -NoLogo -NoProfile -WindowStyle Hidden -File (Join-Path $root 'scripts/validate-release.ps1') -Version 0.1.0 -RequireFinalized -ProjectFile $project -ChangelogPath $changelog
     if ($LASTEXITCODE -ne 0) { throw 'Finalized release validation failed.' }
 
     function Assert-Rejected([string] $name, [string] $text) {
         [IO.File]::WriteAllText($changelog, $text)
-        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/validate-release.ps1') -Version 0.1.0 -RequireFinalized -ProjectFile $project -ChangelogPath $changelog 2>$null
+        & pwsh -NoLogo -NoProfile -WindowStyle Hidden -File (Join-Path $root 'scripts/validate-release.ps1') -Version 0.1.0 -RequireFinalized -ProjectFile $project -ChangelogPath $changelog 2>$null
         if ($LASTEXITCODE -eq 0) { throw "Negative release-contract case '$name' was accepted." }
     }
 
@@ -30,7 +30,7 @@ try {
     Assert-Rejected 'malformed date' "# Changelog`n`n## [0.1.0] - 2026-99-99`n`n- Initial release.`n"
 
     [IO.File]::WriteAllText($changelog, "# Changelog`n`n## [0.2.0] - 2026-09-22`n`n- Wrong version.`n")
-    & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/validate-release.ps1') -Version 0.1.0 -ProjectFile $project -ChangelogPath $changelog 2>$null
+    & pwsh -NoLogo -NoProfile -WindowStyle Hidden -File (Join-Path $root 'scripts/validate-release.ps1') -Version 0.1.0 -ProjectFile $project -ChangelogPath $changelog 2>$null
     if ($LASTEXITCODE -eq 0) { throw 'Version mismatch was accepted.' }
 
     $workflowDirectory = Join-Path $root '.github/workflows'

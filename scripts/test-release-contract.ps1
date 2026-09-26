@@ -20,8 +20,6 @@ function Invoke-ReleaseValidation {
     $arguments = @(
         '-NoLogo',
         '-NoProfile',
-        '-WindowStyle',
-        'Hidden',
         '-File',
         $validator,
         '-Version',

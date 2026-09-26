@@ -1,48 +1,143 @@
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$validator = Join-Path $root 'scripts/validate-release.ps1'
+$projectFile = Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/KeelMatrix.PackageSurface.Cli.csproj'
+$realChangelog = Join-Path $root 'CHANGELOG.md'
+$workflowDirectory = Join-Path $root '.github/workflows'
+$ciWorkflowPath = Join-Path $workflowDirectory 'ci.yml'
+$releaseWorkflowPath = Join-Path $workflowDirectory 'release.yml'
+$localGatePath = Join-Path $root 'scripts/run-local-gate.ps1'
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('packagesurface-release-contract-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $scratch | Out-Null
+
+function Invoke-ReleaseValidation {
+    param(
+        [Parameter(Mandatory)] [string] $Version,
+        [Parameter(Mandatory)] [string] $ChangelogPath,
+        [switch] $RequireFinalized
+    )
+
+    $arguments = @(
+        '-NoLogo',
+        '-NoProfile',
+        '-WindowStyle',
+        'Hidden',
+        '-File',
+        $validator,
+        '-Version',
+        $Version,
+        '-ProjectFile',
+        $projectFile,
+        '-ChangelogPath',
+        $ChangelogPath
+    )
+    if ($RequireFinalized) { $arguments += '-RequireFinalized' }
+    $null = & pwsh @arguments 2>$null
+    return $LASTEXITCODE
+}
+
+function Assert-ValidationPass {
+    param([Parameter(Mandatory)] [string] $Name, [Parameter(Mandatory)] [int] $ExitCode)
+    if ($ExitCode -ne 0) { throw "Release-contract case '$Name' failed with exit code $ExitCode." }
+}
+
+function Assert-ValidationRejects {
+    param([Parameter(Mandatory)] [string] $Name, [Parameter(Mandatory)] [int] $ExitCode)
+    if ($ExitCode -eq 0) { throw "Release-contract case '$Name' was accepted." }
+}
+
 try {
-    $project = Join-Path $scratch 'test.csproj'
-    $changelog = Join-Path $scratch 'CHANGELOG.md'
-    [IO.File]::WriteAllText($project, '<Project><PropertyGroup><Version>0.1.0</Version></PropertyGroup></Project>')
-    [IO.File]::WriteAllText($changelog, "# Changelog`n`n## [Unreleased]`n`n- Candidate capabilities.`n")
-    & pwsh -NoLogo -NoProfile -WindowStyle Hidden -File (Join-Path $root 'scripts/validate-release.ps1') -Version 0.1.0 -ProjectFile $project -ChangelogPath $changelog
-    if ($LASTEXITCODE -ne 0) { throw 'Unreleased candidate validation failed.' }
-    & pwsh -NoLogo -NoProfile -WindowStyle Hidden -File (Join-Path $root 'scripts/validate-release.ps1') -Version 0.1.0 -RequireFinalized -ProjectFile $project -ChangelogPath $changelog 2>$null
-    if ($LASTEXITCODE -eq 0) { throw 'Tag-mode validation accepted an Unreleased changelog entry.' }
+    $projectText = Get-Content -LiteralPath $projectFile -Raw
+    $versionMatch = [regex]::Match($projectText, '<Version>\s*(?<version>[^<]+?)\s*</Version>', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if (-not $versionMatch.Success) { throw 'The real packable project has no explicit package version.' }
+    $version = $versionMatch.Groups['version'].Value.Trim()
 
-    $changelogText = "# Changelog`n`n## [0.1.0] - 2026-09-22`n`n- Initial release.`n"
-    [IO.File]::WriteAllText($changelog, $changelogText)
-    & pwsh -NoLogo -NoProfile -WindowStyle Hidden -File (Join-Path $root 'scripts/validate-release.ps1') -Version 0.1.0 -RequireFinalized -ProjectFile $project -ChangelogPath $changelog
-    if ($LASTEXITCODE -ne 0) { throw 'Finalized release validation failed.' }
+    if (-not (Test-Path -LiteralPath $ciWorkflowPath -PathType Leaf)) { throw 'CI workflow is missing.' }
+    if (-not (Test-Path -LiteralPath $releaseWorkflowPath -PathType Leaf)) { throw 'Release workflow is missing.' }
+    $ciWorkflow = Get-Content -LiteralPath $ciWorkflowPath -Raw
+    $releaseWorkflow = Get-Content -LiteralPath $releaseWorkflowPath -Raw
 
-    function Assert-Rejected([string] $name, [string] $text) {
-        [IO.File]::WriteAllText($changelog, $text)
-        & pwsh -NoLogo -NoProfile -WindowStyle Hidden -File (Join-Path $root 'scripts/validate-release.ps1') -Version 0.1.0 -RequireFinalized -ProjectFile $project -ChangelogPath $changelog 2>$null
-        if ($LASTEXITCODE -eq 0) { throw "Negative release-contract case '$name' was accepted." }
+    foreach ($required in @(
+        'push:',
+        'branches:',
+        '- main',
+        'pull_request:',
+        'workflow_dispatch:',
+        'commit_sha:',
+        'required: false',
+        'type: string',
+        'inputs.commit_sha || github.sha',
+        'fetch-depth: 0',
+        'persist-credentials: false',
+        'global-json-file: global.json',
+        'dotnet restore ./KeelMatrix.PackageSurface.sln --configfile ./NuGet.config --force',
+        'pwsh -NoLogo -NoProfile -File ./scripts/run-local-gate.ps1',
+        'windows-latest',
+        'ubuntu-latest',
+        'macos-latest',
+        'fail-fast: false',
+        'KEELMATRIX_TELEMETRY: ''off''',
+        'permissions:',
+        'contents: read',
+        'cancel-in-progress: true',
+        'timeout-minutes: 45',
+        'commit_sha must be a full 40-character commit SHA.',
+        'git rev-parse HEAD'
+    )) {
+        if (-not $ciWorkflow.Contains($required, [StringComparison]::Ordinal)) { throw "CI workflow is missing '$required'." }
     }
 
-    Assert-Rejected 'empty finalized section' "# Changelog`n`n## [0.1.0] - 2026-09-22`n"
-    Assert-Rejected 'notes left under Unreleased' "# Changelog`n`n## [Unreleased]`n`n- Still planned.`n`n## [0.1.0] - 2026-09-22`n`n- Initial release.`n"
-    Assert-Rejected 'duplicate target sections' "# Changelog`n`n## [0.1.0] - 2026-09-22`n`n- Initial release.`n`n## [0.1.0] - 2026-09-23`n`n- Duplicate release.`n"
-    Assert-Rejected 'marker prose' "# Changelog`n`n## [0.1.0] - 2026-09-22`n`n- This release is planned for publication.`n"
-    Assert-Rejected 'malformed date' "# Changelog`n`n## [0.1.0] - 2026-99-99`n`n- Initial release.`n"
-
-    [IO.File]::WriteAllText($changelog, "# Changelog`n`n## [0.2.0] - 2026-09-22`n`n- Wrong version.`n")
-    & pwsh -NoLogo -NoProfile -WindowStyle Hidden -File (Join-Path $root 'scripts/validate-release.ps1') -Version 0.1.0 -ProjectFile $project -ChangelogPath $changelog 2>$null
-    if ($LASTEXITCODE -eq 0) { throw 'Version mismatch was accepted.' }
-
-    if (Test-Path -LiteralPath (Join-Path $root '.github')) { throw 'This private repository must not contain a .github directory.' }
-
-    $localGate = Get-Content -LiteralPath (Join-Path $root 'scripts/run-local-gate.ps1') -Raw
-    foreach ($requiredGate in @('scripts/test-release-contract.ps1', 'scripts/test-vulnerability-audit.ps1')) {
-        if (-not $localGate.Contains($requiredGate, [StringComparison]::Ordinal)) { throw "Canonical local gate does not invoke '$requiredGate'." }
+    if ($releaseWorkflow -notmatch "(?ms)^on:\s*\r?\n\s+push:\s*\r?\n\s+tags:\s*\r?\n\s+- 'v\*\.\*\.\*'") {
+        throw 'Release workflow must be tag-triggered only for v*.*.*.'
     }
-    if ($localGate -notmatch '(?s)finally\s*\{.*packagesurface-gate|finally') { throw 'Canonical local gate does not clean run-owned scratch state in finally.' }
-    if (-not $localGate.Contains('validate-package-artifact.ps1', [StringComparison]::Ordinal)) { throw 'Canonical local gate does not invoke the reusable final-artifact validator.' }
+    foreach ($required in @(
+        'global-json-file: global.json',
+        'timeout-minutes: 45',
+        'actions/download-artifact@v4',
+        'KEELMATRIX_TELEMETRY: ''off''',
+        './scripts/validate-release.ps1 -Version $version -RequireFinalized',
+        './scripts/run-local-gate.ps1 -ArtifactDirectory artifacts/release',
+        'path: artifacts/release/*',
+        'NuGet/login@v1',
+        'user: dmitriyzen',
+        'needs: validate',
+        'needs: [validate, publish]',
+        'dotnet nuget push',
+        'gh release create',
+        '--verify-tag',
+        '--repo "${{ github.repository }}"'
+    )) {
+        if (-not $releaseWorkflow.Contains($required, [StringComparison]::Ordinal)) { throw "Release workflow is missing '$required'." }
+    }
+    if ($releaseWorkflow.Contains("PACKAGE_VERSION:", [StringComparison]::Ordinal)) { throw 'Release workflow maintains a second hard-coded package-version definition.' }
+    if ($releaseWorkflow.Contains('run-phase0.ps1', [StringComparison]::Ordinal)) { throw 'Release workflow runs a mutating standalone Phase 0 step.' }
+    if ($releaseWorkflow -match '(?m)dotnet\s+run\s+--project\s+tests/') { throw 'Release workflow duplicates console leaf tests beside the canonical gate.' }
+    if ($releaseWorkflow -match '(?m)^\s*run:\s*dotnet\s+pack\b') { throw 'Release workflow repacks a separately validated artifact.' }
+    if ($releaseWorkflow -notmatch '(?s)validate:.*outputs:.*version:.*release_contract') { throw 'Release workflow does not pass the validated tag version to downstream jobs.' }
+    if ($releaseWorkflow -notmatch '(?s)publish:.*needs:\s*validate.*NuGet/login@v1') { throw 'Publish does not depend on validation and Trusted Publishing.' }
+    if ($releaseWorkflow -notmatch '(?s)github-release:.*needs:\s*\[validate, publish\]') { throw 'GitHub Release is not ordered after validation and publication.' }
 
-    Write-Output 'PASS: release contract rejects tag-mode Unreleased, finalized mismatch, and permits frontier Unreleased entries.'
+    $localGate = Get-Content -LiteralPath $localGatePath -Raw
+    foreach ($requiredGate in @('scripts/test-release-contract.ps1', 'scripts/test-vulnerability-audit.ps1', 'validate-package-artifact.ps1', 'dotnet pack')) {
+        if (-not $localGate.Contains($requiredGate, [StringComparison]::Ordinal)) { throw "Canonical local gate is missing '$requiredGate'." }
+    }
+    if ($localGate -notmatch '(?s)finally\s*\{.*\$scratch') { throw 'Canonical local gate does not clean run-owned scratch state in finally.' }
+    if ($localGate -notmatch 'ReadAllBytes|Read-ZipEntryBytes') { throw 'Canonical local gate does not validate package bytes.' }
+
+    # The real repository is intentionally still a candidate: its Unreleased section may pass
+    # pre-tag validation but must never pass the finalized tag/publish contract.
+    Assert-ValidationPass 'real pre-tag candidate' (Invoke-ReleaseValidation -Version $version -ChangelogPath $realChangelog)
+    Assert-ValidationRejects 'real planned/unreleased tag gate' (Invoke-ReleaseValidation -Version $version -ChangelogPath $realChangelog -RequireFinalized)
+
+    $candidateChangelog = Join-Path $scratch 'CHANGELOG.finalized.md'
+    [IO.File]::WriteAllText($candidateChangelog, "# Changelog`n`n## [$version] - 2026-09-22`n`n- Finalized release notes.`n", [Text.UTF8Encoding]::new($false))
+    Assert-ValidationPass 'real project with finalized version-consistent changelog' (Invoke-ReleaseValidation -Version $version -ChangelogPath $candidateChangelog -RequireFinalized)
+
+    $mismatchedChangelog = Join-Path $scratch 'CHANGELOG.mismatched.md'
+    [IO.File]::WriteAllText($mismatchedChangelog, "# Changelog`n`n## [9.9.9] - 2026-09-22`n`n- Wrong version.`n", [Text.UTF8Encoding]::new($false))
+    Assert-ValidationRejects 'changelog/version disagreement' (Invoke-ReleaseValidation -Version $version -ChangelogPath $mismatchedChangelog -RequireFinalized)
+
+    Write-Output 'PASS: restored CI/release workflows use one shared fail-closed release contract; real candidate, finalized, and version-mismatch cases behave as required.'
 }
 finally {
     if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force }

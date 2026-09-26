@@ -251,6 +251,9 @@ try {
     $tool = Join-Path $toolRoot $toolName
     if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) { throw 'The isolated tool command was not installed.' }
     Ensure-DotnetRootForInstalledTool
+    Invoke-GateStep 'installed hardening regressions' {
+        & pwsh -NoLogo -NoProfile -WindowStyle Hidden -File (Join-Path $root 'scripts/test-installed-hardening.ps1') -ToolPath $tool
+    }
     Invoke-GateStep 'installed tool version' { & $tool --version }
     Invoke-GateStep 'installed tool scan' { & $tool scan $singleProject --format json --no-telemetry }
     Invoke-GateStep 'package XML primitive inspection' {

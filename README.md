@@ -1,8 +1,8 @@
-**PackageSurface tells you when a NuGet dependency starts participating in your build in a new way.** It baselines package-provided MSBuild, compiler-extension, source/content, and native capabilities and fails when that reviewed surface changes.
+# KeelMatrix.PackageSurface
 
 PackageSurface is not a malware or vulnerability scanner. A reported capability can be completely legitimate; the tool makes the capability change explicit so dependency updates can be reviewed.
 
-# KeelMatrix.PackageSurface
+**PackageSurface tells you when a NuGet dependency starts participating in your build in a new way.** It baselines package-provided MSBuild, compiler-extension, source/content, and native capabilities and fails when that reviewed surface changes.
 
 It is a .NET global tool for SDK-style `PackageReference` projects that already have restore output.
 
@@ -64,7 +64,7 @@ Reports support `--format text|json|sarif`. JSON and SARIF report schemas are ve
 
 ### Baseline contract
 
-Schema version `1` requires `schemaVersion`, `toolVersion`, `strictContent`, `entries`, and `incompleteReasons`. Each entry requires `context`, `packageId`, `version`, `relationship`, `capability`, `packageRelativePath`, `present`, `active`, `incomplete`, and a null or valid 64-character SHA-256 value. Project/TFM/RID values are nullable only where the context does not apply. Paths are package-relative and cannot be rooted or contain `..`. Null entries, incomplete markers, oversized documents, unknown schema/enum values, invalid hashes, active-but-missing assets, and incomplete baselines are rejected with controlled exit `2`.
+Schema version `1` requires `schemaVersion`, `toolVersion`, `strictContent`, `entries`, and `incompleteReasons`. Each entry requires `context`, `packageId`, `version`, `relationship`, `capability`, `packageRelativePath`, `present`, `active`, `incomplete`, and a null or valid 64-character SHA-256 value. Project/TFM/RID values are nullable only where the context does not apply. Package paths are package-relative and cannot be rooted or contain `..`; project identities are stable solution-relative anchors and may contain a bounded `../` sibling segment. Null entries, incomplete markers, oversized documents, unknown schema/enum values, invalid hashes, active-but-missing assets, duplicate identities, and incomplete baselines are rejected with controlled exit `2`.
 
 Baselines are never rewritten by `check`. Schema version `1` is the only supported version; unknown or future versions are rejected rather than upgraded. A non-strict baseline can be checked normally; `--strict-content` requests strict hashing and therefore requires a baseline that was explicitly created with `--strict-content`. A strict baseline automatically enables strict hashing even when the check command omits the flag. Recreate the baseline after reviewing a deliberate content change.
 
@@ -82,13 +82,13 @@ The stable diagnostics are:
 
 ## Safety and privacy
 
-The analyzer reads only packages reachable from the supplied resolved graph. It does not crawl the global package cache, access the network after restore, or execute MSBuild or package-provided build code. XML parsing prohibits DTDs and external entities. File sizes, graph size, XML depth, metadata inspection, and hashing work are bounded. Traversal-looking paths, unsafe links, malformed XML, corrupt metadata, and invalid compiler-extension PE metadata fail closed.
+The analyzer reads only packages reachable from the supplied resolved graph. It does not crawl the global package cache, access the network after restore, or execute MSBuild or package-provided build code. XML parsing prohibits DTDs and external entities. File sizes, graph size, XML depth, condition complexity, nested static-import depth, metadata inspection, output size, and hashing work are bounded. Static imports are followed only when their package-relative target and conditions are provable; cycles are cut off, dynamic expressions produce `PS007`, and full MSBuild evaluation is not attempted. Traversal-looking paths, unsafe links, malformed or inconsistent restore evidence, corrupt metadata, and invalid compiler-extension PE metadata fail closed.
 
 Activation telemetry is best effort and occurs only after a successful baseline creation or comparison that classified at least one real resolved `PackageReference` graph. PackageSurface does not pass analyzed dependency package IDs or versions, asset names or paths, target names, TFM/RID values, MSBuild or package content, content hashes, diagnostics, baseline contents, or feed information. The shared client may emit the anonymous hashes and other fields documented in the [KeelMatrix.Telemetry privacy policy](https://github.com/KeelMatrix/Telemetry/blob/main/PRIVACY.md). Use `--telemetry off` or `--no-telemetry` to opt out. Telemetry failure cannot change analysis results. See [PRIVACY.md](PRIVACY.md) for the product-specific boundary; local validation sets telemetry off.
 
 ## Supported scope and limitations
 
-The tool targets `net8.0` and SDK-style `PackageReference` restore outputs. Windows, Linux, and macOS are the intended platforms, and the public CI matrix validates all three on pushes to `main` and pull requests. Legacy project systems, `packages.config`, automatic restore, feed queries, vulnerability scanning, license analysis, malware detection, decompilation, dynamic sandboxing, and package safety judgments are outside the supported scope.
+The tool targets `net8.0` and SDK-style `PackageReference` restore outputs. Windows, Linux, and macOS are intended platforms; the repository's local validation scripts provide the repeatable gate, while platform coverage outside the current machine remains an explicit verification assumption. Legacy project systems, `packages.config`, automatic restore, feed queries, vulnerability scanning, license analysis, malware detection, decompilation, dynamic sandboxing, and package safety judgments are outside the supported scope.
 
 ## Troubleshooting
 

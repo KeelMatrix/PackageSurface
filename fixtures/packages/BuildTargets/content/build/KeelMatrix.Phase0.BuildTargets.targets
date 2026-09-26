@@ -1,5 +1,5 @@
 <Project>
-  <Import Project="never-imported.props" Condition="'$(Phase0NeverDefined)' == 'true'" />
+  <Import Project="never-imported.props" Condition="'$(TargetFramework)' == 'never'" />
   <Target Name="Phase0NeverExecuted" Condition="'$(Phase0NeverDefined)' == 'true'">
     <Exec Command="echo never-executed" />
   </Target>

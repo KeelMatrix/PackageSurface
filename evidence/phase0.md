@@ -154,14 +154,14 @@ Raw fixture binary hashes are intentionally not recorded: compiler/packaging out
 
 ```text
 COMMAND: dotnet restore .\fixtures\packages\BuildProps\BuildProps.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 946
+DURATION_MS: 1110
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\BuildProps\BuildProps.csproj (in 63 ms).
+  Restored .\fixtures\packages\BuildProps\BuildProps.csproj (in 85 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\BuildProps\BuildProps.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1086
+DURATION_MS: 1608
 EXIT_CODE: 0
 OUTPUT:
   BuildProps -> .\fixtures\packages\BuildProps\bin\Release\net8.0\BuildProps.dll
@@ -169,14 +169,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.BuildProps.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\BuildTargets\BuildTargets.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 918
+DURATION_MS: 1040
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\BuildTargets\BuildTargets.csproj (in 66 ms).
+  Restored .\fixtures\packages\BuildTargets\BuildTargets.csproj (in 71 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\BuildTargets\BuildTargets.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1129
+DURATION_MS: 1135
 EXIT_CODE: 0
 OUTPUT:
   BuildTargets -> .\fixtures\packages\BuildTargets\bin\Release\net8.0\BuildTargets.dll
@@ -184,14 +184,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.BuildTargets.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\BuildBoth\BuildBoth.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1128
+DURATION_MS: 939
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\BuildBoth\BuildBoth.csproj (in 79 ms).
+  Restored .\fixtures\packages\BuildBoth\BuildBoth.csproj (in 66 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\BuildBoth\BuildBoth.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 2004
+DURATION_MS: 1148
 EXIT_CODE: 0
 OUTPUT:
   BuildBoth -> .\fixtures\packages\BuildBoth\bin\Release\net8.0\BuildBoth.dll
@@ -199,14 +199,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.BuildBoth.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\BuildTransitive\BuildTransitive.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1669
+DURATION_MS: 950
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\BuildTransitive\BuildTransitive.csproj (in 106 ms).
+  Restored .\fixtures\packages\BuildTransitive\BuildTransitive.csproj (in 66 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\BuildTransitive\BuildTransitive.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1434
+DURATION_MS: 1153
 EXIT_CODE: 0
 OUTPUT:
   BuildTransitive -> .\fixtures\packages\BuildTransitive\bin\Release\net8.0\BuildTransitive.dll
@@ -214,14 +214,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.BuildTransitive.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\BuildMultiTargeting\BuildMultiTargeting.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1065
+DURATION_MS: 974
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\BuildMultiTargeting\BuildMultiTargeting.csproj (in 62 ms).
+  Restored .\fixtures\packages\BuildMultiTargeting\BuildMultiTargeting.csproj (in 80 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\BuildMultiTargeting\BuildMultiTargeting.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 996
+DURATION_MS: 1508
 EXIT_CODE: 0
 OUTPUT:
   BuildMultiTargeting -> .\fixtures\packages\BuildMultiTargeting\bin\Release\net8.0\BuildMultiTargeting.dll
@@ -229,14 +229,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.BuildMultiTargeting.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\CompilerExtension\CompilerExtension.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 854
+DURATION_MS: 1354
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\CompilerExtension\CompilerExtension.csproj (in 68 ms).
+  Restored .\fixtures\packages\CompilerExtension\CompilerExtension.csproj (in 109 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\CompilerExtension\CompilerExtension.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1128
+DURATION_MS: 1276
 EXIT_CODE: 0
 OUTPUT:
   CompilerExtension -> .\fixtures\packages\CompilerExtension\bin\Release\net8.0\KeelMatrix.Phase0.SourceGeneratorStyle.dll
@@ -244,14 +244,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.CompilerExtension.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\CompilerExtensionLanguages\CompilerExtensionLanguages.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1013
+DURATION_MS: 1028
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
   Restored .\fixtures\packages\CompilerExtensionLanguages\CompilerExtensionLanguages.csproj (in 68 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\CompilerExtensionLanguages\CompilerExtensionLanguages.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1157
+DURATION_MS: 1647
 EXIT_CODE: 0
 OUTPUT:
   CompilerExtensionLanguages -> .\fixtures\packages\CompilerExtensionLanguages\bin\Release\net8.0\KeelMatrix.Phase0.CompilerExtensionLanguages.dll
@@ -259,14 +259,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.CompilerExtensionLanguages.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\ContentInjection\ContentInjection.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 914
+DURATION_MS: 1220
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\ContentInjection\ContentInjection.csproj (in 67 ms).
+  Restored .\fixtures\packages\ContentInjection\ContentInjection.csproj (in 77 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\ContentInjection\ContentInjection.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1158
+DURATION_MS: 1370
 EXIT_CODE: 0
 OUTPUT:
   ContentInjection -> .\fixtures\packages\ContentInjection\bin\Release\net8.0\ContentInjection.dll
@@ -274,14 +274,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.ContentInjection.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\ContentInjectionLanguages\ContentInjectionLanguages.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1027
+DURATION_MS: 959
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\ContentInjectionLanguages\ContentInjectionLanguages.csproj (in 77 ms).
+  Restored .\fixtures\packages\ContentInjectionLanguages\ContentInjectionLanguages.csproj (in 63 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\ContentInjectionLanguages\ContentInjectionLanguages.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1171
+DURATION_MS: 1153
 EXIT_CODE: 0
 OUTPUT:
   ContentInjectionLanguages -> .\fixtures\packages\ContentInjectionLanguages\bin\Release\net8.0\ContentInjectionLanguages.dll
@@ -289,14 +289,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.ContentInjectionLanguages.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\ManagedRuntime\ManagedRuntime.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 787
+DURATION_MS: 911
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\ManagedRuntime\ManagedRuntime.csproj (in 58 ms).
+  Restored .\fixtures\packages\ManagedRuntime\ManagedRuntime.csproj (in 70 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\ManagedRuntime\ManagedRuntime.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 943
+DURATION_MS: 1476
 EXIT_CODE: 0
 OUTPUT:
   ManagedRuntime -> .\fixtures\packages\ManagedRuntime\bin\Release\net8.0\KeelMatrix.Phase0.ManagedRuntime.dll
@@ -304,14 +304,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.ManagedRuntime.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\NativeRuntime\NativeRuntime.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 788
+DURATION_MS: 1167
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\NativeRuntime\NativeRuntime.csproj (in 58 ms).
+  Restored .\fixtures\packages\NativeRuntime\NativeRuntime.csproj (in 88 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\NativeRuntime\NativeRuntime.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1001
+DURATION_MS: 1299
 EXIT_CODE: 0
 OUTPUT:
   NativeRuntime -> .\fixtures\packages\NativeRuntime\bin\Release\net8.0\NativeRuntime.dll
@@ -319,14 +319,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.NativeRuntime.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\ToolScript\ToolScript.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 879
+DURATION_MS: 920
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\ToolScript\ToolScript.csproj (in 70 ms).
+  Restored .\fixtures\packages\ToolScript\ToolScript.csproj (in 62 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\ToolScript\ToolScript.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 973
+DURATION_MS: 1088
 EXIT_CODE: 0
 OUTPUT:
   ToolScript -> .\fixtures\packages\ToolScript\bin\Release\net8.0\ToolScript.dll
@@ -334,14 +334,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.ToolScript.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\OrdinaryLibrary\OrdinaryLibrary.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 852
+DURATION_MS: 876
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\OrdinaryLibrary\OrdinaryLibrary.csproj (in 61 ms).
+  Restored .\fixtures\packages\OrdinaryLibrary\OrdinaryLibrary.csproj (in 66 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\OrdinaryLibrary\OrdinaryLibrary.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1375
+DURATION_MS: 1142
 EXIT_CODE: 0
 OUTPUT:
   OrdinaryLibrary -> .\fixtures\packages\OrdinaryLibrary\bin\Release\net8.0\KeelMatrix.Phase0.OrdinaryLibrary.dll
@@ -349,14 +349,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.OrdinaryLibrary.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\NativeRuntimeTransitive\NativeRuntimeTransitive.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1100
+DURATION_MS: 928
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\NativeRuntimeTransitive\NativeRuntimeTransitive.csproj (in 98 ms).
+  Restored .\fixtures\packages\NativeRuntimeTransitive\NativeRuntimeTransitive.csproj (in 63 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\NativeRuntimeTransitive\NativeRuntimeTransitive.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 1489
+DURATION_MS: 1434
 EXIT_CODE: 0
 OUTPUT:
   NativeRuntimeTransitive -> .\fixtures\packages\NativeRuntimeTransitive\bin\Release\net8.0\NativeRuntimeTransitive.dll
@@ -364,14 +364,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.NativeRuntimeTransitive.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\TransitiveBundle\TransitiveBundle.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1218
+DURATION_MS: 1463
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\TransitiveBundle\TransitiveBundle.csproj (in 397 ms).
+  Restored .\fixtures\packages\TransitiveBundle\TransitiveBundle.csproj (in 422 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\TransitiveBundle\TransitiveBundle.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 4235
+DURATION_MS: 1446
 EXIT_CODE: 0
 OUTPUT:
   TransitiveBundle -> .\fixtures\packages\TransitiveBundle\bin\Release\net8.0\TransitiveBundle.dll
@@ -379,14 +379,14 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.TransitiveBundle.1.0.0.nupkg'.
 
 COMMAND: dotnet restore .\fixtures\packages\TransitiveRoot\TransitiveRoot.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1862
+DURATION_MS: 1411
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\packages\TransitiveRoot\TransitiveRoot.csproj (in 472 ms).
+  Restored .\fixtures\packages\TransitiveRoot\TransitiveRoot.csproj (in 375 ms).
 
 COMMAND: dotnet pack .\fixtures\packages\TransitiveRoot\TransitiveRoot.csproj --configuration Release --output .\.phase0\feed --no-restore
-DURATION_MS: 3743
+DURATION_MS: 1498
 EXIT_CODE: 0
 OUTPUT:
   TransitiveRoot -> .\fixtures\packages\TransitiveRoot\bin\Release\net8.0\TransitiveRoot.dll
@@ -394,12 +394,11 @@ OUTPUT:
   Successfully created package '.\.phase0\feed\KeelMatrix.Phase0.TransitiveRoot.1.0.0.nupkg'.
 
 COMMAND: dotnet build .\src\KeelMatrix.PackageSurface.Probe\KeelMatrix.PackageSurface.Probe.csproj --configuration Release
-DURATION_MS: 3286
+DURATION_MS: 1717
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\src\KeelMatrix.PackageSurface.Probe\KeelMatrix.PackageSurface.Probe.csproj (in 123 ms).
-  Restored .\src\KeelMatrix.PackageSurface.Core\KeelMatrix.PackageSurface.Core.csproj (in 116 ms).
+  All projects are up-to-date for restore.
   KeelMatrix.PackageSurface.Core -> .\src\KeelMatrix.PackageSurface.Core\bin\Release\net8.0\KeelMatrix.PackageSurface.Core.dll
   KeelMatrix.PackageSurface.Probe -> .\src\KeelMatrix.PackageSurface.Probe\bin\Release\net8.0\KeelMatrix.PackageSurface.Probe.dll
 
@@ -407,62 +406,61 @@ Build succeeded.
     0 Warning(s)
     0 Error(s)
 
-Time Elapsed 00:00:03.00
+Time Elapsed 00:00:01.42
 
 COMMAND: dotnet restore .\fixtures\consumer\SingleTarget\SingleTarget.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1317
+DURATION_MS: 1706
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\consumer\SingleTarget\SingleTarget.csproj (in 315 ms).
+  Restored .\fixtures\consumer\SingleTarget\SingleTarget.csproj (in 443 ms).
 
 COMMAND: dotnet restore .\fixtures\consumer\MultiTarget\MultiTarget.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1338
+DURATION_MS: 1705
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\consumer\MultiTarget\MultiTarget.csproj (in 323 ms).
+  Restored .\fixtures\consumer\MultiTarget\MultiTarget.csproj (in 390 ms).
 
 COMMAND: dotnet restore .\fixtures\consumer\RidTarget\RidTarget.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1114
+DURATION_MS: 1254
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\consumer\RidTarget\RidTarget.csproj (in 269 ms).
+  Restored .\fixtures\consumer\RidTarget\RidTarget.csproj (in 312 ms).
 
 COMMAND: dotnet restore .\fixtures\consumer\AnalyzerExcluded\AnalyzerExcluded.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1090
+DURATION_MS: 1192
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\consumer\AnalyzerExcluded\AnalyzerExcluded.csproj (in 198 ms).
+  Restored .\fixtures\consumer\AnalyzerExcluded\AnalyzerExcluded.csproj (in 242 ms).
 
 COMMAND: dotnet restore .\fixtures\consumer\AnalyzerExcludedTransitive\AnalyzerExcludedTransitive.csproj --configfile ./NuGet.config --force-evaluate
-DURATION_MS: 1031
+DURATION_MS: 1194
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\consumer\AnalyzerExcludedTransitive\AnalyzerExcludedTransitive.csproj (in 246 ms).
+  Restored .\fixtures\consumer\AnalyzerExcludedTransitive\AnalyzerExcludedTransitive.csproj (in 279 ms).
 
 COMMAND: pwsh -NoProfile -File .\scripts\test-language-conventions.ps1
-DURATION_MS: 8013
+DURATION_MS: 7492
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\fixtures\consumer\LanguageCSharp\LanguageCSharp.csproj (in 428 ms).
+  Restored .\fixtures\consumer\LanguageCSharp\LanguageCSharp.csproj (in 309 ms).
   Determining projects to restore...
-  Restored .\fixtures\consumer\LanguageVisualBasic\LanguageVisualBasic.vbproj (in 269 ms).
+  Restored .\fixtures\consumer\LanguageVisualBasic\LanguageVisualBasic.vbproj (in 303 ms).
   Determining projects to restore...
-  Restored .\fixtures\consumer\LanguageFSharp\LanguageFSharp.fsproj (in 639 ms).
+  Restored .\fixtures\consumer\LanguageFSharp\LanguageFSharp.fsproj (in 781 ms).
 LANGUAGE_CONVENTIONS=PASS restored C#, Visual Basic, and F# consumers classify analyzer and contentFiles language identity.
 
 COMMAND: dotnet build .\tests\KeelMatrix.PackageSurface.Probe.Tests\KeelMatrix.PackageSurface.Probe.Tests.csproj --configuration Release
-DURATION_MS: 2959
+DURATION_MS: 1898
 EXIT_CODE: 0
 OUTPUT:
   Determining projects to restore...
-  Restored .\tests\KeelMatrix.PackageSurface.Probe.Tests\KeelMatrix.PackageSurface.Probe.Tests.csproj (in 135 ms).
-  2 of 3 projects are up-to-date for restore.
+  All projects are up-to-date for restore.
   KeelMatrix.PackageSurface.Core -> .\src\KeelMatrix.PackageSurface.Core\bin\Release\net8.0\KeelMatrix.PackageSurface.Core.dll
   KeelMatrix.PackageSurface.Probe -> .\src\KeelMatrix.PackageSurface.Probe\bin\Release\net8.0\KeelMatrix.PackageSurface.Probe.dll
   KeelMatrix.PackageSurface.Probe.Tests -> .\tests\KeelMatrix.PackageSurface.Probe.Tests\bin\Release\net8.0\KeelMatrix.PackageSurface.Probe.Tests.dll
@@ -471,10 +469,10 @@ Build succeeded.
     0 Warning(s)
     0 Error(s)
 
-Time Elapsed 00:00:02.58
+Time Elapsed 00:00:01.59
 
 COMMAND: dotnet run --project .\src\KeelMatrix.PackageSurface.Probe\KeelMatrix.PackageSurface.Probe.csproj --configuration Release --no-build -- .\fixtures\consumer\SingleTarget\obj\project.assets.json .\fixtures\consumer\SingleTarget
-DURATION_MS: 925
+DURATION_MS: 877
 EXIT_CODE: 0
 OUTPUT:
 {
@@ -595,7 +593,7 @@ OUTPUT:
       "PackageRelativePath": "build/KeelMatrix.Phase0.BuildTargets.targets",
       "Present": true,
       "Active": true,
-      "Sha256": "28fe6b546f2543b8f7fc6f5d7898396d6200af2bee00c5db9c81e321e08732ce",
+      "Sha256": "3750d9b59e48afda7c3f04257ddd987d49389966d654c96a404ab60cf8d8954b",
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -700,7 +698,7 @@ OUTPUT:
       "PackageRelativePath": "analyzers/dotnet/cs/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": true,
-      "Sha256": "a6383fac3134a7583e632f1c9c68ec5c070798268ce979b32680b26c94fba2bc",
+      "Sha256": "13ab116a785929b7f0470fdfb571301189702e27d9acbac554f07d8420698878",
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -934,7 +932,7 @@ OUTPUT:
 }
 
 COMMAND: dotnet run --project .\tests\KeelMatrix.PackageSurface.Probe.Tests\KeelMatrix.PackageSurface.Probe.Tests.csproj --configuration Release --no-build -- .\fixtures\consumer\SingleTarget\obj\project.assets.json BuildProps,BuildTargets,BuildTransitive,BuildMultiTargeting,CompilerExtension,CompileSourceInjection,NativeRuntime,ToolOrScriptPresent
-DURATION_MS: 2280
+DURATION_MS: 1689
 EXIT_CODE: 0
 OUTPUT:
 condition-case unconditional import: complete=True; active=net8.0
@@ -971,7 +969,7 @@ generated-import cross-wire BuildMultiTargeting targets TFM: inactive/unreachabl
 {"entries":26,"complete":true}
 
 COMMAND: dotnet run --project .\src\KeelMatrix.PackageSurface.Probe\KeelMatrix.PackageSurface.Probe.csproj --configuration Release --no-build -- .\fixtures\consumer\MultiTarget\obj\project.assets.json .\fixtures\consumer\MultiTarget
-DURATION_MS: 839
+DURATION_MS: 794
 EXIT_CODE: 0
 OUTPUT:
 {
@@ -1024,7 +1022,7 @@ OUTPUT:
       "PackageRelativePath": "build/KeelMatrix.Phase0.BuildTargets.targets",
       "Present": true,
       "Active": true,
-      "Sha256": "28fe6b546f2543b8f7fc6f5d7898396d6200af2bee00c5db9c81e321e08732ce",
+      "Sha256": "3750d9b59e48afda7c3f04257ddd987d49389966d654c96a404ab60cf8d8954b",
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1129,7 +1127,7 @@ OUTPUT:
       "PackageRelativePath": "analyzers/dotnet/cs/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": true,
-      "Sha256": "a6383fac3134a7583e632f1c9c68ec5c070798268ce979b32680b26c94fba2bc",
+      "Sha256": "13ab116a785929b7f0470fdfb571301189702e27d9acbac554f07d8420698878",
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1336,7 +1334,7 @@ OUTPUT:
       "PackageRelativePath": "build/KeelMatrix.Phase0.BuildTargets.targets",
       "Present": true,
       "Active": true,
-      "Sha256": "28fe6b546f2543b8f7fc6f5d7898396d6200af2bee00c5db9c81e321e08732ce",
+      "Sha256": "3750d9b59e48afda7c3f04257ddd987d49389966d654c96a404ab60cf8d8954b",
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1675,7 +1673,7 @@ OUTPUT:
 }
 
 COMMAND: dotnet run --project .\tests\KeelMatrix.PackageSurface.Probe.Tests\KeelMatrix.PackageSurface.Probe.Tests.csproj --configuration Release --no-build -- .\fixtures\consumer\MultiTarget\obj\project.assets.json BuildProps,BuildTargets,BuildTransitive,BuildMultiTargeting,CompilerExtension,CompileSourceInjection,NativeRuntime,ToolOrScriptPresent
-DURATION_MS: 1835
+DURATION_MS: 2232
 EXIT_CODE: 0
 OUTPUT:
 condition-case unconditional import: complete=True; active=net8.0,net8.0-windows7.0
@@ -1712,7 +1710,7 @@ generated-import cross-wire BuildMultiTargeting targets TFM: inactive/unreachabl
 {"entries":40,"complete":true}
 
 COMMAND: dotnet run --project .\src\KeelMatrix.PackageSurface.Probe\KeelMatrix.PackageSurface.Probe.csproj --configuration Release --no-build -- .\fixtures\consumer\RidTarget\obj\project.assets.json .\fixtures\consumer\RidTarget
-DURATION_MS: 821
+DURATION_MS: 1085
 EXIT_CODE: 0
 OUTPUT:
 {
@@ -1765,7 +1763,7 @@ OUTPUT:
       "PackageRelativePath": "build/KeelMatrix.Phase0.BuildTargets.targets",
       "Present": true,
       "Active": true,
-      "Sha256": "28fe6b546f2543b8f7fc6f5d7898396d6200af2bee00c5db9c81e321e08732ce",
+      "Sha256": "3750d9b59e48afda7c3f04257ddd987d49389966d654c96a404ab60cf8d8954b",
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -1870,7 +1868,7 @@ OUTPUT:
       "PackageRelativePath": "analyzers/dotnet/cs/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": true,
-      "Sha256": "a6383fac3134a7583e632f1c9c68ec5c070798268ce979b32680b26c94fba2bc",
+      "Sha256": "13ab116a785929b7f0470fdfb571301189702e27d9acbac554f07d8420698878",
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -2077,7 +2075,7 @@ OUTPUT:
       "PackageRelativePath": "build/KeelMatrix.Phase0.BuildTargets.targets",
       "Present": true,
       "Active": true,
-      "Sha256": "28fe6b546f2543b8f7fc6f5d7898396d6200af2bee00c5db9c81e321e08732ce",
+      "Sha256": "3750d9b59e48afda7c3f04257ddd987d49389966d654c96a404ab60cf8d8954b",
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -2182,7 +2180,7 @@ OUTPUT:
       "PackageRelativePath": "analyzers/dotnet/cs/KeelMatrix.Phase0.SourceGeneratorStyle.dll",
       "Present": true,
       "Active": true,
-      "Sha256": "a6383fac3134a7583e632f1c9c68ec5c070798268ce979b32680b26c94fba2bc",
+      "Sha256": "13ab116a785929b7f0470fdfb571301189702e27d9acbac554f07d8420698878",
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -2416,7 +2414,7 @@ OUTPUT:
 }
 
 COMMAND: dotnet run --project .\tests\KeelMatrix.PackageSurface.Probe.Tests\KeelMatrix.PackageSurface.Probe.Tests.csproj --configuration Release --no-build -- .\fixtures\consumer\RidTarget\obj\project.assets.json BuildProps,BuildTargets,BuildTransitive,BuildMultiTargeting,CompilerExtension,CompileSourceInjection,NativeRuntime,ToolOrScriptPresent
-DURATION_MS: 1602
+DURATION_MS: 3313
 EXIT_CODE: 0
 OUTPUT:
 condition-case unconditional import: complete=True; active=net8.0
@@ -2453,7 +2451,7 @@ generated-import cross-wire BuildMultiTargeting targets TFM: inactive/unreachabl
 {"entries":40,"complete":true}
 
 COMMAND: dotnet run --project .\src\KeelMatrix.PackageSurface.Probe\KeelMatrix.PackageSurface.Probe.csproj --configuration Release --no-build -- .\fixtures\consumer\AnalyzerExcluded\obj\project.assets.json .\fixtures\consumer\AnalyzerExcluded
-DURATION_MS: 582
+DURATION_MS: 1004
 EXIT_CODE: 0
 OUTPUT:
 {
@@ -2516,7 +2514,7 @@ OUTPUT:
 }
 
 COMMAND: dotnet run --project .\src\KeelMatrix.PackageSurface.Probe\KeelMatrix.PackageSurface.Probe.csproj --configuration Release --no-build -- .\fixtures\consumer\AnalyzerExcludedTransitive\obj\project.assets.json .\fixtures\consumer\AnalyzerExcludedTransitive
-DURATION_MS: 639
+DURATION_MS: 1110
 EXIT_CODE: 0
 OUTPUT:
 {
@@ -2569,7 +2567,7 @@ OUTPUT:
       "PackageRelativePath": "build/KeelMatrix.Phase0.BuildTargets.targets",
       "Present": true,
       "Active": true,
-      "Sha256": "28fe6b546f2543b8f7fc6f5d7898396d6200af2bee00c5db9c81e321e08732ce",
+      "Sha256": "3750d9b59e48afda7c3f04257ddd987d49389966d654c96a404ab60cf8d8954b",
       "Incomplete": false,
       "IncompleteReason": null,
       "Project": null,
@@ -2908,56 +2906,56 @@ OUTPUT:
 }
 
 COMMAND: pwsh -NoProfile -File .\scripts\verify-no-execution.ps1
-DURATION_MS: 2237
+DURATION_MS: 2832
 EXIT_CODE: 0
 OUTPUT:
 PASS: classifier assembly has no forbidden assembly, process-start, assembly-load, MSBuild, or network references.
 PASS: NUGET_PACKAGES=.\.phase0\packages
 
 COMMAND: pwsh -NoProfile -File .\scripts\test-history-hygiene-regressions.ps1
-DURATION_MS: 6901
+DURATION_MS: 9836
 EXIT_CODE: 0
 OUTPUT:
 CASE: git-call-failure
 EXIT_CODE: 1
-DURATION_MS: 710
+DURATION_MS: 966
 PASS: git-call-failure rejected with the expected diagnostic class 'git rev-parse'.
 CASE: empty-tracked-output
 EXIT_CODE: 1
-DURATION_MS: 469
+DURATION_MS: 814
 PASS: empty-tracked-output rejected with the expected diagnostic class 'returned no required output'.
 CASE: empty-history-output
 EXIT_CODE: 1
-DURATION_MS: 442
+DURATION_MS: 764
 PASS: empty-history-output rejected with the expected diagnostic class 'returned no required output'.
 CASE: incomplete-history-output
 EXIT_CODE: 1
-DURATION_MS: 433
+DURATION_MS: 637
 PASS: incomplete-history-output rejected with the expected diagnostic class 'does not include HEAD'.
 CASE: git-grep-failure
 EXIT_CODE: 1
-DURATION_MS: 484
+DURATION_MS: 753
 PASS: git-grep-failure rejected with the expected diagnostic class 'git grep'.
 CASE: empty-log-output
 EXIT_CODE: 1
-DURATION_MS: 497
+DURATION_MS: 848
 PASS: empty-log-output rejected with the expected diagnostic class 'git log --all'.
 CASE: git-log-failure
 EXIT_CODE: 1
-DURATION_MS: 513
+DURATION_MS: 803
 PASS: git-log-failure rejected with the expected diagnostic class 'git log'.
 CASE: shallow-repository
 EXIT_CODE: 1
-DURATION_MS: 591
+DURATION_MS: 799
 PASS: shallow-repository rejected with the expected diagnostic class 'repository is shallow'.
 CASE: restricted-marker
 EXIT_CODE: 1
-DURATION_MS: 818
+DURATION_MS: 1203
 PASS: restricted-marker rejected with the expected diagnostic class 'Restricted text found'.
 PASS: hygiene gate rejects command failure, shallow history, and a tracked restricted marker in disposable repositories.
 
 COMMAND: pwsh -NoProfile -File .\scripts\test-history-hygiene.ps1
-DURATION_MS: 6170
+DURATION_MS: 8862
 EXIT_CODE: 0
 OUTPUT:
 PASS: tracked material and complete non-shallow history contain no restricted developer-coordination markers.
@@ -2965,4 +2963,4 @@ PASS: tracked material and complete non-shallow history contain no restricted de
 
 ## Residual uncertainty
 
-This is a bounded Phase 0 fixture, not a complete NuGet/MSBuild semantic implementation. The active rules are proven for the SDK-style PackageReference graphs represented by this corpus; the hostile-input, no-execution, resource, and cross-platform gates are enforced by the permanent local gate and public CI.
+This is a bounded Phase 0 fixture, not a complete NuGet/MSBuild semantic implementation. The active rules are proven for the SDK-style PackageReference graphs represented by this corpus; the hostile-input, no-execution, and resource gates are enforced by the permanent local gate. Cross-platform coverage outside the current machine remains an explicit verification assumption.

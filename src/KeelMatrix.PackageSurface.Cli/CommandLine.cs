@@ -10,6 +10,11 @@ namespace KeelMatrix.PackageSurface;
 public static class CommandLine
 {
     private const int SchemaVersion = 1;
+    private const long MaxOutputBytes = 16 * 1024 * 1024;
+    private const long MaxInputBytes = 16 * 1024 * 1024;
+    private const long MaxTotalInputBytes = 128 * 1024 * 1024;
+    private static readonly string[] GenericIncompleteReasons = { "The input, baseline, or restore evidence could not be analyzed completely." };
+    private static readonly Diagnostic[] GenericIncompleteDiagnostics = { Diagnostic.Create("PS007", "Analysis or baseline input is invalid, missing, or unreadable.") };
     public const string ToolVersion = "0.1.0";
 
     public static int Run(string[] args)
@@ -74,14 +79,22 @@ public static class CommandLine
                 }
             }
 
-            var report = ReportDocument.Create(options.Command, current, diagnostics);
-            WriteOutput(report, options.Format);
-
             var incomplete = diagnostics.Any(diagnostic => diagnostic.Id == "PS007");
             if (options.Command == CommandKind.Baseline && !incomplete)
             {
-                BaselineDocument.Write(options.OutputPath!, current);
+                try
+                {
+                    BaselineDocument.Write(options.OutputPath!, current);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException or JsonException or NotSupportedException)
+                {
+                    diagnostics.Add(Diagnostic.Create("PS007", "The baseline could not be persisted after validating the analyzed surface."));
+                    incomplete = true;
+                }
             }
+
+            var report = ReportDocument.Create(options.Command, current, diagnostics);
+            WriteOutput(report, options.Format);
 
             if (!incomplete &&
                 (options.Command is CommandKind.Baseline or CommandKind.Check) &&
@@ -100,7 +113,18 @@ public static class CommandLine
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException or JsonException or NotSupportedException or InvalidOperationException)
         {
-            Console.Error.WriteLine("error: analysis could not be completed because an input or restore artifact was invalid, missing, or unreadable.");
+            var report = ReportDocument.Create(
+                options.Command,
+                new SurfaceSnapshot(Array.Empty<SurfaceEntry>(), GenericIncompleteReasons, options.StrictContent, 0),
+                GenericIncompleteDiagnostics);
+            try
+            {
+                WriteOutput(report, options.Format);
+            }
+            catch
+            {
+                Console.Error.WriteLine("error: analysis or baseline input is invalid, missing, or unreadable.");
+            }
             return 2;
         }
     }
@@ -110,6 +134,7 @@ public static class CommandLine
         var entries = new List<SurfaceEntry>();
         var reasons = new List<string>();
         var resolvedPackages = 0;
+        long totalInputBytes = 0;
         foreach (var project in selection.Projects)
         {
             if (!File.Exists(project.AssetsPath))
@@ -117,6 +142,15 @@ public static class CommandLine
                 reasons.Add($"{project.DisplayPath}: project.assets.json is missing; run restore before analysis.");
                 continue;
             }
+
+            var inputBytes = new FileInfo(project.AssetsPath).Length;
+            if (inputBytes > MaxInputBytes || totalInputBytes > MaxTotalInputBytes - inputBytes)
+            {
+                reasons.Add($"{project.DisplayPath}: the selected restore inputs exceed the supported invocation byte limit.");
+                continue;
+            }
+
+            totalInputBytes += inputBytes;
 
             var result = ResolvedGraphClassifier.Analyze(project.AssetsPath, project.ProjectRoot, strictContent, project.DisplayPath, project.ProjectPath);
             entries.AddRange(result.Entries);
@@ -153,20 +187,19 @@ public static class CommandLine
 
     private static void WriteOutput(ReportDocument report, OutputFormat format)
     {
-        switch (format)
+        var output = format switch
         {
-            case OutputFormat.Text:
-                Console.WriteLine(report.ToText());
-                break;
-            case OutputFormat.Json:
-                Console.WriteLine(JsonSerializer.Serialize(report, JsonOptions.Indented));
-                break;
-            case OutputFormat.Sarif:
-                Console.WriteLine(JsonSerializer.Serialize(report.ToSarif(), JsonOptions.Indented));
-                break;
-            default:
-                throw new InvalidDataException("Unsupported output format.");
+            OutputFormat.Text => report.ToText(),
+            OutputFormat.Json => JsonSerializer.Serialize(report, JsonOptions.Indented),
+            OutputFormat.Sarif => JsonSerializer.Serialize(report.ToSarif(), JsonOptions.Indented),
+            _ => throw new InvalidDataException("Unsupported output format.")
+        };
+        if (Encoding.UTF8.GetByteCount(output) > MaxOutputBytes)
+        {
+            throw new InvalidDataException("The report exceeds the supported output size limit.");
         }
+
+        Console.WriteLine(output);
     }
 }
 
@@ -213,6 +246,11 @@ public sealed record Options(
           0  Scan/baseline succeeded, or check passed.
           1  Check found a reviewed surface or policy difference.
           2  Invalid invocation, missing restore artifacts, or incomplete analysis.
+
+        Analysis is offline and non-executing. It consumes restore evidence already on disk,
+        follows only bounded static package-import chains, and reports PS007 when applicability
+        or restore consistency cannot be established. It does not evaluate MSBuild conditions,
+        execute package code, or crawl the global package cache.
         """;
 
     public static ParseResult Parse(string[] args)
@@ -336,14 +374,65 @@ public sealed record SelectedProject(string ProjectRoot, string AssetsPath, stri
 public sealed record ProjectSelection(IReadOnlyList<SelectedProject> Projects)
 {
     private const int MaxProjects = 128;
+    private const long MaxInputBytes = 16 * 1024 * 1024;
 
     public static ProjectSelection Resolve(string inputPath, string? projectPath)
     {
         var input = Path.GetFullPath(inputPath);
+        if (!File.Exists(input) && !Directory.Exists(input))
+        {
+            throw new InvalidDataException("The input path does not exist or is not a supported SDK-style project input.");
+        }
+
+        if (File.Exists(input) && new FileInfo(input).Length > MaxInputBytes)
+        {
+            throw new InvalidDataException("The selected input exceeds the supported size limit.");
+        }
+
         if (projectPath is not null)
         {
-            var selected = ResolveProject(Path.GetFullPath(projectPath), Path.GetDirectoryName(input)!);
-            return new(new[] { selected });
+            var selectedPath = Path.GetFullPath(projectPath);
+            if (File.Exists(input) && input.EndsWith(".sln", StringComparison.OrdinalIgnoreCase))
+            {
+                var root = Path.GetDirectoryName(input)!;
+                var members = ReadSolutionProjectPaths(input, root);
+                if (!members.Any(path => PathsEqual(path, selectedPath)))
+                {
+                    throw new InvalidDataException("The --project path is not a member of the supplied solution.");
+                }
+
+                return new(new[] { ResolveProject(selectedPath, root) });
+            }
+
+            if (File.Exists(input) && input.EndsWith(".assets.json", StringComparison.OrdinalIgnoreCase))
+            {
+                var restored = ReadRestoreProjectPath(input);
+                if (restored is null || !PathsEqual(restored, selectedPath))
+                {
+                    throw new InvalidDataException("The --project path does not match the supplied restore artifact.");
+                }
+
+                return new(new[] { ResolveAssets(input) });
+            }
+
+            if (File.Exists(input) && IsSupportedProjectPath(input))
+            {
+                if (!PathsEqual(input, selectedPath)) throw new InvalidDataException("The --project path does not match the supplied project input.");
+                return new(new[] { ResolveProject(selectedPath, Path.GetDirectoryName(input)!) });
+            }
+
+            if (Directory.Exists(input))
+            {
+                var members = ReadDirectoryProjectPaths(input);
+                if (!members.Any(path => PathsEqual(path, selectedPath)))
+                {
+                    throw new InvalidDataException("The --project path is not a member of the supplied directory input.");
+                }
+
+                return new(new[] { ResolveProject(selectedPath, input) });
+            }
+
+            throw new InvalidDataException("The --project option can only narrow a supported project, solution, directory, or restore artifact.");
         }
 
         if (File.Exists(input) && IsSupportedProjectPath(input)) return new(new[] { ResolveProject(input, Path.GetDirectoryName(input)!) });
@@ -351,42 +440,19 @@ public sealed record ProjectSelection(IReadOnlyList<SelectedProject> Projects)
         if (File.Exists(input) && input.EndsWith(".sln", StringComparison.OrdinalIgnoreCase))
         {
             var root = Path.GetDirectoryName(input)!;
-            var projects = new List<SelectedProject>();
-            foreach (var line in File.ReadLines(input))
-            {
-                var comma = line.IndexOf(", \"", StringComparison.Ordinal);
-                if (comma < 0 || !line.StartsWith("Project(", StringComparison.Ordinal)) continue;
-                var start = line.IndexOf('"', comma);
-                var end = line.IndexOf('"', start + 1);
-                if (start < 0 || end < 0) continue;
-                var relativePath = line[(start + 1)..end];
-                if (!Path.HasExtension(relativePath)) continue;
-                if (!IsSupportedProjectPath(relativePath))
-                {
-                    throw new InvalidDataException("The solution contains an unsupported project kind.");
-                }
-
-                var path = Path.GetFullPath(Path.Combine(root, relativePath.Replace('\\', Path.DirectorySeparatorChar)));
-                projects.Add(ResolveProject(path, root));
-            }
-            EnsureProjectLimit(projects.Count);
-            return new(projects);
+            return new(ReadSolutionProjectPaths(input, root).Select(path => ResolveProject(path, root)).ToArray());
         }
 
         if (Directory.Exists(input))
         {
             var direct = Path.Combine(input, "obj", "project.assets.json");
             if (File.Exists(direct)) return new(new[] { ResolveAssets(direct) });
-            var projects = Directory.EnumerateFiles(input, "*proj", SearchOption.TopDirectoryOnly)
-                .Where(IsSupportedProjectPath)
-                .Select(path => ResolveProject(path, input))
+            var paths = Directory.EnumerateFiles(input, "*proj", SearchOption.TopDirectoryOnly)
+                .Take(MaxProjects + 1)
                 .ToArray();
-            var unsupported = Directory.EnumerateFiles(input, "*proj", SearchOption.TopDirectoryOnly)
-                .Where(path => !IsSupportedProjectPath(path))
-                .ToArray();
-            if (unsupported.Length > 0) throw new InvalidDataException("The directory contains an unsupported project kind.");
-            EnsureProjectLimit(projects.Length);
-            return new(projects);
+            if (paths.Any(path => !IsSupportedProjectPath(path))) throw new InvalidDataException("The directory contains an unsupported project kind.");
+            EnsureProjectLimit(paths.Length);
+            return new(paths.Select(path => ResolveProject(path, input)).ToArray());
         }
 
         throw new InvalidDataException("The input path does not exist or is not a supported SDK-style project input.");
@@ -414,7 +480,9 @@ public sealed record ProjectSelection(IReadOnlyList<SelectedProject> Projects)
     {
         try
         {
-            using var document = JsonDocument.Parse(File.ReadAllText(assetsPath), new JsonDocumentOptions { MaxDepth = 16 });
+            if (!File.Exists(assetsPath) || new FileInfo(assetsPath).Length > MaxInputBytes) return null;
+            using var stream = File.OpenRead(assetsPath);
+            using var document = JsonDocument.Parse(stream, new JsonDocumentOptions { MaxDepth = 16 });
             return document.RootElement.GetProperty("project").GetProperty("restore").GetProperty("projectPath").GetString();
         }
         catch (Exception ex) when (ex is IOException or JsonException or KeyNotFoundException or InvalidOperationException)
@@ -429,6 +497,37 @@ public sealed record ProjectSelection(IReadOnlyList<SelectedProject> Projects)
         path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) ||
         path.EndsWith(".vbproj", StringComparison.OrdinalIgnoreCase) ||
         path.EndsWith(".fsproj", StringComparison.OrdinalIgnoreCase);
+
+    private static string[] ReadSolutionProjectPaths(string solutionPath, string root)
+    {
+        var paths = new List<string>();
+        foreach (var line in File.ReadLines(solutionPath))
+        {
+            var comma = line.IndexOf(", \"", StringComparison.Ordinal);
+            if (comma < 0 || !line.StartsWith("Project(", StringComparison.Ordinal)) continue;
+            var start = line.IndexOf('"', comma);
+            var end = line.IndexOf('"', start + 1);
+            if (start < 0 || end < 0) continue;
+            var relativePath = line[(start + 1)..end];
+            if (!Path.HasExtension(relativePath)) continue;
+            if (!IsSupportedProjectPath(relativePath)) throw new InvalidDataException("The solution contains an unsupported project kind.");
+            paths.Add(Path.GetFullPath(Path.Combine(root, relativePath.Replace('\\', Path.DirectorySeparatorChar))));
+            EnsureProjectLimit(paths.Count);
+        }
+
+        return paths.ToArray();
+    }
+
+    private static string[] ReadDirectoryProjectPaths(string input)
+    {
+        var paths = Directory.EnumerateFiles(input, "*proj", SearchOption.TopDirectoryOnly).Take(MaxProjects + 1).ToArray();
+        if (paths.Any(path => !IsSupportedProjectPath(path))) throw new InvalidDataException("The directory contains an unsupported project kind.");
+        EnsureProjectLimit(paths.Length);
+        return paths;
+    }
+
+    private static bool PathsEqual(string left, string right) =>
+        string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), StringComparison.OrdinalIgnoreCase);
 
     private static void EnsureProjectLimit(int count)
     {
@@ -493,11 +592,23 @@ public sealed record BaselineDocument(
         var directory = Path.GetDirectoryName(full)!;
         Directory.CreateDirectory(directory);
         var baseline = new BaselineDocument(CommandLineSchema.Version, "0.1.0", snapshot.StrictContent, snapshot.Entries.Select(BaselineEntry.From).ToArray(), Array.Empty<string>());
+        Validate(baseline);
         var temporary = full + ".tmp-" + Guid.NewGuid().ToString("N");
         try
         {
             var serialized = JsonSerializer.Serialize(baseline, JsonOptions.Indented).Replace("\r\n", "\n", StringComparison.Ordinal);
-            File.WriteAllText(temporary, serialized + "\n", new UTF8Encoding(false));
+            var content = serialized + "\n";
+            if (Encoding.UTF8.GetByteCount(content) > MaxBaselineBytes)
+            {
+                throw new InvalidDataException("The generated baseline exceeds the supported size limit.");
+            }
+
+            using (var parsed = JsonDocument.Parse(content, new JsonDocumentOptions { MaxDepth = 64 }))
+            {
+                ValidateJsonShape(parsed.RootElement);
+            }
+            File.WriteAllText(temporary, content, new UTF8Encoding(false));
+            _ = Read(temporary);
             File.Move(temporary, full, overwrite: true);
         }
         finally
@@ -517,6 +628,7 @@ public sealed record BaselineDocument(
             throw new InvalidDataException("Baseline has invalid incomplete-state markers.");
         }
 
+        foreach (var reason in document.IncompleteReasons) RequireText(reason, "incompleteReason");
         if (document.IncompleteReasons.Count > 0) throw new InvalidDataException("An incomplete analysis cannot be used as an approved baseline.");
         var identities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var entry in document.Entries)
@@ -529,7 +641,7 @@ public sealed record BaselineDocument(
             if (entry.PackageId.Contains('/', StringComparison.Ordinal) || entry.PackageId.Contains('\\', StringComparison.Ordinal) || entry.Version.Contains('/', StringComparison.Ordinal) || entry.Version.Contains('\\', StringComparison.Ordinal)) throw new InvalidDataException("Baseline contains an invalid package identity.");
             if (!entry.Relationship.Equals("direct", StringComparison.OrdinalIgnoreCase) && !entry.Relationship.Equals("transitive", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Baseline contains an invalid relationship.");
             if (!Enum.IsDefined(entry.Context) || !Enum.IsDefined(entry.Capability)) throw new InvalidDataException("Baseline contains an unsupported enum value.");
-            if (entry.Project is not null) ValidateRelativeText(entry.Project, "project");
+            if (entry.Project is not null) ValidateProjectIdentity(entry.Project);
             if (entry.Project is null) throw new InvalidDataException("Baseline entries require a project name.");
             if (entry.TargetFramework is not null) RequireText(entry.TargetFramework, "targetFramework");
             if (entry.RuntimeIdentifier is not null) RequireText(entry.RuntimeIdentifier, "runtimeIdentifier");
@@ -579,6 +691,18 @@ public sealed record BaselineDocument(
         RequireText(value, field);
         var normalized = value.Replace('\\', '/');
         if (Path.IsPathRooted(value) || normalized.Length > 0 && normalized[0] == '/' || (normalized.Length >= 2 && normalized[1] == ':') || normalized.Split('/').Any(part => part is ".." or "")) throw new InvalidDataException($"Baseline field '{field}' is not a safe relative value.");
+    }
+
+    private static void ValidateProjectIdentity(string value)
+    {
+        RequireText(value, "project");
+        var normalized = value.Replace('\\', '/');
+        if (Path.IsPathRooted(value) || normalized.StartsWith('/') ||
+            normalized.Length >= 2 && normalized[1] == ':' || normalized.Contains("//", StringComparison.Ordinal) ||
+            normalized.Split('/').Any(part => part.Length == 0 || part == "."))
+        {
+            throw new InvalidDataException("Baseline project identity is not a supported solution-relative value.");
+        }
     }
 
     private static bool IsSha256(string? value) => value is not null && value.Length == 64 && value.All(Uri.IsHexDigit);
@@ -735,10 +859,47 @@ public sealed class SarifDocument
 public sealed record SarifRun(SarifTool Tool, IReadOnlyList<SarifResult> Results);
 public sealed record SarifTool(SarifDriver Driver);
 public sealed record SarifDriver(string Name, string Version);
-public sealed record SarifResult(string RuleId, SarifMessage Message, string Level)
+public sealed record SarifResult(string RuleId, SarifMessage Message, string Level, IReadOnlyDictionary<string, string>? Properties = null)
 {
-    public static SarifResult Create(Diagnostic diagnostic) => new(diagnostic.Id, new SarifMessage(diagnostic.Message), diagnostic.Severity);
-    public static SarifResult Create(SurfaceEntry entry) => new("PS-SURFACE", new SarifMessage($"{entry.Capability} present={entry.Present} active={entry.Active} package={entry.PackageId}@{entry.Version} relationship={entry.Relationship} path={entry.PackageRelativePath}"), "note");
+    public static SarifResult Create(Diagnostic diagnostic) => new(
+        diagnostic.Id,
+        new SarifMessage(diagnostic.Message),
+        diagnostic.Severity,
+        ContextProperties(diagnostic.Project, diagnostic.PackageId, diagnostic.PackageRelativePath, diagnostic.Version, diagnostic.Relationship, diagnostic.Context, diagnostic.TargetFramework, diagnostic.RuntimeIdentifier, diagnostic.Capability, null));
+
+    public static SarifResult Create(SurfaceEntry entry) => new(
+        "PS-SURFACE",
+        new SarifMessage($"{entry.Capability} present={entry.Present} active={entry.Active} project={entry.Project ?? "-"} context={entry.Context} target={entry.TargetFramework ?? "project"}{(entry.RuntimeIdentifier is null ? string.Empty : "/" + entry.RuntimeIdentifier)} package={entry.PackageId}@{entry.Version} relationship={entry.Relationship} path={entry.PackageRelativePath}"),
+        "note",
+        ContextProperties(entry.Project, entry.PackageId, entry.PackageRelativePath, entry.Version, entry.Relationship, entry.Context, entry.TargetFramework, entry.RuntimeIdentifier, entry.Capability, entry.ObservedPrimitives));
+
+    private static Dictionary<string, string> ContextProperties(
+        string? project,
+        string? package,
+        string? path,
+        string? version,
+        string? relationship,
+        SurfaceContextKind? context,
+        string? targetFramework,
+        string? runtimeIdentifier,
+        CapabilityKind? capability,
+        IReadOnlyList<string>? primitives)
+    {
+        var properties = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["project"] = project ?? "",
+            ["package"] = package ?? "",
+            ["path"] = path ?? "",
+            ["version"] = version ?? "",
+            ["relationship"] = relationship ?? "",
+            ["context"] = context?.ToString() ?? "",
+            ["targetFramework"] = targetFramework ?? "",
+            ["runtimeIdentifier"] = runtimeIdentifier ?? "",
+            ["capability"] = capability?.ToString() ?? ""
+        };
+        if (primitives is { Count: > 0 }) properties["observedPrimitives"] = string.Join(",", primitives);
+        return properties;
+    }
 }
 public sealed record SarifMessage(string Text);
 

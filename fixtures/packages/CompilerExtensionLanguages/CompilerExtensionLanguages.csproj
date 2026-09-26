@@ -13,6 +13,9 @@
     <None Include="$(TargetPath)" Pack="true" PackagePath="analyzers/dotnet/cs/KeelMatrix.Phase0.CSharp.dll" Visible="false" />
     <None Include="$(TargetPath)" Pack="true" PackagePath="analyzers/dotnet/vb/KeelMatrix.Phase0.VisualBasic.dll" Visible="false" />
     <None Include="$(TargetPath)" Pack="true" PackagePath="analyzers/dotnet/fs/KeelMatrix.Phase0.FSharp.dll" Visible="false" />
+    <None Include="$(TargetPath)" Pack="true" PackagePath="analyzers/dotnet/cs/KeelMatrix.Phase0.CSharp.resources.dll" Visible="false" />
+    <None Include="$(TargetPath)" Pack="true" PackagePath="analyzers/dotnet/roslyn3.8/cs/KeelMatrix.Phase0.LegacyCSharp.dll" Visible="false" />
     <None Include="$(TargetPath)" Pack="true" PackagePath="analyzers/dotnet/roslyn4.0/cs/KeelMatrix.Phase0.OptionalCSharp.dll" Visible="false" />
+    <None Include="$(TargetPath)" Pack="true" PackagePath="analyzers/net9.0/KeelMatrix.Phase0.FrameworkOnly.dll" Visible="false" />
   </ItemGroup>
 </Project>

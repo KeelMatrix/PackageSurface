@@ -17,8 +17,7 @@ OUTPUT:
 COMMAND: git ls-tree -r --name-only HEAD | Select-String "^\.github/"
 EXIT_CODE: 0
 OUTPUT:
-.github/workflows/ci.yml
-.github/workflows/release.yml
+(no matching paths)
 ```
 
 ## Repository checks

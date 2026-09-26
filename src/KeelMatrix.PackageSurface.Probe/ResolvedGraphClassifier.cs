@@ -15,6 +15,13 @@ public static class ResolvedGraphClassifier
     private const int MaxLibraries = 20_000;
     private const int MaxFilesPerLibrary = 20_000;
     private const int MaxGeneratedImportFiles = 256;
+    private const int MaxEntries = 50_000;
+    private const int MaxDependencyNodes = 20_000;
+    private const int MaxDependencyDepth = 256;
+    private const int MaxConditionLength = 64 * 1024;
+    private const int MaxConditionTokens = 2_048;
+    private const int MaxConditionDepth = 64;
+    private const int MaxNestedImports = 512;
     private const long MaxMetadataFileBytes = 16 * 1024 * 1024;
     private const long MaxXmlCharacters = 8 * 1024 * 1024;
     private const int MaxXmlDepth = 64;
@@ -39,6 +46,7 @@ public static class ResolvedGraphClassifier
             using var stream = File.OpenRead(assetsFile);
             using var document = JsonDocument.Parse(stream, new JsonDocumentOptions { MaxDepth = MaxJsonDepth });
             var root = document.RootElement;
+            ValidateAssetsFormat(root, incomplete);
             var packageFolders = ReadPackageFolders(root, incomplete);
             var libraries = root.TryGetProperty("libraries", out var librariesElement)
                 ? librariesElement
@@ -49,13 +57,10 @@ public static class ResolvedGraphClassifier
             }
             var directAssetRules = ReadDirectPackageAssetRules(root);
             var targetAliases = ReadTargetAliases(root);
-            var generatedImportSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var expectedGeneratedImportSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var generatedImports = ReadGeneratedImports(root, assetsFile, projectRoot, selectedProjectPath, incomplete, budget, generatedImportSources, expectedGeneratedImportSources);
-            var projectLanguage = ReadProjectLanguage(root, projectRoot, selectedProjectPath, incomplete);
             var entries = new List<SurfaceEntry>();
             var projectEntries = new Dictionary<string, List<SurfaceEntry>>(StringComparer.OrdinalIgnoreCase);
             var resolvedPackages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var accumulatedEntries = 0;
 
             if (!root.TryGetProperty("targets", out var targets))
             {
@@ -66,6 +71,12 @@ public static class ResolvedGraphClassifier
             {
                 throw new InvalidDataException("project.assets.json contains too many target graphs.");
             }
+            ValidateRestoreEvidence(root, libraries, targets, packageFolders, incomplete);
+            var packageRoots = ResolvePackageRoots(libraries, packageFolders, incomplete);
+            var expectedGeneratedImportSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var generatedImports = ReadGeneratedImports(root, assetsFile, projectRoot, selectedProjectPath, packageRoots, incomplete, budget, expectedGeneratedImportSources);
+            ValidateGeneratedImportEvidence(generatedImports, packageRoots, libraries, incomplete);
+            var projectLanguage = ReadProjectLanguage(root, projectRoot, selectedProjectPath, incomplete);
             var isMultiTargetingProject = targets.EnumerateObject().Select(target => SplitTarget(target.Name).Tfm).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1;
 
             foreach (var target in targets.EnumerateObject())
@@ -121,8 +132,13 @@ public static class ResolvedGraphClassifier
                     }
 
                     var libraryPath = pathElement.GetString()!;
-                    var packageRoot = ResolvePackageRoot(packageId, version, libraryPath, packageFolders, incomplete);
+                    if (!packageRoots.TryGetValue(libraryKey, out var packageRoot))
+                    {
+                        continue;
+                    }
+
                     var files = ReadLibraryFiles(library, libraryKey, incomplete);
+                    var selectedAnalyzers = SelectAnalyzerPaths(files, projectLanguage, targetAlias, analyzerPackages, packageId, libraryKey, incomplete);
                     var targetAssets = package.Value;
                     foreach (var relativePath in files)
                     {
@@ -132,12 +148,11 @@ public static class ResolvedGraphClassifier
                         }
 
                         var physicalPath = Path.Combine(packageRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
-                        var present = File.Exists(physicalPath) && IsSafeResolvedFile(packageRoot, physicalPath);
-                        var reason = present ? null : $"Reachable asset is missing from resolved package contents: {relativePath}.";
-                        if (File.Exists(physicalPath) && !present)
-                        {
-                            reason = $"Reachable asset resolves through an unsafe package path: {relativePath}.";
-                        }
+                        var safePath = IsSafeResolvedFile(packageRoot, physicalPath);
+                        var present = safePath && File.Exists(physicalPath);
+                        var reason = present ? null : safePath
+                            ? $"Reachable asset is missing from resolved package contents: {relativePath}."
+                            : $"Reachable asset resolves through an unsafe package path: {relativePath}.";
                         if (!present)
                         {
                             incomplete.Add($"{libraryKey}: {reason}");
@@ -175,7 +190,7 @@ public static class ResolvedGraphClassifier
                             }
                         }
 
-                        var active = IsActive(capability, relativePath, packageId, libraryPath, analyzerPackages, packageRoot, targetAssets, context, targetAlias, generatedImports, generatedImportSources, expectedGeneratedImportSources, isMultiTargetingProject, projectLanguage, ref reason, incomplete, libraryKey);
+                        var active = IsActive(capability, relativePath, packageId, libraryPath, analyzerPackages, selectedAnalyzers, packageRoot, targetAssets, context, targetAlias, generatedImports, expectedGeneratedImportSources, isMultiTargetingProject, projectLanguage, ref reason, incomplete, libraryKey);
                         var sha = present && strictContent && CapabilityPolicy.IsStrictContentEligible(capability, present, active)
                             ? ComputeSha256(physicalPath, budget)
                             : null;
@@ -205,10 +220,18 @@ public static class ResolvedGraphClassifier
                             }
 
                             candidates.Add(entry);
+                            if (++accumulatedEntries > MaxEntries)
+                            {
+                                throw new InvalidDataException("The resolved capability surface exceeds the supported entry limit.");
+                            }
                         }
                         else
                         {
                             entries.Add(entry);
+                            if (++accumulatedEntries > MaxEntries)
+                            {
+                                throw new InvalidDataException("The resolved capability surface exceeds the supported entry limit.");
+                            }
                         }
                     }
                 }
@@ -375,6 +398,7 @@ public static class ResolvedGraphClassifier
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var active = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var work = new Stack<(string Key, int Depth)>();
 
         foreach (var direct in directAssetRules)
         {
@@ -385,17 +409,17 @@ public static class ResolvedGraphClassifier
 
             foreach (var root in roots)
             {
-                Visit(root);
+                work.Push((root, 0));
             }
         }
 
-        return active;
-
-        void Visit(string packageKey)
+        while (work.Count > 0)
         {
-            if (!visited.Add(packageKey))
+            var (packageKey, depth) = work.Pop();
+            if (!visited.Add(packageKey)) continue;
+            if (depth > MaxDependencyDepth || visited.Count > MaxDependencyNodes)
             {
-                return;
+                throw new InvalidDataException("The resolved dependency graph exceeds the supported traversal limits.");
             }
 
             if (!TryGetPropertyIgnoreCase(targetAssets, packageKey, out var package) || package.ValueKind != JsonValueKind.Object)
@@ -404,17 +428,9 @@ public static class ResolvedGraphClassifier
             }
 
             var packageId = SplitPackageKey(packageKey).Id;
-            if (excludedAnalyzerPackages.Contains(packageId))
-            {
-                return;
-            }
-
+            if (excludedAnalyzerPackages.Contains(packageId)) continue;
             active.Add(packageId);
-            if (!package.TryGetProperty("dependencies", out var dependencies))
-            {
-                return;
-            }
-
+            if (!package.TryGetProperty("dependencies", out var dependencies)) continue;
             if (dependencies.ValueKind != JsonValueKind.Object)
             {
                 throw new InvalidDataException($"Target package {packageKey} has an invalid dependencies object.");
@@ -429,10 +445,12 @@ public static class ResolvedGraphClassifier
 
                 foreach (var dependencyKey in dependencyKeys)
                 {
-                    Visit(dependencyKey);
+                    work.Push((dependencyKey, depth + 1));
                 }
             }
         }
+
+        return active;
     }
 
     private static Dictionary<string, string> ReadTargetAliases(JsonElement root)
@@ -521,6 +539,210 @@ public static class ResolvedGraphClassifier
         return result;
     }
 
+    private static void ValidateAssetsFormat(JsonElement root, List<string> incomplete)
+    {
+        if (!root.TryGetProperty("version", out var version) || version.ValueKind != JsonValueKind.Number ||
+            !version.TryGetInt32(out var value) || value is < 1 or > 3)
+        {
+            incomplete.Add("The restore assets format version is missing or unsupported.");
+        }
+    }
+
+    private static void ValidateRestoreEvidence(
+        JsonElement root,
+        JsonElement libraries,
+        JsonElement targets,
+        IReadOnlyList<string> packageFolders,
+        List<string> incomplete)
+    {
+        if (libraries.ValueKind != JsonValueKind.Object || targets.ValueKind != JsonValueKind.Object) return;
+        AddDuplicatePropertyReasons(libraries, "library identity", incomplete);
+        AddDuplicatePropertyReasons(targets, "target identity", incomplete);
+
+        if (!root.TryGetProperty("project", out var project) || project.ValueKind != JsonValueKind.Object ||
+            !project.TryGetProperty("frameworks", out var frameworks) || frameworks.ValueKind != JsonValueKind.Object)
+        {
+            incomplete.Add("Restore evidence has no declared framework graph.");
+            return;
+        }
+
+        AddDuplicatePropertyReasons(frameworks, "framework identity", incomplete);
+        var declaredFrameworks = frameworks.EnumerateObject().Select(framework => framework.Name).ToArray();
+        var targetNames = targets.EnumerateObject().Select(target => target.Name).ToArray();
+        foreach (var framework in declaredFrameworks)
+        {
+            if (!targetNames.Any(target => SplitTarget(target).Tfm.Equals(framework, StringComparison.OrdinalIgnoreCase)))
+            {
+                incomplete.Add($"Declared framework {framework} has no resolved target graph.");
+            }
+        }
+
+        foreach (var target in targets.EnumerateObject())
+        {
+            if (target.Value.ValueKind != JsonValueKind.Object)
+            {
+                incomplete.Add($"Target {target.Name} is not an object.");
+                continue;
+            }
+
+            var packageIds = target.Value.EnumerateObject()
+                .Select(property => SplitPackageKey(property.Name).Id)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var package in target.Value.EnumerateObject())
+            {
+                if (!TryGetPropertyIgnoreCase(libraries, package.Name, out var library))
+                {
+                    incomplete.Add($"Target {target.Name} refers to missing library {package.Name}.");
+                    continue;
+                }
+
+                if (package.Value.ValueKind != JsonValueKind.Object)
+                {
+                    incomplete.Add($"Target {target.Name} package {package.Name} has malformed asset metadata.");
+                    continue;
+                }
+
+                ValidateTargetPackageAssets(package.Value, library, package.Name, incomplete);
+                if (package.Value.TryGetProperty("dependencies", out var dependencies))
+                {
+                    if (dependencies.ValueKind != JsonValueKind.Object)
+                    {
+                        incomplete.Add($"Target package {package.Name} has malformed dependency metadata.");
+                    }
+                    else
+                    {
+                        foreach (var dependency in dependencies.EnumerateObject())
+                        {
+                            if (!packageIds.Contains(dependency.Name))
+                            {
+                                incomplete.Add($"Target package {package.Name} refers to missing dependency {dependency.Name}.");
+                            }
+                        }
+                    }
+                }
+            }
+
+            foreach (var framework in frameworks.EnumerateObject().Where(framework => framework.Name.Equals(SplitTarget(target.Name).Tfm, StringComparison.OrdinalIgnoreCase)))
+            {
+                if (!framework.Value.TryGetProperty("dependencies", out var dependencies) || dependencies.ValueKind != JsonValueKind.Object) continue;
+                foreach (var dependency in dependencies.EnumerateObject())
+                {
+                    if (!packageIds.Contains(dependency.Name))
+                    {
+                        incomplete.Add($"Declared framework {framework.Name} refers to unresolved dependency {dependency.Name}.");
+                    }
+                }
+            }
+        }
+    }
+
+    private static void ValidateTargetPackageAssets(JsonElement package, JsonElement library, string packageKey, List<string> incomplete)
+    {
+        var files = ReadLibraryFiles(library, packageKey, incomplete)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var group in package.EnumerateObject())
+        {
+            if (group.Name is "dependencies" or "type") continue;
+            if (group.Value.ValueKind != JsonValueKind.Object)
+            {
+                incomplete.Add($"Target package {packageKey} has malformed asset group {group.Name}.");
+                continue;
+            }
+
+            if (group.Name.Equals("contentFiles", StringComparison.OrdinalIgnoreCase))
+            {
+                foreach (var content in group.Value.EnumerateObject())
+                {
+                    if (!files.Contains(content.Name.Replace('\\', '/')))
+                    {
+                        incomplete.Add($"Target package {packageKey} references a content file absent from its package inventory.");
+                    }
+                }
+                continue;
+            }
+
+            foreach (var asset in group.Value.EnumerateObject())
+            {
+                var assetPath = asset.Name.Replace('\\', '/');
+                if (!TryNormalizeRelativePath(assetPath, out _))
+                {
+                    incomplete.Add($"Target package {packageKey} contains an unsafe asset reference.");
+                    continue;
+                }
+
+                if (!files.Contains(assetPath))
+                {
+                    incomplete.Add($"Target package {packageKey} references an asset absent from its package inventory.");
+                }
+            }
+        }
+    }
+
+    private static void AddDuplicatePropertyReasons(JsonElement value, string description, List<string> incomplete)
+    {
+        var duplicate = value.EnumerateObject()
+            .GroupBy(property => property.Name, StringComparer.OrdinalIgnoreCase)
+            .Where(group => group.Count() > 1)
+            .Select(group => group.Key)
+            .FirstOrDefault();
+        if (duplicate is not null)
+        {
+            incomplete.Add($"Restore evidence contains an ambiguous {description}.");
+        }
+    }
+
+    private static Dictionary<string, string> ResolvePackageRoots(JsonElement libraries, IReadOnlyList<string> packageFolders, List<string> incomplete)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var library in libraries.EnumerateObject())
+        {
+            if (!library.Value.TryGetProperty("type", out var type) || type.ValueKind != JsonValueKind.String ||
+                !type.GetString()!.Equals("package", StringComparison.OrdinalIgnoreCase)) continue;
+            var (packageId, version) = SplitPackageKey(library.Name);
+            if (!library.Value.TryGetProperty("path", out var path) || path.ValueKind != JsonValueKind.String)
+            {
+                incomplete.Add($"Library {library.Name} has no valid package path.");
+                continue;
+            }
+
+            var packageRoot = ResolvePackageRoot(packageId, version, path.GetString()!, packageFolders.ToArray(), incomplete);
+            if (packageRoot is not null)
+            {
+                result[library.Name] = packageRoot;
+            }
+        }
+
+        return result;
+    }
+
+    private static void ValidateGeneratedImportEvidence(
+        IReadOnlyList<GeneratedImport> imports,
+        IReadOnlyDictionary<string, string> packageRoots,
+        JsonElement libraries,
+        List<string> incomplete)
+    {
+        foreach (var import in imports)
+        {
+            var project = NormalizeText(import.Project);
+            if (!project.StartsWith("$(NuGetPackageRoot)/", StringComparison.OrdinalIgnoreCase)) continue;
+            var suffix = project["$(NuGetPackageRoot)/".Length..];
+            var match = packageRoots.Keys.FirstOrDefault(key => suffix.StartsWith(NormalizeText(key) + "/", StringComparison.OrdinalIgnoreCase));
+            if (match is null) continue;
+            var relative = suffix[(match.Length + 1)..];
+            if (!TryGetPropertyIgnoreCase(libraries, match, out var library))
+            {
+                incomplete.Add("Generated NuGet import evidence refers to an unrepresented package library.");
+                continue;
+            }
+
+            var files = ReadLibraryFiles(library, match, incomplete);
+            if (!files.Any(file => file.Equals(relative, StringComparison.OrdinalIgnoreCase)))
+            {
+                incomplete.Add("Generated NuGet import evidence refers to a file absent from the resolved package inventory.");
+            }
+        }
+    }
+
     private static IReadOnlyList<string> ReadLibraryFiles(JsonElement library, string libraryKey, List<string> incomplete)
     {
         if (!library.TryGetProperty("files", out var files) || files.ValueKind != JsonValueKind.Array || files.GetArrayLength() > MaxFilesPerLibrary)
@@ -550,12 +772,12 @@ public static class ResolvedGraphClassifier
         return result;
     }
 
-    private static string ResolvePackageRoot(string packageId, string version, string libraryPath, string[] packageFolders, List<string> incomplete)
+    private static string? ResolvePackageRoot(string packageId, string version, string libraryPath, string[] packageFolders, List<string> incomplete)
     {
         if (!TryNormalizeRelativePath(libraryPath, out var normalizedLibraryPath))
         {
             incomplete.Add($"Package {packageId}/{version} has an unsafe cache-relative path.");
-            return Path.GetTempPath();
+            return null;
         }
 
         foreach (var folder in packageFolders)
@@ -573,8 +795,7 @@ public static class ResolvedGraphClassifier
         }
 
         incomplete.Add($"Package {packageId}/{version} was not found in the resolved package folders.");
-        var firstFolder = packageFolders.Length > 0 ? packageFolders[0] : Path.GetTempPath();
-        return Path.GetFullPath(Path.Combine(firstFolder, normalizedLibraryPath.Replace('/', Path.DirectorySeparatorChar)));
+        return null;
     }
 
     private static List<GeneratedImport> ReadGeneratedImports(
@@ -582,9 +803,9 @@ public static class ResolvedGraphClassifier
         string assetsFile,
         string projectRoot,
         string? selectedProjectPath,
+        IReadOnlyDictionary<string, string> packageRoots,
         List<string> incomplete,
         WorkBudget budget,
-        HashSet<string> generatedImportSources,
         HashSet<string> expectedGeneratedImportSources)
     {
         var result = new List<GeneratedImport>();
@@ -615,8 +836,6 @@ public static class ResolvedGraphClassifier
             {
                 continue;
             }
-            generatedImportSources.Add(Path.GetFileName(file));
-
             try
             {
                 EnsureFileWithinLimit(file, MaxMetadataFileBytes, "generated NuGet import");
@@ -654,7 +873,7 @@ public static class ResolvedGraphClassifier
                             var applicability = DetermineApplicability(conditions, project, out var reason);
                             if (!applicability.IsKnown)
                             {
-                                incomplete.Add($"Generated import file {Path.GetFileName(file)} has an unproven condition on {reason!.Owner}: {reason.Message}");
+                                incomplete.Add($"Generated import file {Path.GetFileName(file)} has an unsupported condition on {reason!.Owner}: {reason.Message}.");
                             }
 
                             result.Add(new GeneratedImport(Path.GetFileName(file), project, applicability));
@@ -675,6 +894,20 @@ public static class ResolvedGraphClassifier
                 {
                     incomplete.Add($"Generated import file {Path.GetFileName(file)} exceeds the supported XML depth.");
                 }
+
+                foreach (var directImport in result.Where(import => import.SourceFile.Equals(Path.GetFileName(file), StringComparison.OrdinalIgnoreCase)).ToArray())
+                {
+                    string? resolutionReason = null;
+                    if (directImport.Applicability.IsKnown &&
+                        TryResolveStaticPackageImport(directImport.Project, file, packageRoots, out var nestedPath, out var nestedRoot, out resolutionReason))
+                    {
+                        WalkNestedImports(nestedPath, nestedRoot, directImport.SourceFile, directImport.Applicability.Condition, packageRoots, result, incomplete, new HashSet<string>(StringComparer.OrdinalIgnoreCase), 0);
+                    }
+                    else if (resolutionReason is not null && !resolutionReason.Equals("not a package import", StringComparison.Ordinal))
+                    {
+                        incomplete.Add($"Generated import file {Path.GetFileName(file)} contains an unsupported static import target.");
+                    }
+                }
             }
             catch (XmlException)
             {
@@ -693,18 +926,251 @@ public static class ResolvedGraphClassifier
         return result;
     }
 
+    private static void WalkNestedImports(
+        string file,
+        string packageRoot,
+        string sourceFile,
+        ConditionNode? inheritedCondition,
+        IReadOnlyDictionary<string, string> packageRoots,
+        List<GeneratedImport> result,
+        List<string> incomplete,
+        HashSet<string> visited,
+        int depth)
+    {
+        var work = new Stack<(string File, string PackageRoot, string SourceFile, ConditionNode? Condition, int Depth)>();
+        work.Push((file, packageRoot, sourceFile, inheritedCondition, depth));
+        while (work.Count > 0)
+        {
+            var current = work.Pop();
+            if (current.Depth >= MaxNestedImports)
+            {
+                incomplete.Add("Nested package import depth exceeds the supported resource limit.");
+                continue;
+            }
+
+            if (!visited.Add(Path.GetFullPath(current.File))) continue;
+            if (!IsSafeResolvedFile(current.PackageRoot, current.File) || !File.Exists(current.File))
+            {
+                incomplete.Add("A statically imported package build file is missing or outside its resolved package root.");
+                continue;
+            }
+
+            try
+            {
+                EnsureFileWithinLimit(current.File, MaxMetadataFileBytes, "nested package import");
+                var settings = new XmlReaderSettings
+                {
+                    DtdProcessing = DtdProcessing.Prohibit,
+                    XmlResolver = null,
+                    MaxCharactersFromEntities = 0,
+                    MaxCharactersInDocument = MaxXmlCharacters,
+                    IgnoreComments = true,
+                    IgnoreWhitespace = true
+                };
+                using var reader = XmlReader.Create(current.File, settings);
+                var conditionStack = new List<ConditionClause>();
+                var nestedWork = new List<(string File, string PackageRoot, string SourceFile, ConditionNode? Condition, int Depth)>();
+                while (reader.Read())
+                {
+                    if (reader.Depth > MaxXmlDepth)
+                    {
+                        incomplete.Add("A nested package import exceeds the supported XML depth.");
+                        break;
+                    }
+
+                    if (reader.NodeType == XmlNodeType.Element)
+                    {
+                        var condition = reader.GetAttribute("Condition");
+                        if (reader.LocalName.Equals("Import", StringComparison.Ordinal) && reader.GetAttribute("Project") is string project)
+                        {
+                            var clauses = conditionStack
+                                .Append(new ConditionClause(reader.LocalName, condition))
+                                .Where(clause => !string.IsNullOrWhiteSpace(clause.Expression))
+                                .ToArray();
+                            var applicability = DetermineApplicability(clauses, project, out var failure);
+                            if (!applicability.IsKnown)
+                            {
+                                incomplete.Add($"Nested package import contains an unsupported condition on {failure!.Owner}: {failure.Message}.");
+                            }
+
+                            string? resolutionReason = null;
+                            var resolved = TryResolveStaticPackageImport(project, current.File, packageRoots, out var nestedPath, out var nestedRoot, out resolutionReason);
+                            var combined = applicability.IsKnown
+                                ? ImportApplicability.Known(CombineConditionNodes(current.Condition, applicability.Condition))
+                                : applicability;
+                            result.Add(new GeneratedImport(current.SourceFile, resolved ? nestedPath : project, combined));
+                            if (combined.IsKnown && resolved)
+                            {
+                                nestedWork.Add((nestedPath, nestedRoot, current.SourceFile, combined.Condition, current.Depth + 1));
+                            }
+                            else if (resolutionReason is not null && !resolutionReason.Equals("not a package import", StringComparison.Ordinal))
+                            {
+                                incomplete.Add("Nested package import contains an unsupported static import target.");
+                            }
+                            else if (resolutionReason is "not a package import" && !Path.IsPathRooted(project) && !project.Contains("$(", StringComparison.Ordinal) &&
+                                     !IsRelativeImportUnderAnyPackageRoot(current.File, project, packageRoots.Values))
+                            {
+                                incomplete.Add("Nested package import is outside the resolved package root or is missing from the package inventory.");
+                            }
+                        }
+
+                        if (!reader.IsEmptyElement)
+                        {
+                            conditionStack.Add(new ConditionClause(reader.LocalName, condition));
+                        }
+                    }
+                    else if (reader.NodeType == XmlNodeType.EndElement && conditionStack.Count > 0)
+                    {
+                        conditionStack.RemoveAt(conditionStack.Count - 1);
+                    }
+                }
+
+                for (var index = nestedWork.Count - 1; index >= 0; index--)
+                {
+                    work.Push(nestedWork[index]);
+                }
+            }
+            catch (XmlException)
+            {
+                incomplete.Add("A statically imported package build file is malformed.");
+            }
+            catch (InvalidOperationException)
+            {
+                incomplete.Add("A statically imported package build file is unsupported.");
+            }
+            catch (IOException)
+            {
+                incomplete.Add("A statically imported package build file could not be read.");
+            }
+        }
+    }
+
+    private static bool IsRelativeImportUnderAnyPackageRoot(string currentFile, string importProject, IEnumerable<string> packageRoots)
+    {
+        var currentDirectory = Path.GetDirectoryName(Path.GetFullPath(currentFile))!;
+        var fullFile = Path.GetFullPath(Path.Combine(currentDirectory, importProject.Replace('/', Path.DirectorySeparatorChar)));
+        return packageRoots.Any(root =>
+        {
+            var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            return fullFile.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase);
+        });
+    }
+
+    private static ConditionNode? CombineConditionNodes(ConditionNode? left, ConditionNode? right) =>
+        left is null ? right : right is null ? left : new AndCondition(left, right);
+
+    private static bool TryResolveStaticPackageImport(
+        string importProject,
+        string currentFile,
+        IReadOnlyDictionary<string, string> packageRoots,
+        out string resolvedPath,
+        out string packageRoot,
+        out string? reason)
+    {
+        resolvedPath = string.Empty;
+        packageRoot = string.Empty;
+        reason = null;
+        var requested = NormalizeText(importProject);
+        if (requested.Length == 0)
+        {
+            reason = "empty import target";
+            return false;
+        }
+
+        if (requested.Contains("$(", StringComparison.Ordinal) &&
+            !requested.StartsWith("$(NuGetPackageRoot)/", StringComparison.OrdinalIgnoreCase))
+        {
+            reason = "dynamic import target";
+            return false;
+        }
+
+        if (requested.StartsWith("$(NuGetPackageRoot)/", StringComparison.OrdinalIgnoreCase))
+        {
+            var suffix = requested["$(NuGetPackageRoot)/".Length..];
+            foreach (var candidate in packageRoots)
+            {
+                var identity = NormalizeText(candidate.Key);
+                if (!suffix.StartsWith(identity + "/", StringComparison.OrdinalIgnoreCase)) continue;
+                var relative = suffix[(identity.Length + 1)..];
+                if (!TryNormalizeRelativePath(relative, out _))
+                {
+                    reason = "unsafe package import target";
+                    return false;
+                }
+
+                var candidatePath = Path.GetFullPath(Path.Combine(candidate.Value, relative.Replace('/', Path.DirectorySeparatorChar)));
+                if (!IsSafeResolvedFile(candidate.Value, candidatePath))
+                {
+                    reason = "unsafe package import target";
+                    return false;
+                }
+
+                if (!File.Exists(candidatePath))
+                {
+                    reason = "not a package import";
+                    return false;
+                }
+
+                resolvedPath = candidatePath;
+                packageRoot = candidate.Value;
+                return true;
+            }
+
+            reason = "unresolved package import target";
+            return false;
+        }
+
+        if (Path.IsPathRooted(importProject))
+        {
+            var absolute = Path.GetFullPath(importProject);
+            foreach (var candidate in packageRoots.Values.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (!IsSafeResolvedFile(candidate, absolute)) continue;
+                if (!File.Exists(absolute))
+                {
+                    reason = "not a package import";
+                    return false;
+                }
+                resolvedPath = absolute;
+                packageRoot = candidate;
+                return true;
+            }
+
+            reason = "not a package import";
+            return false;
+        }
+
+        var currentDirectory = Path.GetDirectoryName(Path.GetFullPath(currentFile))!;
+        var relativePath = Path.GetFullPath(Path.Combine(currentDirectory, importProject.Replace('/', Path.DirectorySeparatorChar)));
+        foreach (var candidate in packageRoots.Values.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (!IsSafeResolvedFile(candidate, relativePath)) continue;
+            if (!File.Exists(relativePath))
+            {
+                reason = "not a package import";
+                return false;
+            }
+            resolvedPath = relativePath;
+            packageRoot = candidate;
+            return true;
+        }
+
+        reason = "not a package import";
+        return false;
+    }
+
     private static bool IsActive(
         CapabilityKind capability,
         string relativePath,
         string packageId,
         string libraryPath,
         HashSet<string> analyzerPackages,
+        IReadOnlySet<string> selectedAnalyzers,
         string packageRoot,
         JsonElement targetAssets,
         SurfaceContextKind context,
         string targetFramework,
         IReadOnlyList<GeneratedImport> generatedImports,
-        IReadOnlySet<string> generatedImportSources,
         IReadOnlySet<string> expectedGeneratedImportSources,
         bool isMultiTargetingProject,
         ProjectLanguage projectLanguage,
@@ -721,6 +1187,13 @@ public static class ResolvedGraphClassifier
         {
             var reachableBuildAsset = ContainsBuildAsset(targetAssets, capability, relativePath, incomplete, libraryKey);
             var fullAsset = NormalizeText(Path.Combine(packageRoot, relativePath.Replace('/', Path.DirectorySeparatorChar)));
+            var hasMatchingImport = generatedImports.Any(import =>
+            {
+                var normalizedImport = NormalizeText(import.Project);
+                var referencesAsset = string.Equals(normalizedImport, fullAsset, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(normalizedImport, "$(NuGetPackageRoot)/" + NormalizeText(libraryPath) + "/" + relativePath, StringComparison.OrdinalIgnoreCase);
+                return IsExpectedGeneratedImportSource(import.SourceFile, relativePath, expectedGeneratedImportSources) && referencesAsset;
+            });
             var imported = generatedImports.Any(import =>
             {
                 var normalizedImport = NormalizeText(import.Project);
@@ -728,7 +1201,7 @@ public static class ResolvedGraphClassifier
                     string.Equals(normalizedImport, "$(NuGetPackageRoot)/" + NormalizeText(libraryPath) + "/" + relativePath, StringComparison.OrdinalIgnoreCase);
                 return IsExpectedGeneratedImportSource(import.SourceFile, relativePath, expectedGeneratedImportSources) &&
                        referencesAsset &&
-                         import.AppliesTo(context, targetFramework, capability == CapabilityKind.BuildMultiTargeting);
+                       import.AppliesTo(context, targetFramework, capability == CapabilityKind.BuildMultiTargeting);
             });
             var hasWrongPhaseImport = generatedImports.Any(import =>
             {
@@ -737,15 +1210,9 @@ public static class ResolvedGraphClassifier
                     string.Equals(normalizedImport, "$(NuGetPackageRoot)/" + NormalizeText(libraryPath) + "/" + relativePath, StringComparison.OrdinalIgnoreCase);
                 return referencesAsset && !IsExpectedGeneratedImportSource(import.SourceFile, relativePath, expectedGeneratedImportSources);
             });
-            var importSource = Path.GetExtension(relativePath);
-            var hasGeneratedImportSource = expectedGeneratedImportSources.Count == 0
-                ? generatedImportSources.Any(source => source.EndsWith(importSource, StringComparison.OrdinalIgnoreCase))
-                : expectedGeneratedImportSources
-                    .Where(source => source.EndsWith(importSource, StringComparison.OrdinalIgnoreCase))
-                    .Any(generatedImportSources.Contains);
             if (!imported &&
                 (hasWrongPhaseImport ||
-                 (reachableBuildAsset && RequiresGeneratedImportEvidence(capability, relativePath, isMultiTargetingProject) && !hasGeneratedImportSource)))
+                 (reachableBuildAsset && !hasMatchingImport && RequiresGeneratedImportEvidence(capability, relativePath, isMultiTargetingProject))))
             {
                 reason = $"Required generated NuGet import evidence is missing or phase-mismatched: {relativePath}.";
                 incomplete.Add($"{libraryKey}: {reason}");
@@ -757,7 +1224,7 @@ public static class ResolvedGraphClassifier
         var assetName = relativePath.Replace('\\', '/');
         return capability switch
         {
-            CapabilityKind.CompilerExtension => IsCompilerExtensionActive(assetName, projectLanguage, analyzerPackages, packageId, incomplete, libraryKey),
+            CapabilityKind.CompilerExtension => IsCompilerExtensionActive(assetName, projectLanguage, targetFramework, analyzerPackages, selectedAnalyzers, packageId, incomplete, libraryKey),
             CapabilityKind.CompileSourceInjection => IsCompileContentFile(targetAssets, assetName, projectLanguage, incomplete, libraryKey),
             CapabilityKind.NativeRuntime => ContainsAsset(targetAssets, "native", assetName, incomplete, libraryKey) || ContainsAsset(targetAssets, "runtime", assetName, incomplete, libraryKey),
             _ => false
@@ -876,59 +1343,212 @@ public static class ResolvedGraphClassifier
         value.StartsWith("netstandard", StringComparison.OrdinalIgnoreCase) ||
         value.StartsWith("netcoreapp", StringComparison.OrdinalIgnoreCase);
 
-    private static bool IsConventionalAnalyzerPath(string path, ProjectLanguage language)
+    private static HashSet<string> SelectAnalyzerPaths(
+        IReadOnlyList<string> files,
+        ProjectLanguage projectLanguage,
+        string targetFramework,
+        HashSet<string> analyzerPackages,
+        string packageId,
+        string libraryKey,
+        List<string> incomplete)
     {
-        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (!Path.GetExtension(path).Equals(".dll", StringComparison.OrdinalIgnoreCase)) return false;
-        if (segments.Length < 3 || !segments[0].Equals("analyzers", StringComparison.OrdinalIgnoreCase) || !segments[1].Equals("dotnet", StringComparison.OrdinalIgnoreCase)) return false;
-        var selector = segments[2];
-        if (selector.Equals("cs", StringComparison.OrdinalIgnoreCase)) return language == ProjectLanguage.CSharp;
-        if (selector.Equals("vb", StringComparison.OrdinalIgnoreCase)) return language == ProjectLanguage.VisualBasic;
-        if (selector.Equals("fs", StringComparison.OrdinalIgnoreCase)) return language == ProjectLanguage.FSharp;
-        if (selector.StartsWith("roslyn", StringComparison.OrdinalIgnoreCase) && segments.Length >= 5)
+        var candidates = new List<(string Path, string? Language, Version? RoslynVersion, string? Framework)>();
+        foreach (var path in files)
         {
-            var roslynLanguage = segments[3];
-            if (roslynLanguage.Equals("cs", StringComparison.OrdinalIgnoreCase)) return language == ProjectLanguage.CSharp;
-            if (roslynLanguage.Equals("vb", StringComparison.OrdinalIgnoreCase)) return language == ProjectLanguage.VisualBasic;
-            if (roslynLanguage.Equals("fs", StringComparison.OrdinalIgnoreCase)) return language == ProjectLanguage.FSharp;
+            if (!path.StartsWith("analyzers/", StringComparison.OrdinalIgnoreCase) ||
+                !Path.GetExtension(path).Equals(".dll", StringComparison.OrdinalIgnoreCase) || IsAnalyzerSatellite(path))
+            {
+                continue;
+            }
+
+            if (!TryParseAnalyzerPath(path, out var language, out var roslynVersion, out var framework))
+            {
+                incomplete.Add($"{libraryKey}: analyzer applicability is unavailable for the resolved compiler-extension path.");
+                continue;
+            }
+
+            if (framework is not null && !AnalyzerFrameworkApplies(framework, targetFramework))
+            {
+                continue;
+            }
+
+            if (language is not null && projectLanguage != ProjectLanguage.Unknown &&
+                !language.Equals(ProjectLanguageCode(projectLanguage), StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (language is not null && projectLanguage == ProjectLanguage.Unknown)
+            {
+                continue;
+            }
+
+            if (analyzerPackages.Contains(packageId))
+            {
+                candidates.Add((path, language, roslynVersion, framework));
+            }
+        }
+
+        var selected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var group in candidates.GroupBy(candidate => candidate.Language ?? string.Empty, StringComparer.OrdinalIgnoreCase))
+        {
+            var versioned = group.Where(candidate => candidate.RoslynVersion is not null).ToArray();
+            var highest = versioned.Length == 0 ? null : versioned.Max(candidate => candidate.RoslynVersion);
+            foreach (var candidate in group)
+            {
+                if (highest is null ? candidate.RoslynVersion is null : candidate.RoslynVersion == highest)
+                {
+                    selected.Add(candidate.Path);
+                }
+            }
+        }
+
+        return selected;
+    }
+
+    private static bool TryParseAnalyzerPath(string path, out string? language, out Version? roslynVersion, out string? framework)
+    {
+        language = null;
+        roslynVersion = null;
+        framework = null;
+        var segments = path.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length < 3 || !segments[0].Equals("analyzers", StringComparison.OrdinalIgnoreCase) ||
+            !Path.GetExtension(path).Equals(".dll", StringComparison.OrdinalIgnoreCase))
+        {
             return false;
         }
 
-        return segments.Length == 3;
+        var index = 2;
+        if (segments[1].Equals("dotnet", StringComparison.OrdinalIgnoreCase))
+        {
+        }
+        else if (segments[1].Contains('.', StringComparison.Ordinal) &&
+                 (segments[1].StartsWith("net", StringComparison.OrdinalIgnoreCase) ||
+                  segments[1].StartsWith("netstandard", StringComparison.OrdinalIgnoreCase) ||
+                  segments[1].StartsWith("netcoreapp", StringComparison.OrdinalIgnoreCase)))
+        {
+            framework = segments[1];
+        }
+        else
+        {
+            return false;
+        }
+
+        if (index < segments.Length - 1 && segments[index].StartsWith("roslyn", StringComparison.OrdinalIgnoreCase))
+        {
+            var versionText = segments[index]["roslyn".Length..];
+            if (!Version.TryParse(versionText, out roslynVersion)) return false;
+            index++;
+        }
+
+        if (index < segments.Length - 1 && IsAnalyzerLanguage(segments[index]))
+        {
+            language = segments[index].ToLowerInvariant();
+            index++;
+        }
+
+        return index == segments.Length - 1;
     }
+
+    private static bool AnalyzerFrameworkApplies(string required, string target)
+    {
+        if (!TryParseFrameworkVersion(required, out var requiredKind, out var requiredVersion) ||
+            !TryParseFrameworkVersion(target, out var targetKind, out var targetVersion))
+        {
+            return false;
+        }
+
+        if (requiredKind.Equals("netstandard", StringComparison.OrdinalIgnoreCase))
+        {
+            return targetKind.StartsWith("net", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return requiredKind.Equals(targetKind, StringComparison.OrdinalIgnoreCase) && targetVersion >= requiredVersion;
+    }
+
+    private static bool TryParseFrameworkVersion(string value, out string kind, out Version version)
+    {
+        kind = string.Empty;
+        version = new Version(0, 0);
+        var separator = -1;
+        for (var index = 0; index < value.Length; index++)
+        {
+            if (!char.IsDigit(value[index])) continue;
+            separator = index;
+            break;
+        }
+
+        if (separator <= 0 || !Version.TryParse(value[separator..], out var parsedVersion) || parsedVersion is null) return false;
+        kind = value[..separator];
+        version = parsedVersion;
+        return true;
+    }
+
+    private static bool IsAnalyzerLanguage(string value) =>
+        value.Equals("cs", StringComparison.OrdinalIgnoreCase) ||
+        value.Equals("vb", StringComparison.OrdinalIgnoreCase) ||
+        value.Equals("fs", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsAnalyzerSatellite(string path) =>
+        path.EndsWith(".resources.dll", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsCompilerExtensionActive(
         string path,
         ProjectLanguage language,
+        string targetFramework,
         HashSet<string> analyzerPackages,
+        IReadOnlySet<string> selectedAnalyzers,
         string packageId,
         List<string> incomplete,
         string libraryKey)
     {
-        var languageSpecific = IsLanguageSpecificAnalyzerPath(path);
-        if (languageSpecific && language == ProjectLanguage.Unknown)
+        if (!Path.GetExtension(path).Equals(".dll", StringComparison.OrdinalIgnoreCase))
         {
-            incomplete.Add($"{libraryKey}: consuming project language is required to determine analyzer applicability for {path}.");
             return false;
         }
 
-        return IsConventionalAnalyzerPath(path, language) && analyzerPackages.Contains(packageId);
-    }
+        if (IsAnalyzerSatellite(path))
+        {
+            return false;
+        }
 
-    private static bool IsLanguageSpecificAnalyzerPath(string path)
-    {
-        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (segments.Length < 4 || !segments[0].Equals("analyzers", StringComparison.OrdinalIgnoreCase) || !segments[1].Equals("dotnet", StringComparison.OrdinalIgnoreCase)) return false;
-        var selector = segments[2];
-        if (selector.Equals("cs", StringComparison.OrdinalIgnoreCase) || selector.Equals("vb", StringComparison.OrdinalIgnoreCase) || selector.Equals("fs", StringComparison.OrdinalIgnoreCase)) return true;
-        return selector.StartsWith("roslyn", StringComparison.OrdinalIgnoreCase) &&
-            (segments[3].Equals("cs", StringComparison.OrdinalIgnoreCase) || segments[3].Equals("vb", StringComparison.OrdinalIgnoreCase) || segments[3].Equals("fs", StringComparison.OrdinalIgnoreCase));
+        if (!TryParseAnalyzerPath(path, out var analyzerLanguage, out _, out var framework))
+        {
+            incomplete.Add($"{libraryKey}: analyzer applicability is unavailable for the resolved compiler-extension path.");
+            return false;
+        }
+
+        if (framework is not null && !AnalyzerFrameworkApplies(framework, targetFramework))
+        {
+            return false;
+        }
+
+        var languageSpecific = analyzerLanguage is not null;
+        if (languageSpecific && language == ProjectLanguage.Unknown)
+        {
+            incomplete.Add($"{libraryKey}: consuming project language is required to determine compiler-extension applicability.");
+            return false;
+        }
+
+        if (!analyzerPackages.Contains(packageId) ||
+            (analyzerLanguage is not null && !analyzerLanguage.Equals(ProjectLanguageCode(language), StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        return selectedAnalyzers.Contains(path);
     }
 
     private static bool IsCompileContentFile(JsonElement targetAssets, string assetName, ProjectLanguage projectLanguage, List<string> incomplete, string libraryKey)
     {
-        if (!targetAssets.TryGetProperty("contentFiles", out var contentFiles) || contentFiles.ValueKind != JsonValueKind.Object)
+        if (!targetAssets.TryGetProperty("contentFiles", out var contentFiles))
         {
+            return false;
+        }
+
+        if (contentFiles.ValueKind != JsonValueKind.Object)
+        {
+            incomplete.Add($"{libraryKey}: contentFiles metadata has an unsupported shape.");
             return false;
         }
 
@@ -1020,8 +1640,7 @@ public static class ResolvedGraphClassifier
             return true;
         }
 
-        if (normalized.StartsWith("contentFiles/", StringComparison.OrdinalIgnoreCase) &&
-            (extension.Equals(".cs", StringComparison.OrdinalIgnoreCase) || extension.Equals(".vb", StringComparison.OrdinalIgnoreCase) || extension.Equals(".fs", StringComparison.OrdinalIgnoreCase) || extension.Equals(".fsx", StringComparison.OrdinalIgnoreCase)))
+        if (normalized.StartsWith("contentFiles/", StringComparison.OrdinalIgnoreCase))
         {
             capability = CapabilityKind.CompileSourceInjection;
             return true;
@@ -1111,6 +1730,11 @@ public static class ResolvedGraphClassifier
 
     private static ParsedCondition ParseCondition(string expression, string importProject)
     {
+        if (!IsConditionWithinLimits(expression))
+        {
+            return ParsedCondition.Unknown("the condition exceeds the supported resource limits");
+        }
+
         var normalized = StripOuterParentheses(expression.Trim());
         if (normalized.Length == 0)
         {
@@ -1144,7 +1768,7 @@ public static class ResolvedGraphClassifier
                 return ParsedCondition.Known(new ConstantCondition(true));
             }
 
-            return ParsedCondition.Unknown($"property '{property}' is outside the supported condition grammar");
+            return ParsedCondition.Unknown("the condition references an unsupported property");
         }
 
         var exists = ExistsCondition.Match(normalized);
@@ -1172,7 +1796,7 @@ public static class ResolvedGraphClassifier
             var parsed = ParseCondition(expression, importProject);
             if (!parsed.IsKnown)
             {
-                return ParsedCondition.Unknown($"subexpression '{expression}' is unproven: {parsed.Reason}");
+                return ParsedCondition.Unknown($"a subexpression is unproven: {parsed.Reason}");
             }
 
             combined = combined is null ? parsed.Node : combine(combined, parsed.Node!);
@@ -1193,7 +1817,7 @@ public static class ResolvedGraphClassifier
             if (suffix.Contains("$(", StringComparison.Ordinal) ||
                 !project.EndsWith('/' + suffix, StringComparison.OrdinalIgnoreCase))
             {
-                reason = "Exists(...) is not the standard resolved-package-file guard";
+                reason = "the Exists expression is not the standard resolved-package-file guard";
                 return false;
             }
 
@@ -1211,8 +1835,48 @@ public static class ResolvedGraphClassifier
             return true;
         }
 
-        reason = "Exists(...) is supported only for the standard resolved-package-file guard";
+        reason = "the Exists expression is supported only for the standard resolved-package-file guard";
         return false;
+    }
+
+    private static bool IsConditionWithinLimits(string expression)
+    {
+        if (expression.Length > MaxConditionLength) return false;
+        var depth = 0;
+        var tokens = 0;
+        var quote = '\0';
+        foreach (var character in expression)
+        {
+            if (quote != '\0')
+            {
+                if (character == quote) quote = '\0';
+                continue;
+            }
+
+            if (character is '\'' or '"')
+            {
+                quote = character;
+                continue;
+            }
+
+            if (character == '(')
+            {
+                if (++depth > MaxConditionDepth) return false;
+                tokens++;
+            }
+            else if (character == ')')
+            {
+                if (--depth < 0) return false;
+                tokens++;
+            }
+            else if (char.IsLetterOrDigit(character) || character is '_' or '=' or '!')
+            {
+                tokens++;
+                if (tokens > MaxConditionTokens) return false;
+            }
+        }
+
+        return quote == '\0' && depth == 0 && tokens <= MaxConditionTokens;
     }
 
     private static string StripOuterParentheses(string expression)
@@ -1480,11 +2144,18 @@ public static class ResolvedGraphClassifier
     {
         var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         var current = new DirectoryInfo(includeLeaf ? Path.GetDirectoryName(path)! : path);
-        while (current is not null && !string.Equals(current.FullName.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), fullRoot, StringComparison.OrdinalIgnoreCase))
+        var reachedRoot = false;
+        while (current is not null)
         {
             if ((current.Attributes & FileAttributes.ReparsePoint) != 0 || current.LinkTarget is not null)
             {
                 return true;
+            }
+
+            if (string.Equals(current.FullName.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), fullRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                reachedRoot = true;
+                break;
             }
 
             current = current.Parent;
@@ -1496,7 +2167,7 @@ public static class ResolvedGraphClassifier
             return (file.Attributes & FileAttributes.ReparsePoint) != 0 || file.LinkTarget is not null;
         }
 
-        return false;
+        return !reachedRoot;
     }
 
     private static bool ValidateCompilerMetadata(string path, out string reason)

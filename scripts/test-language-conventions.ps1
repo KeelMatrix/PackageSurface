@@ -29,12 +29,18 @@ foreach ($case in $cases) {
     foreach ($language in @('cs', 'vb', 'fs')) {
         $suffix = if ($language -eq 'cs') { 'CSharp' } elseif ($language -eq 'vb') { 'VisualBasic' } else { 'FSharp' }
         $entry = Get-Entry $result.entries "analyzers/dotnet/$language/KeelMatrix.Phase0.$suffix.dll"
-        $expected = $language -eq $case.Language
+        $expected = $language -eq $case.Language -and -not ($language -eq 'cs' -and $case.Language -eq 'cs')
         if ([bool]$entry.active -ne $expected) { throw "$($case.Name) analyzer language '$language' expected active=$expected." }
     }
 
     $optional = Get-Entry $result.entries 'analyzers/dotnet/roslyn4.0/cs/KeelMatrix.Phase0.OptionalCSharp.dll'
     if ([bool]$optional.active -ne ($case.Language -eq 'cs')) { throw "$($case.Name) optional analyzer applicability was incorrect." }
+    $legacy = Get-Entry $result.entries 'analyzers/dotnet/roslyn3.8/cs/KeelMatrix.Phase0.LegacyCSharp.dll'
+    if ($legacy.active) { throw "$($case.Name) selected an older Roslyn analyzer alongside the highest applicable version." }
+    $satellite = Get-Entry $result.entries 'analyzers/dotnet/cs/KeelMatrix.Phase0.CSharp.resources.dll'
+    if ($satellite.active) { throw "$($case.Name) classified an analyzer satellite as active." }
+    $frameworkOnly = Get-Entry $result.entries 'analyzers/net9.0/KeelMatrix.Phase0.FrameworkOnly.dll'
+    if ($frameworkOnly.active) { throw "$($case.Name) classified an analyzer for an unavailable target framework as active." }
     $any = Get-Entry $result.entries 'contentFiles/any/any/Active.cs'
     if (-not $any.active) { throw "$($case.Name) codeLanguage=any content was not active." }
     foreach ($language in @('cs', 'vb', 'fs')) {

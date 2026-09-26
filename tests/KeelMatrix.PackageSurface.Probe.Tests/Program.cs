@@ -125,6 +125,10 @@ static void RunGeneratedImportConditionRegression(string baselineAssets)
     var buildMultiRoot = Path.Combine(packageFolder, buildMultiLibrary.GetProperty("path").GetString()!.Replace('/', Path.DirectorySeparatorChar));
     var buildMultiPath = "buildMultiTargeting/KeelMatrix.Phase0.BuildMultiTargeting.targets";
     var buildMultiImport = Path.Combine(buildMultiRoot, buildMultiPath.Replace('/', Path.DirectorySeparatorChar));
+    var baselineGeneratedTargetsPath = Path.Combine(Path.GetDirectoryName(baselineAssets)!, generatedTargetsFileName);
+    var baselineGeneratedPropsPath = Path.Combine(Path.GetDirectoryName(baselineAssets)!, generatedPropsFileName);
+    var baselineGeneratedTargets = File.ReadAllText(baselineGeneratedTargetsPath);
+    var baselineGeneratedProps = File.ReadAllText(baselineGeneratedPropsPath);
 
     var scratch = Path.Combine(Path.GetTempPath(), "packagesurface-condition-tests-" + Guid.NewGuid().ToString("N"));
     Directory.CreateDirectory(Path.Combine(scratch, "obj"));
@@ -132,7 +136,8 @@ static void RunGeneratedImportConditionRegression(string baselineAssets)
     try
     {
         File.Copy(baselineAssets, Path.Combine(scratch, "obj", "project.assets.json"));
-        File.WriteAllText(Path.Combine(scratch, "obj", generatedTargetsFileName), "<Project />");
+        File.WriteAllText(Path.Combine(scratch, "obj", generatedPropsFileName), baselineGeneratedProps);
+        File.WriteAllText(Path.Combine(scratch, "obj", generatedTargetsFileName), baselineGeneratedTargets);
         AssertTarget("unconditional import", CreateImports(buildPropsImport, null, null), true, null, allTargetFrameworks);
         AssertTarget("TFM equality", CreateImports(buildPropsImport, "'$(TargetFramework)' == 'net8.0'", null), true, null, "net8.0");
         AssertTarget("TFM inequality", CreateImports(buildPropsImport, "'$(TargetFramework)' != 'net8.0'", null), true, null, nonNet8TargetFrameworks);
@@ -145,12 +150,12 @@ static void RunGeneratedImportConditionRegression(string baselineAssets)
         AssertTarget("standard Exists guard", CreateImports(buildPropsImport, null, $"Exists('{buildPropsMacroPath}')"), true, null, allTargetFrameworks);
         AssertTarget("ImportGroup and Import conditions", CreateImports(buildPropsImport, "'$(ExcludeRestorePackageImports)' != 'true'", "'$(TargetFramework)' == 'net8.0'"), true, null, "net8.0");
         AssertTarget("nested groups", CreateImports(buildPropsImport, "'$(TargetFramework)' == 'net8.0'", "'$(ExcludeRestorePackageImports)' != 'true'", nested: true), true, null, "net8.0");
-        AssertTarget("arbitrary property", CreateImports(buildPropsImport, "'$(Configuration)' == 'Debug'", null), false, "Configuration", string.Empty);
-        AssertTarget("additional arbitrary clause", CreateImports(buildPropsImport, "'$(TargetFramework)' == 'net8.0' AND '$(Configuration)' == 'Debug'", null), false, "Configuration", string.Empty);
-        AssertTarget("nested arbitrary condition", CreateImports(buildPropsImport, "'$(Configuration)' == 'Debug'", null, nested: true), false, "Configuration", string.Empty);
-        AssertTarget("unproven Exists", CreateImports(buildPropsImport, null, "Exists('$(SomeRoot)/unknown.props')"), false, "Exists(...)", string.Empty);
+        AssertTarget("arbitrary property", CreateImports(buildPropsImport, "'$(Configuration)' == 'Debug'", null), false, "unsupported property", string.Empty);
+        AssertTarget("additional arbitrary clause", CreateImports(buildPropsImport, "'$(TargetFramework)' == 'net8.0' AND '$(Configuration)' == 'Debug'", null), false, "unsupported property", string.Empty);
+        AssertTarget("nested arbitrary condition", CreateImports(buildPropsImport, "'$(Configuration)' == 'Debug'", null, nested: true), false, "unsupported property", string.Empty);
+        AssertTarget("unproven Exists", CreateImports(buildPropsImport, null, "Exists('$(SomeRoot)/unknown.props')"), false, "Exists expression", string.Empty);
 
-        File.WriteAllText(Path.Combine(scratch, "obj", generatedPropsFileName), "<Project />");
+        File.WriteAllText(Path.Combine(scratch, "obj", generatedPropsFileName), baselineGeneratedProps);
         AssertProject("empty TFM project context", CreateImports(buildMultiImport, "'$(TargetFramework)' == ''", null), complete: true, active: true, buildMultiPath);
 
         CreateImports(buildPropsImport, "'$(TargetFramework)' == 'net8.0' AND '$(Configuration)' == 'Debug'", null).Save(Path.Combine(scratch, "obj", generatedPropsFileName));
@@ -192,7 +197,8 @@ static void RunGeneratedImportConditionRegression(string baselineAssets)
 
     void AssertTarget(string scenario, XDocument generatedImports, bool complete, string? reason, string activeTargetFrameworks)
     {
-        generatedImports.Save(Path.Combine(scratch, "obj", generatedPropsFileName));
+        var props = ComposeScenario(baselineGeneratedProps, generatedImports, buildPropsPath);
+        props.Save(Path.Combine(scratch, "obj", generatedPropsFileName));
         var analyzed = ResolvedGraphClassifier.Analyze(Path.Combine(scratch, "obj", "project.assets.json"), scratch);
         var entries = analyzed.Entries.Where(entry =>
             entry.Context == SurfaceContextKind.Target &&
@@ -210,7 +216,8 @@ static void RunGeneratedImportConditionRegression(string baselineAssets)
 
     void AssertProject(string scenario, XDocument generatedImports, bool complete, bool active, string relativePath)
     {
-        generatedImports.Save(Path.Combine(scratch, "obj", generatedTargetsFileName));
+        var targets = ComposeScenario(baselineGeneratedTargets, generatedImports, buildMultiPath);
+        targets.Save(Path.Combine(scratch, "obj", generatedTargetsFileName));
         var analyzed = ResolvedGraphClassifier.Analyze(Path.Combine(scratch, "obj", "project.assets.json"), scratch);
         var entries = analyzed.Entries.Where(entry =>
             entry.Context == SurfaceContextKind.Project &&
@@ -221,6 +228,27 @@ static void RunGeneratedImportConditionRegression(string baselineAssets)
         {
             throw new InvalidOperationException($"Project import condition regression failed for {scenario}: complete={analyzed.IsComplete}, active={entries.FirstOrDefault()?.Active}, reasons={string.Join("; ", analyzed.IncompleteReasons)}");
         }
+    }
+
+    static XDocument ComposeScenario(string baseline, XDocument scenario, string packageRelativePath)
+    {
+        var document = XDocument.Parse(baseline, LoadOptions.PreserveWhitespace);
+        var normalizedPath = packageRelativePath.Replace('\\', '/');
+        foreach (var import in document.Descendants().Where(element => element.Name.LocalName.Equals("Import", StringComparison.OrdinalIgnoreCase)).ToArray())
+        {
+            var project = import.Attribute("Project")?.Value?.Replace('\\', '/');
+            if (project?.Contains(normalizedPath, StringComparison.OrdinalIgnoreCase) == true)
+            {
+                import.Remove();
+            }
+        }
+
+        foreach (var child in scenario.Root!.Elements())
+        {
+            document.Root!.Add(new XElement(child));
+        }
+
+        return document;
     }
 
     void AssertTargetExitCode(string projectRoot, int expected)

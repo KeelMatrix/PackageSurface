@@ -46,6 +46,7 @@ if (!Options.HelpText.Contains("passes no analyzed dependency identity or conten
 RunClassifierHardeningTests();
 RunTelemetryStateMachineTests();
 RunParserMessageRegression();
+RunBaselineContractRegression();
 
 Console.WriteLine($"PASS: diagnostics {string.Join(", ", expected)}");
 return 0;
@@ -105,6 +106,7 @@ static void RunClassifierHardeningTests()
         RunMalformedAssetsShapeRegression(assets, scratch);
         RunDiagnosticPathLeakRegression(scratch);
         RunApplicabilityHardeningRegressions(scratch);
+        RunNestedImportRegression(scratch);
 
         var traversalAssets = Path.Combine(obj, "traversal.assets.json");
         var traversalFiles = new[] { "../escape.props" };
@@ -125,6 +127,8 @@ static void RunClassifierHardeningTests()
         File.WriteAllText(oversized, new string('x', 16 * 1024 * 1024 + 1));
         var oversizedResult = ResolvedGraphClassifier.Analyze(oversized, scratch, strictContent: false);
         Require(!oversizedResult.IsComplete, "Oversized metadata was not rejected as incomplete.");
+        Require(CommandLine.Run(new[] { "scan", oversized, "--format", "json", "--no-telemetry" }) == 2,
+            "The public CLI did not fail closed before materializing oversized restore input.");
 
         var largeAssets = Path.Combine(obj, "large.assets.json");
         const int packageCount = 300;
@@ -284,6 +288,42 @@ static void RunParserMessageRegression()
         "Missing option value lost its safe specific parser message or echoed input text.");
 }
 
+static void RunBaselineContractRegression()
+{
+    var scratch = Path.Combine(Path.GetTempPath(), "packagesurface-baseline-contract-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(scratch);
+    try
+    {
+        var path = Path.Combine(scratch, "package-surface.json");
+        var sibling = Entry(CapabilityKind.BuildTargets, "build/Library.targets", new string('a', 64)) with { Project = "../Library/Library.csproj" };
+        var snapshot = new SurfaceSnapshot(new[] { sibling }, Array.Empty<string>(), false, 1);
+        BaselineDocument.Write(path, snapshot);
+        var roundTrip = BaselineDocument.Read(path);
+        Require(roundTrip.Entries.Single().Project == "../Library/Library.csproj", "A sibling solution project identity did not round-trip through the baseline contract.");
+
+        var prior = File.ReadAllText(path);
+        var invalid = snapshot with { Entries = new[] { sibling with { Project = Path.Combine(scratch, "absolute.csproj") } } };
+        try
+        {
+            BaselineDocument.Write(path, invalid);
+            throw new InvalidOperationException("An invalid project identity was written to the baseline.");
+        }
+        catch (InvalidDataException)
+        {
+            Require(File.ReadAllText(path) == prior, "A rejected baseline write did not preserve the previous baseline.");
+        }
+
+        var project = Path.Combine(scratch, "Selected.csproj");
+        File.WriteAllText(project, "<Project />");
+        Require(CommandLine.Run(new[] { "scan", Path.Combine(scratch, "missing.sln"), "--project", project, "--no-telemetry" }) == 2,
+            "--project bypassed validation of a missing primary input.");
+    }
+    finally
+    {
+        if (Directory.Exists(scratch)) Directory.Delete(scratch, recursive: true);
+    }
+}
+
 static void RunLanguageConventionRegression(string scratch)
 {
     var analyzerCases = new[]
@@ -312,6 +352,7 @@ static void RunLanguageConventionRegression(string scratch)
     var contentCases = new[]
     {
         (Language: "cs", Project: "Test.csproj", Path: "contentFiles/cs/any/active.cs", CodeLanguage: "cs", BuildAction: "Compile", Active: true),
+        (Language: "preprocessed", Project: "Test.csproj", Path: "contentFiles/cs/any/active.cs.pp", CodeLanguage: "cs", BuildAction: "Compile", Active: true),
         (Language: "vb", Project: "Test.vbproj", Path: "contentFiles/vb/any/active.vb", CodeLanguage: "vb", BuildAction: "Compile", Active: true),
         (Language: "fs", Project: "Test.fsproj", Path: "contentFiles/fs/any/active.fs", CodeLanguage: "fs", BuildAction: "Compile", Active: true),
         (Language: "any", Project: "Test.vbproj", Path: "contentFiles/any/any/active.vb", CodeLanguage: "any", BuildAction: "Compile", Active: true),
@@ -398,6 +439,46 @@ static void RunApplicabilityHardeningRegressions(string scratch)
     RunReparsePointRegression(scratch);
 }
 
+static void RunNestedImportRegression(string scratch)
+{
+    var root = Path.Combine(scratch, "nested-imports");
+    var cache = Path.Combine(root, "cache");
+    var obj = Path.Combine(root, "obj");
+    Directory.CreateDirectory(obj);
+    var assets = Path.Combine(obj, "project.assets.json");
+    var packageKey = "Nested.Package/1.0.0";
+    var packageRoot = Path.Combine(cache, "Nested.Package", "1.0.0");
+    var packageTargets = "build/Nested.Package.targets";
+    var helperTargets = "build/Helper.targets";
+    WriteAssets(assets, cache, "Nested.Package", new[] { packageTargets, helperTargets }, createFiles: true);
+    var document = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
+    document["targets"]!["net8.0"]![packageKey]!["build"] = new JsonObject { [packageTargets] = new JsonObject() };
+    File.WriteAllText(assets, document.ToJsonString());
+    File.WriteAllText(Path.Combine(packageRoot, packageTargets.Replace('/', Path.DirectorySeparatorChar)), "<Project><Import Project=\"Helper.targets\" /></Project>");
+    File.WriteAllText(Path.Combine(packageRoot, helperTargets.Replace('/', Path.DirectorySeparatorChar)), "<Project><Target Name=\"Helper\" /></Project>");
+    File.WriteAllText(Path.Combine(obj, "Test.csproj.nuget.g.targets"), $"<Project><Import Project=\"$(NuGetPackageRoot)/Nested.Package/1.0.0/{packageTargets}\" /></Project>");
+
+    var baseline = ResolvedGraphClassifier.Analyze(assets, root, strictContent: true);
+    var helper = baseline.Entries.Single(entry => entry.PackageRelativePath.Equals(helperTargets, StringComparison.OrdinalIgnoreCase));
+    Require(baseline.IsComplete && helper.Active && helper.Sha256 is not null, $"Nested helper import was not active and strictly fingerprinted. active={helper.Active}; hash={helper.Sha256}; complete={baseline.IsComplete}; reasons={string.Join(" | ", baseline.IncompleteReasons)}");
+
+    File.AppendAllText(Path.Combine(packageRoot, helperTargets.Replace('/', Path.DirectorySeparatorChar)), "<!-- changed -->");
+    var changed = ResolvedGraphClassifier.Analyze(assets, root, strictContent: true);
+    Require(DiffEngine.Compare(baseline.Entries.Select(BaselineEntry.From).ToArray(), changed.Entries, strictContent: true).Any(diagnostic => diagnostic.Id == "PS005"),
+        "A nested helper-only content change was not detected.");
+
+    File.WriteAllText(Path.Combine(packageRoot, helperTargets.Replace('/', Path.DirectorySeparatorChar)), "<Project><Import Project=\"Nested.Package.targets\" /></Project>");
+    var cycle = ResolvedGraphClassifier.Analyze(assets, root, strictContent: false);
+    Require(cycle.IsComplete && cycle.Entries.Any(entry => entry.PackageRelativePath.Equals(helperTargets, StringComparison.OrdinalIgnoreCase) && entry.Active),
+        "A bounded static import cycle was not handled deterministically.");
+
+    File.WriteAllText(Path.Combine(packageRoot, packageTargets.Replace('/', Path.DirectorySeparatorChar)), "<Project><Import Project=\"$(SensitiveDynamicImportMarker)\" /></Project>");
+    var dynamic = ResolvedGraphClassifier.Analyze(assets, root, strictContent: false);
+    Require(!dynamic.IsComplete && dynamic.IncompleteReasons.Any(reason => reason.Contains("unsupported static import target", StringComparison.OrdinalIgnoreCase)) &&
+        dynamic.IncompleteReasons.All(reason => !reason.Contains("SensitiveDynamicImportMarker", StringComparison.OrdinalIgnoreCase)),
+        "An unsupported dynamic nested import was not fail-closed without disclosing its expression.");
+}
+
 static void RunProjectAggregationRegression(string scratch)
 {
     var root = Path.Combine(scratch, "project-aggregation");
@@ -435,6 +516,7 @@ static void RunProjectAggregationRegression(string scratch)
     File.WriteAllText(Path.Combine(obj, "Aggregate.csproj.nuget.g.targets"), "<Project />");
     var document = new JsonObject
     {
+        ["version"] = 3,
         ["targets"] = targets,
         ["libraries"] = libraries,
         ["packageFolders"] = new JsonObject { [cache] = new JsonObject() },
@@ -475,12 +557,35 @@ static void RunReparsePointRegression(string scratch)
             "A supported filesystem link escape was not rejected.");
     }
     catch (UnauthorizedAccessException) { }
-    catch (IOException) { }
-    catch (PlatformNotSupportedException) { }
+    catch (IOException) { Console.WriteLine("SKIP: leaf reparse-point regression is unavailable on this filesystem."); }
+    catch (PlatformNotSupportedException) { Console.WriteLine("SKIP: leaf reparse-point regression is unavailable on this platform."); }
     finally
     {
         if (File.Exists(outside)) File.Delete(outside);
     }
+
+    var rootLink = Path.Combine(scratch, "root-link");
+    var rootLinkCache = Path.Combine(rootLink, "cache");
+    var rootLinkObj = Path.Combine(rootLink, "obj");
+    Directory.CreateDirectory(rootLinkObj);
+    var rootLinkAssets = Path.Combine(rootLinkObj, "project.assets.json");
+    WriteAssets(rootLinkAssets, rootLinkCache, "RootLink.Package", new List<string> { "build/root.targets" });
+    var rootLinkPackage = Path.Combine(rootLinkCache, "RootLink.Package", "1.0.0");
+    var outsidePackage = Path.Combine(scratch, "outside-package");
+    Directory.CreateDirectory(Path.Combine(outsidePackage, "build"));
+    File.WriteAllText(Path.Combine(outsidePackage, "build", "root.targets"), "<Project />");
+    Directory.Delete(rootLinkPackage, recursive: true);
+    try
+    {
+        Directory.CreateSymbolicLink(rootLinkPackage, outsidePackage);
+        File.WriteAllText(Path.Combine(rootLinkObj, "Test.csproj.nuget.g.targets"), "<Project><Import Project=\"$(NuGetPackageRoot)/RootLink.Package/1.0.0/build/root.targets\" /></Project>");
+        var rootLinkResult = ResolvedGraphClassifier.Analyze(rootLinkAssets, rootLink, strictContent: true);
+        Require(!rootLinkResult.IsComplete && rootLinkResult.Entries.All(entry => entry.Sha256 is null),
+            "A rejected package-root link was opened or hashed through a fallback path.");
+    }
+    catch (UnauthorizedAccessException) { Console.WriteLine("SKIP: package-root reparse-point regression is unavailable on this filesystem."); }
+    catch (IOException) { Console.WriteLine("SKIP: package-root reparse-point regression is unavailable on this filesystem."); }
+    catch (PlatformNotSupportedException) { Console.WriteLine("SKIP: package-root reparse-point regression is unavailable on this platform."); }
 }
 
 static void RenameJsonProperty(JsonObject parent, string oldName, string newName)
@@ -578,6 +683,10 @@ static void RunDiagnosticPathLeakRegression(string scratch)
     var assets = Path.Combine(obj, "project.assets.json");
     WriteAssets(assets, cache, "MissingPackage", new List<string> { "build/missing.targets" });
     var absoluteMarker = Path.GetFullPath(root);
+    var document = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
+    document["targets"]!["net8.0"]!["MissingPackage/1.0.0"]!["build"] = new JsonObject { ["build/missing.targets"] = new JsonObject() };
+    File.WriteAllText(assets, document.ToJsonString());
+    File.WriteAllText(Path.Combine(obj, "Test.csproj.nuget.g.targets"), "<Project><Import Project=\"$(NuGetPackageRoot)/MissingPackage/1.0.0/build/missing.targets\" Condition=\"'$(SENSITIVE_CONDITION_MARKER)' == 'enabled'\" /></Project>");
     foreach (var format in new[] { "text", "json", "sarif" })
     {
         var output = new StringWriter(CultureInfo.InvariantCulture);
@@ -598,6 +707,8 @@ static void RunDiagnosticPathLeakRegression(string scratch)
 
         Require(!output.ToString().Contains(absoluteMarker, StringComparison.OrdinalIgnoreCase), $"{format} output disclosed an absolute cache marker.");
         Require(!error.ToString().Contains(absoluteMarker, StringComparison.OrdinalIgnoreCase), $"{format} stderr disclosed an absolute cache marker.");
+        Require(!output.ToString().Contains("SENSITIVE_CONDITION_MARKER", StringComparison.OrdinalIgnoreCase), $"{format} output disclosed an unsupported condition marker.");
+        Require(!error.ToString().Contains("SENSITIVE_CONDITION_MARKER", StringComparison.OrdinalIgnoreCase), $"{format} stderr disclosed an unsupported condition marker.");
     }
 }
 
@@ -626,7 +737,11 @@ static void RunMalformedAssetsShapeRegression(string assets, string scratch)
         ("target-array", root => root["targets"]!["net8.0"] = new JsonArray()),
         ("libraries-array", root => root["libraries"] = new JsonArray()),
         ("frameworks-array", root => root["project"]!["frameworks"] = new JsonArray()),
-        ("package-path-number", root => root["libraries"]!["XmlPackage/1.0.0"]!["path"] = 7)
+        ("package-path-number", root => root["libraries"]!["XmlPackage/1.0.0"]!["path"] = 7),
+        ("missing-declared-target", root => root["targets"]!.AsObject().Remove("net8.0")),
+        ("malformed-content-files", root => root["targets"]!["net8.0"]!["XmlPackage/1.0.0"]!["contentFiles"] = new JsonArray()),
+        ("missing-target-file-inventory", root => root["targets"]!["net8.0"]!["XmlPackage/1.0.0"]!["build"] = new JsonObject { ["build/unrepresented.targets"] = new JsonObject() }),
+        ("ambiguous-library-identity", root => root["libraries"]!.AsObject()["xmlpackage/1.0.0"] = root["libraries"]!["XmlPackage/1.0.0"]!.DeepClone())
     };
 
     foreach (var (name, mutate) in malformedShapes)
@@ -689,6 +804,7 @@ static void WriteAssets(string path, string cache, string packageId, IReadOnlyLi
     var frameworks = new JsonObject { ["net8.0"] = new JsonObject { ["dependencies"] = new JsonObject() } };
     var root = new JsonObject
     {
+        ["version"] = 3,
         ["targets"] = targets,
         ["libraries"] = libraries,
         ["packageFolders"] = packageFolders,
@@ -739,6 +855,7 @@ static void WriteAnalyzerAssets(string path, string cache, bool direct, string a
     };
     var root = new JsonObject
     {
+        ["version"] = 3,
         ["targets"] = new JsonObject { ["net8.0"] = target },
         ["libraries"] = libraries,
         ["packageFolders"] = new JsonObject { [cache] = new JsonObject() },
@@ -792,6 +909,7 @@ static void WriteLargeAssets(string path, string cache, int packageCount)
 
     var root = new JsonObject
     {
+        ["version"] = 3,
         ["targets"] = new JsonObject { ["net8.0"] = target },
         ["libraries"] = libraries,
         ["packageFolders"] = new JsonObject { [cache] = new JsonObject() },

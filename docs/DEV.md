@@ -42,3 +42,15 @@ The packable CLI requires the repository-root `icon.png`. Packing fails with an 
 No restore, MSBuild evaluation, dependency assembly loading, process execution, or package-feed access is performed by the classifier.
 
 The classifier accepts coherent SDK-style `project.assets.json` formats 1 through 4. Format 4 restore metadata is validated as a schema: project and restore framework maps must agree on effective framework and target alias, and project dependency groups must be arrays for declared frameworks. Incomplete or inconsistent evidence remains a `PS007` analysis failure.
+
+## Restore framework compatibility evidence
+
+Framework reconciliation uses the restore metadata's effective framework and target alias, so equivalent short and long monikers such as `netstandard2.0` and `.NETStandard,Version=v2.0` match case-insensitively. RID-qualified target names are split before matching. The installed-tool regression covers a real `net8.0;netstandard2.0` PackageReference restore through `scan`, `baseline`, and `check`.
+
+To record the native assets format emitted by a locally installed SDK for a zero-dependency `net8.0` project, run:
+
+```powershell
+pwsh -NoLogo -NoProfile -File scripts/test-assets-format.ps1 -SdkVersion 10.0.401
+```
+
+The pinned SDK remains `8.0.425`; the format-evidence script does not change repository SDK selection or commit generated assets.

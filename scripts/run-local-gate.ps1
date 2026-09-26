@@ -254,6 +254,9 @@ try {
     Invoke-GateStep 'installed hardening regressions' {
         & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-installed-hardening.ps1') -ToolPath $tool
     }
+    Invoke-GateStep 'framework moniker regressions' {
+        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-framework-moniker-regressions.ps1') -ToolPath $tool
+    }
     Invoke-GateStep 'installed tool version' { & $tool --version }
     Invoke-GateStep 'installed tool scan' { & $tool scan $singleProject --format json --no-telemetry }
     $zeroDependencyRoot = Join-Path $scratch 'zero-dependency-consumer'

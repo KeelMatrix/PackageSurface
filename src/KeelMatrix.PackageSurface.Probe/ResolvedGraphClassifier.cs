@@ -78,7 +78,10 @@ public static class ResolvedGraphClassifier
             var generatedImports = ReadGeneratedImports(root, assetsFile, projectRoot, selectedProjectPath, packageRoots, incomplete, budget, expectedGeneratedImportSources);
             ValidateGeneratedImportEvidence(generatedImports, packageRoots, libraries, incomplete);
             var projectLanguage = ReadProjectLanguage(root, projectRoot, selectedProjectPath, incomplete);
-            var isMultiTargetingProject = targets.EnumerateObject().Select(target => SplitTarget(target.Name).Tfm).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1;
+            var isMultiTargetingProject = targets.EnumerateObject()
+                .Select(target => NormalizeFrameworkMoniker(SplitTarget(target.Name).Tfm))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count() > 1;
 
             foreach (var target in targets.EnumerateObject())
             {
@@ -88,11 +91,11 @@ public static class ResolvedGraphClassifier
                 }
 
                 var (targetFrameworkKey, rid) = SplitTarget(target.Name);
-                var tfm = targetFrameworks.TryGetValue(targetFrameworkKey, out var effectiveTargetFramework)
+                var tfm = TryGetFrameworkValue(targetFrameworks, targetFrameworkKey, out var effectiveTargetFramework)
                     ? effectiveTargetFramework
                     : targetFrameworkKey;
-                var targetAlias = targetAliases.TryGetValue(targetFrameworkKey, out var alias) ? alias : targetFrameworkKey;
-                var targetDirectRules = directAssetRules.TryGetValue(targetFrameworkKey, out var rules)
+                var targetAlias = TryGetFrameworkValue(targetAliases, targetFrameworkKey, out var alias) ? alias : targetFrameworkKey;
+                var targetDirectRules = TryGetFrameworkValue(directAssetRules, targetFrameworkKey, out var rules)
                     ? rules
                     : new Dictionary<string, PackageAssetRule>(StringComparer.OrdinalIgnoreCase);
                 var directPackages = targetDirectRules.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -354,6 +357,127 @@ public static class ResolvedGraphClassifier
         }
 
         return result;
+    }
+
+    private static bool TryGetFrameworkValue<T>(IReadOnlyDictionary<string, T> values, string candidate, out T value)
+    {
+        if (values.TryGetValue(candidate, out value!))
+        {
+            return true;
+        }
+
+        foreach (var pair in values)
+        {
+            if (FrameworksMatch(pair.Key, candidate))
+            {
+                value = pair.Value;
+                return true;
+            }
+        }
+
+        value = default!;
+        return false;
+    }
+
+    private static bool TryGetFrameworkProperty(JsonElement frameworks, string candidate, out JsonProperty property)
+    {
+        foreach (var framework in frameworks.EnumerateObject())
+        {
+            if (FrameworksMatch(framework.Name, candidate) || FrameworkMetadataMatches(framework.Value, candidate))
+            {
+                property = framework;
+                return true;
+            }
+        }
+
+        property = default;
+        return false;
+    }
+
+    private static bool FrameworkMetadataMatches(JsonElement framework, string candidate)
+    {
+        if (framework.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        foreach (var propertyName in new[] { "framework", "targetAlias" })
+        {
+            if (framework.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String &&
+                FrameworksMatch(value.GetString()!, candidate))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool FrameworksMatch(string left, string right) =>
+        NormalizeFrameworkMoniker(left).Equals(NormalizeFrameworkMoniker(right), StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizeFrameworkMoniker(string value)
+    {
+        var normalized = value.Trim();
+        if (normalized.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        var comma = normalized.IndexOf(',');
+        if (comma >= 0)
+        {
+            var family = normalized[..comma].Trim().TrimStart('.');
+            var versionMarker = normalized.IndexOf("Version", comma + 1, StringComparison.OrdinalIgnoreCase);
+            if (versionMarker >= 0)
+            {
+                var version = normalized[(versionMarker + "Version".Length)..].Trim().TrimStart('=').Trim().TrimStart('v', 'V');
+                if (version.Length > 0)
+                {
+                    return CanonicalFrameworkMoniker(family, version);
+                }
+            }
+        }
+
+        var lower = normalized.ToLowerInvariant();
+        if (lower.StartsWith("netframework", StringComparison.Ordinal))
+        {
+            return CanonicalFrameworkMoniker("netframework", lower["netframework".Length..]);
+        }
+
+        if (lower.StartsWith("netcoreapp", StringComparison.Ordinal) || lower.StartsWith("netstandard", StringComparison.Ordinal))
+        {
+            return lower;
+        }
+
+        if (lower.StartsWith("net", StringComparison.Ordinal) && lower.Length > 3 && char.IsDigit(lower[3]))
+        {
+            var version = lower[3..];
+            var suffixStart = version.IndexOf('-');
+            var versionPart = suffixStart >= 0 ? version[..suffixStart] : version;
+            if (versionPart.Contains('.', StringComparison.Ordinal) && versionPart[0] == '4')
+            {
+                lower = "net" + versionPart.Replace(".", string.Empty, StringComparison.Ordinal) +
+                    (suffixStart >= 0 ? version[suffixStart..] : string.Empty);
+            }
+        }
+
+        return lower;
+    }
+
+    private static string CanonicalFrameworkMoniker(string family, string version)
+    {
+        var normalizedFamily = family.Trim().TrimStart('.').ToLowerInvariant();
+        var normalizedVersion = version.Trim().TrimStart('v', 'V');
+        return normalizedFamily switch
+        {
+            "netframework" => "net" + normalizedVersion.Replace(".", string.Empty, StringComparison.Ordinal),
+            "netcoreapp" when int.TryParse(normalizedVersion.Split('.')[0], out var major) && major >= 5 => "net" + normalizedVersion,
+            "netcoreapp" => "netcoreapp" + normalizedVersion,
+            "netstandard" => "netstandard" + normalizedVersion,
+            "net" or "dotnet" => "net" + normalizedVersion,
+            _ => normalizedFamily + normalizedVersion
+        };
     }
 
     private static bool ReadAnalyzersIncluded(JsonElement dependency, string packageId)
@@ -626,18 +750,18 @@ public static class ResolvedGraphClassifier
             {
                 foreach (var projectFramework in projectFrameworks.EnumerateObject())
                 {
-                    if (!TryGetPropertyIgnoreCase(restoreFrameworks, projectFramework.Name, out var restoreFramework))
+                    if (!TryGetFrameworkProperty(restoreFrameworks, projectFramework.Name, out var restoreFramework))
                     {
                         incomplete.Add($"Assets format 4 restore framework {projectFramework.Name} is missing.");
                         continue;
                     }
 
                     var projectEffective = projectFramework.Value.GetProperty("framework").GetString();
-                    var restoreEffective = restoreFramework.GetProperty("framework").GetString();
+                    var restoreEffective = restoreFramework.Value.GetProperty("framework").GetString();
                     var projectAlias = projectFramework.Value.GetProperty("targetAlias").GetString();
-                    var restoreAlias = restoreFramework.GetProperty("targetAlias").GetString();
-                    if (!string.Equals(projectEffective, restoreEffective, StringComparison.OrdinalIgnoreCase) ||
-                        !string.Equals(projectAlias, restoreAlias, StringComparison.OrdinalIgnoreCase))
+                    var restoreAlias = restoreFramework.Value.GetProperty("targetAlias").GetString();
+                    if (!FrameworksMatch(projectEffective!, restoreEffective!) ||
+                        !FrameworksMatch(projectAlias!, restoreAlias!))
                     {
                         incomplete.Add($"Assets format 4 framework {projectFramework.Name} disagrees between project and restore metadata.");
                     }
@@ -648,7 +772,7 @@ public static class ResolvedGraphClassifier
             {
                 foreach (var dependencyGroup in dependencyGroups.EnumerateObject())
                 {
-                    if (!TryGetPropertyIgnoreCase(projectFrameworks, dependencyGroup.Name, out _))
+                    if (!TryGetFrameworkProperty(projectFrameworks, dependencyGroup.Name, out _))
                     {
                         incomplete.Add($"Assets format 4 dependency group {dependencyGroup.Name} has no declared framework.");
                     }
@@ -712,7 +836,7 @@ public static class ResolvedGraphClassifier
         var targetNames = targets.EnumerateObject().Select(target => target.Name).ToArray();
         foreach (var framework in declaredFrameworks)
         {
-            if (!targetNames.Any(target => SplitTarget(target).Tfm.Equals(framework, StringComparison.OrdinalIgnoreCase)))
+            if (!targetNames.Any(target => FrameworksMatch(SplitTarget(target).Tfm, framework)))
             {
                 incomplete.Add($"Declared framework {framework} has no resolved target graph.");
             }
@@ -763,7 +887,7 @@ public static class ResolvedGraphClassifier
                 }
             }
 
-            foreach (var framework in frameworks.EnumerateObject().Where(framework => framework.Name.Equals(SplitTarget(target.Name).Tfm, StringComparison.OrdinalIgnoreCase)))
+            foreach (var framework in frameworks.EnumerateObject().Where(framework => FrameworksMatch(framework.Name, SplitTarget(target.Name).Tfm)))
             {
                 if (!framework.Value.TryGetProperty("dependencies", out var dependencies) || dependencies.ValueKind != JsonValueKind.Object) continue;
                 foreach (var dependency in dependencies.EnumerateObject())
@@ -1923,6 +2047,22 @@ public static class ResolvedGraphClassifier
             return true;
         }
 
+        if (requested.StartsWith("$(NuGetPackageRoot)", StringComparison.OrdinalIgnoreCase))
+        {
+            var suffix = requested["$(NuGetPackageRoot)".Length..].TrimStart('/');
+            var importSuffix = project.StartsWith("$(NuGetPackageRoot)", StringComparison.OrdinalIgnoreCase)
+                ? project["$(NuGetPackageRoot)".Length..].TrimStart('/')
+                : string.Empty;
+            if (suffix.Length == 0 || !importSuffix.Equals(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                reason = "the Exists expression is not the standard resolved-package-file guard";
+                return false;
+            }
+
+            exists = true;
+            return true;
+        }
+
         if (Path.IsPathRooted(requestedPath) &&
             string.Equals(requested, project, StringComparison.OrdinalIgnoreCase))
         {
@@ -2110,7 +2250,9 @@ public static class ResolvedGraphClassifier
         public override bool Evaluate(SurfaceContextKind context, string targetFramework)
         {
             var actual = context == SurfaceContextKind.Project ? string.Empty : targetFramework;
-            var equal = string.Equals(actual, Value, StringComparison.OrdinalIgnoreCase);
+            var equal = Property.Equals("TargetFramework", StringComparison.OrdinalIgnoreCase)
+                ? FrameworksMatch(actual, Value)
+                : string.Equals(actual, Value, StringComparison.OrdinalIgnoreCase);
             return Operator == "==" ? equal : !equal;
         }
     }

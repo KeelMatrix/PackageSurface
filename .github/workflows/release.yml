@@ -1,0 +1,121 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+
+env:
+  KEELMATRIX_TELEMETRY: 'off'
+
+jobs:
+  validate:
+    name: Validate and package
+    timeout-minutes: 45
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.release_contract.outputs.version }}
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up .NET SDK from global.json
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Validate tag, version, and finalized changelog
+        id: release_contract
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:RELEASE_TAG.Substring(1)
+          & ./scripts/validate-release.ps1 -Version $version -RequireFinalized
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "version=$version" >> $env:GITHUB_OUTPUT
+      - name: Build and validate exact release artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./scripts/run-local-gate.ps1 -ArtifactDirectory artifacts/release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $version = '${{ steps.release_contract.outputs.version }}'
+          $expected = @(
+              "KeelMatrix.PackageSurface.$version.nupkg",
+              "KeelMatrix.PackageSurface.$version.snupkg"
+          )
+          $actual = @(Get-ChildItem -LiteralPath artifacts/release -File | Select-Object -ExpandProperty Name | Sort-Object)
+          if (@(Compare-Object ($expected | Sort-Object) $actual).Count -ne 0) {
+              throw "Validated release artifact set is not exact: $($actual -join ', ')"
+          }
+      - name: Upload validated release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: artifacts/release/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish package
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download validated release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: artifacts/release
+      - name: Authenticate to NuGet.org
+        id: nuget-login
+        uses: NuGet/login@v1
+        with:
+          user: dmitriyzen
+      - name: Publish exact validated package with short-lived credential
+        shell: pwsh
+        env:
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = '${{ needs.validate.outputs.version }}'
+          $package = "artifacts/release/KeelMatrix.PackageSurface.$version.nupkg"
+          if (-not (Test-Path -LiteralPath $package -PathType Leaf)) {
+              throw "Validated package is missing: $package"
+          }
+          & dotnet nuget push $package --api-key $env:NUGET_API_KEY --source https://api.nuget.org/v3/index.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  github-release:
+    name: Create GitHub Release
+    needs: [validate, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download validated release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: artifacts/release
+      - name: Create release after successful publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create \
+            --repo "${{ github.repository }}" \
+            "${{ github.ref_name }}" \
+            "artifacts/release/KeelMatrix.PackageSurface.${{ needs.validate.outputs.version }}.nupkg" \
+            "artifacts/release/KeelMatrix.PackageSurface.${{ needs.validate.outputs.version }}.snupkg" \
+            --verify-tag --generate-notes --title "${{ github.ref_name }}"

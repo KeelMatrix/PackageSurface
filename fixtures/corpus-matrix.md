@@ -17,7 +17,7 @@ Each supported capability has direct and transitive active/inactive evidence. `T
 | BuildTransitive | direct | inactive | Target | net8.0/- | fixtures/consumer/SingleTarget/KeelMatrix.Phase0.BuildTransitive:buildTransitive/net9.0/KeelMatrix.Phase0.BuildTransitive.props |
 | BuildTransitive | direct | inactive | Target | net8.0/- | fixtures/consumer/SingleTarget/KeelMatrix.Phase0.BuildTransitive:buildTransitive/net9.0/KeelMatrix.Phase0.BuildTransitive.targets |
 | CompilerExtension | direct | active | Target | net8.0/- | fixtures/consumer/SingleTarget/KeelMatrix.Phase0.CompilerExtension:analyzers/dotnet/cs/KeelMatrix.Phase0.SourceGeneratorStyle.dll |
-| CompilerExtension | direct | inactive | Target | net8.0/- | fixtures/consumer/SingleTarget/KeelMatrix.Phase0.CompilerExtension:analyzers/net9.0/KeelMatrix.Phase0.SourceGeneratorStyle.dll |
+| CompilerExtension | direct | active | Target | net8.0/- | fixtures/consumer/SingleTarget/KeelMatrix.Phase0.CompilerExtension:analyzers/net9.0/KeelMatrix.Phase0.SourceGeneratorStyle.dll |
 | CompilerExtension | direct | inactive | Target | net8.0/- | fixtures/consumer/SingleTarget/KeelMatrix.Phase0.CompilerExtension:analyzers/dotnet/vb/KeelMatrix.Phase0.VisualBasicOnly.dll |
 | CompileSourceInjection | direct | active | Target | net8.0/- | fixtures/consumer/SingleTarget/KeelMatrix.Phase0.ContentInjection:contentFiles/cs/any/Active.cs |
 | CompileSourceInjection | direct | inactive | Target | net8.0/- | fixtures/consumer/SingleTarget/KeelMatrix.Phase0.ContentInjection:contentFiles/cs/net9.0/Inactive.cs |
@@ -41,7 +41,7 @@ Each supported capability has direct and transitive active/inactive evidence. `T
 | BuildTransitive | transitive | active | Target | net8.0-windows7.0/- | fixtures/consumer/MultiTarget/KeelMatrix.Phase0.BuildTransitive:buildTransitive/KeelMatrix.Phase0.BuildTransitive.props |
 | BuildTransitive | transitive | inactive | Target | net8.0-windows7.0/- | fixtures/consumer/MultiTarget/KeelMatrix.Phase0.BuildTransitive:buildTransitive/net9.0/KeelMatrix.Phase0.BuildTransitive.props |
 | CompilerExtension | direct | active | Target | net8.0/- | fixtures/consumer/MultiTarget/KeelMatrix.Phase0.CompilerExtension:analyzers/dotnet/cs/KeelMatrix.Phase0.SourceGeneratorStyle.dll |
-| CompilerExtension | direct | inactive | Target | net8.0/- | fixtures/consumer/MultiTarget/KeelMatrix.Phase0.CompilerExtension:analyzers/net9.0/KeelMatrix.Phase0.SourceGeneratorStyle.dll |
+| CompilerExtension | direct | active | Target | net8.0/- | fixtures/consumer/MultiTarget/KeelMatrix.Phase0.CompilerExtension:analyzers/net9.0/KeelMatrix.Phase0.SourceGeneratorStyle.dll |
 | CompilerExtension | direct | inactive | Target | net8.0/- | fixtures/consumer/MultiTarget/KeelMatrix.Phase0.CompilerExtension:analyzers/dotnet/vb/KeelMatrix.Phase0.VisualBasicOnly.dll |
 | CompileSourceInjection | direct | active | Target | net8.0/- | fixtures/consumer/MultiTarget/KeelMatrix.Phase0.ContentInjection:contentFiles/cs/any/Active.cs |
 | CompileSourceInjection | direct | inactive | Target | net8.0/- | fixtures/consumer/MultiTarget/KeelMatrix.Phase0.ContentInjection:contentFiles/cs/net9.0/Inactive.cs |
@@ -81,7 +81,7 @@ Each supported capability has direct and transitive active/inactive evidence. `T
 | BuildTransitive | transitive | active | Target | net8.0/win-x64 | fixtures/consumer/RidTarget/KeelMatrix.Phase0.BuildTransitive:buildTransitive/KeelMatrix.Phase0.BuildTransitive.props |
 | BuildTransitive | transitive | inactive | Target | net8.0/win-x64 | fixtures/consumer/RidTarget/KeelMatrix.Phase0.BuildTransitive:buildTransitive/net9.0/KeelMatrix.Phase0.BuildTransitive.props |
 | CompilerExtension | transitive | active | Target | net8.0/- | fixtures/consumer/RidTarget/KeelMatrix.Phase0.CompilerExtension:analyzers/dotnet/cs/KeelMatrix.Phase0.SourceGeneratorStyle.dll |
-| CompilerExtension | transitive | inactive | Target | net8.0/- | fixtures/consumer/RidTarget/KeelMatrix.Phase0.CompilerExtension:analyzers/net9.0/KeelMatrix.Phase0.SourceGeneratorStyle.dll |
+| CompilerExtension | transitive | active | Target | net8.0/- | fixtures/consumer/RidTarget/KeelMatrix.Phase0.CompilerExtension:analyzers/net9.0/KeelMatrix.Phase0.SourceGeneratorStyle.dll |
 | CompilerExtension | transitive | inactive | Target | net8.0/- | fixtures/consumer/RidTarget/KeelMatrix.Phase0.CompilerExtension:analyzers/dotnet/vb/KeelMatrix.Phase0.VisualBasicOnly.dll |
 | CompileSourceInjection | transitive | active | Target | net8.0/- | fixtures/consumer/RidTarget/KeelMatrix.Phase0.ContentInjection:contentFiles/cs/any/Active.cs |
 | CompileSourceInjection | transitive | inactive | Target | net8.0/- | fixtures/consumer/RidTarget/KeelMatrix.Phase0.ContentInjection:contentFiles/cs/net9.0/Inactive.cs |
@@ -97,7 +97,7 @@ Each supported capability has direct and transitive active/inactive evidence. `T
 | BuildTransitive | transitive | active | Target | net8.0/win-x64 | fixtures/consumer/RidTarget/KeelMatrix.Phase0.BuildTransitive:buildTransitive/KeelMatrix.Phase0.BuildTransitive.targets |
 | BuildTransitive | transitive | inactive | Target | net8.0/win-x64 | fixtures/consumer/RidTarget/KeelMatrix.Phase0.BuildTransitive:buildTransitive/net9.0/KeelMatrix.Phase0.BuildTransitive.targets |
 | CompilerExtension | transitive | active | Target | net8.0/win-x64 | fixtures/consumer/RidTarget/KeelMatrix.Phase0.CompilerExtension:analyzers/dotnet/cs/KeelMatrix.Phase0.SourceGeneratorStyle.dll |
-| CompilerExtension | transitive | inactive | Target | net8.0/win-x64 | fixtures/consumer/RidTarget/KeelMatrix.Phase0.CompilerExtension:analyzers/net9.0/KeelMatrix.Phase0.SourceGeneratorStyle.dll |
+| CompilerExtension | transitive | active | Target | net8.0/win-x64 | fixtures/consumer/RidTarget/KeelMatrix.Phase0.CompilerExtension:analyzers/net9.0/KeelMatrix.Phase0.SourceGeneratorStyle.dll |
 | CompilerExtension | transitive | inactive | Target | net8.0/win-x64 | fixtures/consumer/RidTarget/KeelMatrix.Phase0.CompilerExtension:analyzers/dotnet/vb/KeelMatrix.Phase0.VisualBasicOnly.dll |
 | CompileSourceInjection | transitive | active | Target | net8.0/win-x64 | fixtures/consumer/RidTarget/KeelMatrix.Phase0.ContentInjection:contentFiles/cs/any/Active.cs |
 | CompileSourceInjection | transitive | inactive | Target | net8.0/win-x64 | fixtures/consumer/RidTarget/KeelMatrix.Phase0.ContentInjection:contentFiles/cs/net9.0/Inactive.cs |

@@ -326,11 +326,32 @@ static void RunBaselineContractRegression()
 
 static void RunLanguageConventionRegression(string scratch)
 {
+    var combinedRoot = Path.Combine(scratch, "analyzer-combined");
+    var combinedAssets = Path.Combine(combinedRoot, "obj", "project.assets.json");
+    Directory.CreateDirectory(Path.GetDirectoryName(combinedAssets)!);
+    var baseAnalyzer = "analyzers/dotnet/cs/base.dll";
+    var legacyAnalyzer = "analyzers/dotnet/roslyn3.8/cs/legacy.dll";
+    var currentAnalyzer = "analyzers/dotnet/roslyn4.0/cs/current.dll";
+    var satelliteAnalyzer = "analyzers/dotnet/cs/base.resources.dll";
+    var neutralAnalyzer = "analyzers/dotnet/neutral.dll";
+    var neutralLegacyAnalyzer = "analyzers/dotnet/roslyn3.8/neutral-legacy.dll";
+    var neutralCurrentAnalyzer = "analyzers/dotnet/roslyn4.0/neutral-current.dll";
+    WriteAnalyzerAssets(combinedAssets, Path.Combine(combinedRoot, "cache"), true, baseAnalyzer, "Test.csproj", includeAnalyzers: true,
+        additionalAnalyzerRelativePaths: new[] { legacyAnalyzer, currentAnalyzer, satelliteAnalyzer, neutralAnalyzer, neutralLegacyAnalyzer, neutralCurrentAnalyzer });
+    var combinedResult = ResolvedGraphClassifier.Analyze(combinedAssets, combinedRoot, strictContent: false);
+    var combinedEntries = combinedResult.Entries
+        .Where(entry => entry.Capability == CapabilityKind.CompilerExtension)
+        .ToDictionary(entry => entry.PackageRelativePath, StringComparer.OrdinalIgnoreCase);
+    Require(combinedResult.IsComplete && combinedEntries[baseAnalyzer].Active && combinedEntries[currentAnalyzer].Active &&
+        !combinedEntries[legacyAnalyzer].Active && !combinedEntries[satelliteAnalyzer].Active && combinedEntries[neutralAnalyzer].Active &&
+        !combinedEntries[neutralLegacyAnalyzer].Active && combinedEntries[neutralCurrentAnalyzer].Active,
+        $"SDK-selected base and highest applicable analyzer versions were not classified independently. complete={combinedResult.IsComplete}; entries={combinedResult.Entries.Count}; reasons={string.Join(" | ", combinedResult.IncompleteReasons)}");
+
     var analyzerCases = new[]
     {
         (Language: "cs", Project: "Test.csproj", Path: "analyzers/dotnet/cs/valid.dll", Active: true),
         (Language: "vb", Project: "Test.vbproj", Path: "analyzers/dotnet/vb/valid.dll", Active: true),
-        (Language: "fs", Project: "Test.fsproj", Path: "analyzers/dotnet/fs/valid.dll", Active: true),
+        (Language: "fs", Project: "Test.fsproj", Path: "analyzers/dotnet/fs/valid.dll", Active: false),
         (Language: "cross", Project: "Test.csproj", Path: "analyzers/dotnet/vb/valid.dll", Active: false),
         (Language: "neutral", Project: "Test.unknown", Path: "analyzers/dotnet/neutral.dll", Active: true),
         (Language: "exe", Project: "Test.csproj", Path: "analyzers/dotnet/neutral.exe", Active: false),
@@ -814,7 +835,14 @@ static void WriteAssets(string path, string cache, string packageId, IReadOnlyLi
     WriteGeneratedImportEvidence(path, projectFileName);
 }
 
-static void WriteAnalyzerAssets(string path, string cache, bool direct, string analyzerRelativePath, string projectFileName = "Test.csproj", bool includeAnalyzers = false)
+static void WriteAnalyzerAssets(
+    string path,
+    string cache,
+    bool direct,
+    string analyzerRelativePath,
+    string projectFileName = "Test.csproj",
+    bool includeAnalyzers = false,
+    IReadOnlyList<string>? additionalAnalyzerRelativePaths = null)
 {
     const string compilerId = "CompilerPackage";
     const string rootId = "RootPackage";
@@ -825,6 +853,10 @@ static void WriteAnalyzerAssets(string path, string cache, bool direct, string a
     var libraries = new JsonObject();
     var compilerFiles = new JsonArray();
     compilerFiles.Add(analyzerRelativePath);
+    foreach (var additionalPath in additionalAnalyzerRelativePaths ?? Array.Empty<string>())
+    {
+        compilerFiles.Add(additionalPath);
+    }
     target[compilerKey] = new JsonObject { ["type"] = "package" };
     libraries[compilerKey] = new JsonObject { ["type"] = "package", ["path"] = compilerKey, ["files"] = compilerFiles };
     var directPackageId = compilerId;
@@ -844,9 +876,12 @@ static void WriteAnalyzerAssets(string path, string cache, bool direct, string a
         directPackageId = rootId;
     }
 
-    var packageRoot = Path.Combine(cache, compilerId, version, Path.GetDirectoryName(analyzerRelativePath)!.Replace('/', Path.DirectorySeparatorChar));
-    Directory.CreateDirectory(packageRoot);
-    File.Copy(typeof(ResolvedGraphClassifier).Assembly.Location, Path.Combine(packageRoot, Path.GetFileName(analyzerRelativePath)), overwrite: true);
+    foreach (var analyzerPath in new[] { analyzerRelativePath }.Concat(additionalAnalyzerRelativePaths ?? Array.Empty<string>()))
+    {
+        var packageRoot = Path.Combine(cache, compilerId, version, Path.GetDirectoryName(analyzerPath)!.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(packageRoot);
+        File.Copy(typeof(ResolvedGraphClassifier).Assembly.Location, Path.Combine(packageRoot, Path.GetFileName(analyzerPath)), overwrite: true);
+    }
     Directory.CreateDirectory(Path.Combine(cache, rootId, version));
     var dependency = new JsonObject { ["include"] = includeAnalyzers ? "analyzers" : "Runtime, Compile, Build, Native, ContentFiles, BuildTransitive" };
     var frameworks = new JsonObject

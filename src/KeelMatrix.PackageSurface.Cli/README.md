@@ -14,7 +14,7 @@ Update with `dotnet tool update --global KeelMatrix.PackageSurface`, or uninstal
 
 ## Five-minute workflow
 
-Restore the project first. The tool consumes existing `project.assets.json` and generated NuGet imports; it never restores or queries a package feed.
+Restore the project first. The tool consumes existing `project.assets.json` and generated NuGet imports; coherent SDK-style assets formats 1 through 4 are supported, with format 4 effective-framework/target-alias metadata validated fail closed. It never restores or queries a package feed.
 
 ```powershell
 dotnet restore

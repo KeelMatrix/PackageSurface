@@ -46,7 +46,7 @@ public static class ResolvedGraphClassifier
             using var stream = File.OpenRead(assetsFile);
             using var document = JsonDocument.Parse(stream, new JsonDocumentOptions { MaxDepth = MaxJsonDepth });
             var root = document.RootElement;
-            ValidateAssetsFormat(root, incomplete);
+            _ = ValidateAssetsFormat(root, incomplete);
             var packageFolders = ReadPackageFolders(root, incomplete);
             var libraries = root.TryGetProperty("libraries", out var librariesElement)
                 ? librariesElement
@@ -57,6 +57,7 @@ public static class ResolvedGraphClassifier
             }
             var directAssetRules = ReadDirectPackageAssetRules(root);
             var targetAliases = ReadTargetAliases(root);
+            var targetFrameworks = ReadTargetFrameworks(root);
             var entries = new List<SurfaceEntry>();
             var projectEntries = new Dictionary<string, List<SurfaceEntry>>(StringComparer.OrdinalIgnoreCase);
             var resolvedPackages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -86,9 +87,12 @@ public static class ResolvedGraphClassifier
                     throw new InvalidDataException($"Target {target.Name} is not an object.");
                 }
 
-                var (tfm, rid) = SplitTarget(target.Name);
-                var targetAlias = targetAliases.TryGetValue(target.Name, out var alias) ? alias : tfm;
-                var targetDirectRules = directAssetRules.TryGetValue(tfm, out var rules)
+                var (targetFrameworkKey, rid) = SplitTarget(target.Name);
+                var tfm = targetFrameworks.TryGetValue(targetFrameworkKey, out var effectiveTargetFramework)
+                    ? effectiveTargetFramework
+                    : targetFrameworkKey;
+                var targetAlias = targetAliases.TryGetValue(targetFrameworkKey, out var alias) ? alias : targetFrameworkKey;
+                var targetDirectRules = directAssetRules.TryGetValue(targetFrameworkKey, out var rules)
                     ? rules
                     : new Dictionary<string, PackageAssetRule>(StringComparer.OrdinalIgnoreCase);
                 var directPackages = targetDirectRules.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -483,6 +487,36 @@ public static class ResolvedGraphClassifier
         return result;
     }
 
+    private static Dictionary<string, string> ReadTargetFrameworks(JsonElement root)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (!root.TryGetProperty("project", out var project) || project.ValueKind != JsonValueKind.Object ||
+            !project.TryGetProperty("frameworks", out var frameworks) || frameworks.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidDataException("project.assets.json has no frameworks object.");
+        }
+
+        foreach (var framework in frameworks.EnumerateObject())
+        {
+            if (framework.Value.ValueKind != JsonValueKind.Object)
+            {
+                throw new InvalidDataException($"Framework {framework.Name} is not an object.");
+            }
+
+            if (framework.Value.TryGetProperty("framework", out var effective) && effective.ValueKind == JsonValueKind.String &&
+                !string.IsNullOrWhiteSpace(effective.GetString()))
+            {
+                result[framework.Name] = effective.GetString()!;
+            }
+            else
+            {
+                result[framework.Name] = framework.Name;
+            }
+        }
+
+        return result;
+    }
+
     private static ProjectLanguage ReadProjectLanguage(JsonElement root, string projectRoot, string? selectedProjectPath, List<string> incomplete)
     {
         string? projectPath = null;
@@ -539,13 +573,120 @@ public static class ResolvedGraphClassifier
         return result;
     }
 
-    private static void ValidateAssetsFormat(JsonElement root, List<string> incomplete)
+    private static int? ValidateAssetsFormat(JsonElement root, List<string> incomplete)
     {
         if (!root.TryGetProperty("version", out var version) || version.ValueKind != JsonValueKind.Number ||
-            !version.TryGetInt32(out var value) || value is < 1 or > 3)
+            !version.TryGetInt32(out var value) || value is < 1 or > 4)
         {
             incomplete.Add("The restore assets format version is missing or unsupported.");
+            return null;
         }
+
+        if (value == 4)
+        {
+            ValidateAssetsFormatV4(root, incomplete);
+        }
+
+        return value;
+    }
+
+    private static void ValidateAssetsFormatV4(JsonElement root, List<string> incomplete)
+    {
+        var hasDependencyGroups = root.TryGetProperty("projectFileDependencyGroups", out var dependencyGroups) && dependencyGroups.ValueKind == JsonValueKind.Object;
+        if (!hasDependencyGroups)
+        {
+            incomplete.Add("Assets format 4 has no projectFileDependencyGroups object.");
+        }
+        else
+        {
+            foreach (var dependencyGroup in dependencyGroups.EnumerateObject())
+            {
+                if (dependencyGroup.Value.ValueKind != JsonValueKind.Array)
+                {
+                    incomplete.Add($"Assets format 4 dependency group {dependencyGroup.Name} is not an array.");
+                }
+            }
+        }
+
+        if (!root.TryGetProperty("project", out var project) || project.ValueKind != JsonValueKind.Object)
+        {
+            incomplete.Add("Assets format 4 has no project object.");
+            return;
+        }
+
+        var hasProjectFrameworks = ValidateAssetsFormatV4Frameworks(project, "frameworks", incomplete, out var projectFrameworks);
+        if (!project.TryGetProperty("restore", out var restore) || restore.ValueKind != JsonValueKind.Object)
+        {
+            incomplete.Add("Assets format 4 has no project restore object.");
+        }
+        else
+        {
+            var hasRestoreFrameworks = ValidateAssetsFormatV4Frameworks(restore, "frameworks", incomplete, out var restoreFrameworks);
+            if (hasProjectFrameworks && hasRestoreFrameworks)
+            {
+                foreach (var projectFramework in projectFrameworks.EnumerateObject())
+                {
+                    if (!TryGetPropertyIgnoreCase(restoreFrameworks, projectFramework.Name, out var restoreFramework))
+                    {
+                        incomplete.Add($"Assets format 4 restore framework {projectFramework.Name} is missing.");
+                        continue;
+                    }
+
+                    var projectEffective = projectFramework.Value.GetProperty("framework").GetString();
+                    var restoreEffective = restoreFramework.GetProperty("framework").GetString();
+                    var projectAlias = projectFramework.Value.GetProperty("targetAlias").GetString();
+                    var restoreAlias = restoreFramework.GetProperty("targetAlias").GetString();
+                    if (!string.Equals(projectEffective, restoreEffective, StringComparison.OrdinalIgnoreCase) ||
+                        !string.Equals(projectAlias, restoreAlias, StringComparison.OrdinalIgnoreCase))
+                    {
+                        incomplete.Add($"Assets format 4 framework {projectFramework.Name} disagrees between project and restore metadata.");
+                    }
+                }
+            }
+
+            if (hasDependencyGroups && hasProjectFrameworks)
+            {
+                foreach (var dependencyGroup in dependencyGroups.EnumerateObject())
+                {
+                    if (!TryGetPropertyIgnoreCase(projectFrameworks, dependencyGroup.Name, out _))
+                    {
+                        incomplete.Add($"Assets format 4 dependency group {dependencyGroup.Name} has no declared framework.");
+                    }
+                }
+            }
+        }
+    }
+
+    private static bool ValidateAssetsFormatV4Frameworks(JsonElement parent, string propertyName, List<string> incomplete, out JsonElement frameworks)
+    {
+        if (!parent.TryGetProperty(propertyName, out frameworks) || frameworks.ValueKind != JsonValueKind.Object)
+        {
+            incomplete.Add($"Assets format 4 has no {propertyName} object.");
+            return false;
+        }
+
+        foreach (var framework in frameworks.EnumerateObject())
+        {
+            if (framework.Value.ValueKind != JsonValueKind.Object)
+            {
+                incomplete.Add($"Assets format 4 framework {framework.Name} is not an object.");
+                continue;
+            }
+
+            if (!framework.Value.TryGetProperty("framework", out var effective) || effective.ValueKind != JsonValueKind.String ||
+                string.IsNullOrWhiteSpace(effective.GetString()))
+            {
+                incomplete.Add($"Assets format 4 framework {framework.Name} has no effective framework name.");
+            }
+
+            if (!framework.Value.TryGetProperty("targetAlias", out var alias) || alias.ValueKind != JsonValueKind.String ||
+                string.IsNullOrWhiteSpace(alias.GetString()))
+            {
+                incomplete.Add($"Assets format 4 framework {framework.Name} has no target alias.");
+            }
+        }
+
+        return true;
     }
 
     private static void ValidateRestoreEvidence(

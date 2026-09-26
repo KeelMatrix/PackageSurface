@@ -88,7 +88,7 @@ Activation telemetry is best effort and occurs only after a successful baseline 
 
 ## Supported scope and limitations
 
-The tool targets `net8.0` and SDK-style `PackageReference` restore outputs. Windows, Linux, and macOS are intended platforms; the repository's local validation scripts provide the repeatable gate, while platform coverage outside the current machine remains an explicit verification assumption. Legacy project systems, `packages.config`, automatic restore, feed queries, vulnerability scanning, license analysis, malware detection, decompilation, dynamic sandboxing, and package safety judgments are outside the supported scope.
+The tool targets `net8.0` and SDK-style `PackageReference` restore outputs, including coherent `project.assets.json` formats 1 through 4. Format 4 framework aliases are mapped to their effective framework; missing or mismatched v4 metadata remains incomplete analysis. Windows, Linux, and macOS are intended platforms; the repository's local validation scripts provide the repeatable gate, while platform coverage outside the current machine remains an explicit verification assumption. Legacy project systems, `packages.config`, automatic restore, feed queries, vulnerability scanning, license analysis, malware detection, decompilation, dynamic sandboxing, and package safety judgments are outside the supported scope.
 
 ## Troubleshooting
 

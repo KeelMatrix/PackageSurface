@@ -256,6 +256,23 @@ try {
     }
     Invoke-GateStep 'installed tool version' { & $tool --version }
     Invoke-GateStep 'installed tool scan' { & $tool scan $singleProject --format json --no-telemetry }
+    $zeroDependencyRoot = Join-Path $scratch 'zero-dependency-consumer'
+    $zeroDependencyProject = Join-Path $zeroDependencyRoot 'ZeroDependency.csproj'
+    New-Item -ItemType Directory -Force -Path $zeroDependencyRoot | Out-Null
+    [IO.File]::WriteAllText($zeroDependencyProject, '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>', [Text.UTF8Encoding]::new($false))
+    Invoke-GateStep 'installed zero-dependency restore' {
+        & dotnet restore $zeroDependencyProject --configfile $nugetConfig --packages $shippingPackages --force --nologo
+    }
+    $zeroDependencyAssets = Join-Path $zeroDependencyRoot 'obj/project.assets.json'
+    $zeroDependencyAssetsDocument = Get-Content -LiteralPath $zeroDependencyAssets -Raw | ConvertFrom-Json
+    if ($zeroDependencyAssetsDocument.version -notin @(3, 4)) { throw "The pinned SDK produced an unsupported restore assets format: $($zeroDependencyAssetsDocument.version)." }
+    Write-Output "ZERO_DEPENDENCY_ASSETS_FORMAT=$($zeroDependencyAssetsDocument.version)"
+    Invoke-GateStep 'installed zero-dependency scan' { & $tool scan $zeroDependencyRoot --format json --no-telemetry }
+    $zeroDependencyBaseline = Join-Path $scratch 'zero-dependency-baseline.json'
+    Invoke-GateStep 'installed zero-dependency baseline' { & $tool baseline $zeroDependencyRoot --output $zeroDependencyBaseline --format json --no-telemetry }
+    $zeroDependencyBaselineDocument = Get-Content -LiteralPath $zeroDependencyBaseline -Raw | ConvertFrom-Json
+    if (@($zeroDependencyBaselineDocument.entries).Count -ne 0 -or @($zeroDependencyBaselineDocument.incompleteReasons).Count -ne 0) { throw 'The zero-dependency baseline was not a complete empty capability surface.' }
+    Invoke-GateStep 'installed zero-dependency passing check' { & $tool check $zeroDependencyRoot --baseline $zeroDependencyBaseline --format json --no-telemetry }
     Invoke-GateStep 'package XML primitive inspection' {
         $inspectionOutput = @(& $tool scan $singleProject --format json --no-telemetry)
         if ($LASTEXITCODE -ne 0) { throw 'Installed package XML inspection scan failed.' }
@@ -352,7 +369,7 @@ try {
     Copy-Item -LiteralPath $dependencyProjectFile -Destination $projectBackup -Force
     try {
         $projectText = Get-Content -LiteralPath $dependencyProjectFile -Raw
-        $dependencyLine = '    <PackageReference Include="KeelMatrix.Phase0.BuildBoth" Version="1.0.0" />' + [Environment]::NewLine + '  </ItemGroup>'
+        $dependencyLine = '    <PackageReference Include="KeelMatrix.Phase0.BuildBoth" />' + [Environment]::NewLine + '  </ItemGroup>'
         $projectText = $projectText -replace '  </ItemGroup>', $dependencyLine
         [IO.File]::WriteAllText($dependencyProjectFile, $projectText, [Text.UTF8Encoding]::new($false))
         Invoke-GateStep 'installed consumer dependency restore' { & dotnet restore $dependencyProjectFile --configfile $nugetConfig --packages $shippingPackages --force-evaluate }

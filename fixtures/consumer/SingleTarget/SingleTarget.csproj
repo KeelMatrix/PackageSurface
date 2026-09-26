@@ -5,15 +5,15 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="KeelMatrix.Phase0.BuildProps" Version="1.0.0" />
-    <PackageReference Include="KeelMatrix.Phase0.BuildTargets" Version="1.0.0" />
-    <PackageReference Include="KeelMatrix.Phase0.BuildBoth" Version="1.0.0" />
-    <PackageReference Include="KeelMatrix.Phase0.BuildTransitive" Version="1.0.0" />
-    <PackageReference Include="KeelMatrix.Phase0.CompilerExtension" Version="1.0.0" />
-    <PackageReference Include="KeelMatrix.Phase0.ContentInjection" Version="1.0.0" />
-    <PackageReference Include="KeelMatrix.Phase0.ManagedRuntime" Version="1.0.0" />
-    <PackageReference Include="KeelMatrix.Phase0.ToolScript" Version="1.0.0" />
-    <PackageReference Include="KeelMatrix.Phase0.OrdinaryLibrary" Version="1.0.0" />
-    <PackageReference Include="KeelMatrix.Phase0.TransitiveRoot" Version="1.0.0" />
+    <PackageReference Include="KeelMatrix.Phase0.BuildProps" />
+    <PackageReference Include="KeelMatrix.Phase0.BuildTargets" />
+    <PackageReference Include="KeelMatrix.Phase0.BuildBoth" />
+    <PackageReference Include="KeelMatrix.Phase0.BuildTransitive" />
+    <PackageReference Include="KeelMatrix.Phase0.CompilerExtension" />
+    <PackageReference Include="KeelMatrix.Phase0.ContentInjection" />
+    <PackageReference Include="KeelMatrix.Phase0.ManagedRuntime" />
+    <PackageReference Include="KeelMatrix.Phase0.ToolScript" />
+    <PackageReference Include="KeelMatrix.Phase0.OrdinaryLibrary" />
+    <PackageReference Include="KeelMatrix.Phase0.TransitiveRoot" />
   </ItemGroup>
 </Project>

@@ -104,6 +104,7 @@ static void RunClassifierHardeningTests()
         File.WriteAllText(Path.Combine(scratch, "Test.csproj"), "<Project />");
         RunAnalyzerExclusionRegression(scratch, cache, obj);
         RunMalformedAssetsShapeRegression(assets, scratch);
+        RunAssetsFormatRegression(assets, scratch);
         RunDiagnosticPathLeakRegression(scratch);
         RunApplicabilityHardeningRegressions(scratch);
         RunNestedImportRegression(scratch);
@@ -789,6 +790,56 @@ static void RunMalformedAssetsShapeRegression(string assets, string scratch)
     var cliExitCode = CommandLine.Run(new[] { "scan", cliAssets, "--no-telemetry" });
     File.Delete(cliAssets);
     Require(cliExitCode == 2, $"Malformed assets CLI invocation returned {cliExitCode}, expected 2.");
+}
+
+static void RunAssetsFormatRegression(string assets, string scratch)
+{
+    var v4Path = Path.Combine(Path.GetDirectoryName(assets)!, "format4.assets.json");
+    var root = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
+    root["version"] = 4;
+    root["projectFileDependencyGroups"] = new JsonObject { ["net8.0"] = new JsonArray() };
+    var project = root["project"]!.AsObject();
+    var projectFramework = project["frameworks"]!["net8.0"]!.AsObject();
+    projectFramework["framework"] = "net8.0";
+    projectFramework["targetAlias"] = "net8.0";
+    project["restore"]!["frameworks"] = new JsonObject
+    {
+        ["net8.0"] = new JsonObject { ["framework"] = "net8.0", ["targetAlias"] = "net8.0" }
+    };
+    File.WriteAllText(v4Path, root.ToJsonString());
+    try
+    {
+        var result = ResolvedGraphClassifier.Analyze(v4Path, scratch, strictContent: false);
+        Require(result.IsComplete && result.ResolvedPackageCount == 1, "A coherent assets format 4 graph was not classified.");
+
+        var malformedV4 = new (string Name, Action<JsonObject> Mutate)[]
+        {
+            ("format4-missing-framework", value => value["project"]!["frameworks"]!["net8.0"]!.AsObject().Remove("framework")),
+            ("format4-missing-dependency-groups", value => value.Remove("projectFileDependencyGroups")),
+            ("format4-mismatched-restore-framework", value => value["project"]!["restore"]!["frameworks"]!["net8.0"]!["framework"] = "net9.0")
+        };
+
+        foreach (var (name, mutate) in malformedV4)
+        {
+            var path = Path.Combine(Path.GetDirectoryName(assets)!, name + ".assets.json");
+            var malformed = JsonNode.Parse(File.ReadAllText(v4Path))!.AsObject();
+            mutate(malformed);
+            File.WriteAllText(path, malformed.ToJsonString());
+            try
+            {
+                var malformedResult = ResolvedGraphClassifier.Analyze(path, scratch, strictContent: false);
+                Require(!malformedResult.IsComplete, $"Malformed assets format 4 shape '{name}' was not fail-closed.");
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        }
+    }
+    finally
+    {
+        File.Delete(v4Path);
+    }
 }
 
 static void WriteAssets(string path, string cache, string packageId, IReadOnlyList<string> files, bool createFiles = false, string projectFileName = "Test.csproj")

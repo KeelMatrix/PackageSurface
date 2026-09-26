@@ -1,10 +1,15 @@
 param(
     [Parameter(Mandatory)] [string] $Version,
     [switch] $RequireFinalized,
+    [switch] $FirstRelease,
     [string] $ProjectFile = (Join-Path $PSScriptRoot '..\src\KeelMatrix.PackageSurface.Cli\KeelMatrix.PackageSurface.Cli.csproj'),
     [string] $ChangelogPath = (Join-Path $PSScriptRoot '..\CHANGELOG.md')
 )
 $ErrorActionPreference = 'Stop'
+
+if ($FirstRelease -and -not $RequireFinalized) {
+    throw 'First-release validation requires a finalized changelog entry.'
+}
 
 if ($Version -notmatch '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$') {
     throw 'Release version must be a semantic three-part version.'
@@ -84,6 +89,41 @@ if ($RequireFinalized) {
 
     if ($target.Body -match '(?i)\b(?:planned|tbd|unreleased|not[\s-]+yet[\s-]+published|not[\s-]+published)\b') {
         throw 'Finalized target release section contains an unfinalized release marker.'
+    }
+
+    if ($FirstRelease) {
+        if ($target.Body -notmatch '(?im)^\s*#{2,6}\s+Added\s*:?[ \t]*$') {
+            throw 'First-release notes must contain an Added section.'
+        }
+
+        $prohibitedMarkers = @(
+            '\bnow\b',
+            '\bno\s+longer\b',
+            '\bpreviously\b',
+            '\bformerly\b',
+            '\bused\s+to\b',
+            '\bfixed\b',
+            '\bfixes\b',
+            '\bcorrected\b',
+            '\bresolved\b',
+            '\baddressed\b',
+            '\bthis\s+removes\b',
+            '\bthis\s+fixes\b',
+            '\bchanged\s+from\b'
+        )
+        foreach ($marker in $prohibitedMarkers) {
+            if ($target.Body -match "(?i)$marker") {
+                throw "First-release notes contain prohibited remediation wording: $marker."
+            }
+        }
+
+        $prohibitedCategories = [regex]::Matches(
+            $target.Body,
+            '(?im)^\s*#{2,6}\s+(?<category>Changed|Fixed|Deprecated|Removed|Security|Compatibility)\s*:?[ \t]*$') |
+            ForEach-Object { $_.Groups['category'].Value }
+        if ($prohibitedCategories.Count -gt 0) {
+            throw "First-release notes contain non-Added release categories: $($prohibitedCategories -join ', ')."
+        }
     }
 
     if ($unreleasedSections.Count -eq 1 -and @(Get-MeaningfulReleaseNotes $unreleasedSections[0].Body).Count -gt 0) {

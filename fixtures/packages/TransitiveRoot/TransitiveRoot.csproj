@@ -9,6 +9,6 @@
     <NoWarn>$(NoWarn);NU5128</NoWarn>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="KeelMatrix.Phase0.TransitiveBundle" Version="1.0.0" PrivateAssets="none" />
+    <PackageReference Include="KeelMatrix.Phase0.TransitiveBundle" PrivateAssets="none" />
   </ItemGroup>
 </Project>

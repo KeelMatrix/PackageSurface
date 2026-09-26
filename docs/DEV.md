@@ -40,3 +40,5 @@ The packable CLI requires the repository-root `icon.png`. Packing fails with an 
   allowlist so a new project cannot silently become another NuGet artifact.
 
 No restore, MSBuild evaluation, dependency assembly loading, process execution, or package-feed access is performed by the classifier.
+
+The classifier accepts coherent SDK-style `project.assets.json` formats 1 through 4. Format 4 restore metadata is validated as a schema: project and restore framework maps must agree on effective framework and target alias, and project dependency groups must be arrays for declared frameworks. Incomplete or inconsistent evidence remains a `PS007` analysis failure.

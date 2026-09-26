@@ -1,0 +1,25 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageVersion Include="KeelMatrix.Phase0.BuildBoth" Version="1.0.0" />
+    <PackageVersion Include="KeelMatrix.Phase0.BuildMultiTargeting" Version="1.0.0" />
+    <PackageVersion Include="KeelMatrix.Phase0.BuildProps" Version="1.0.0" />
+    <PackageVersion Include="KeelMatrix.Phase0.BuildTargets" Version="1.0.0" />
+    <PackageVersion Include="KeelMatrix.Phase0.BuildTransitive" Version="1.0.0" />
+    <PackageVersion Include="KeelMatrix.Phase0.CompilerExtension" Version="1.0.0" />
+    <PackageVersion Include="KeelMatrix.Phase0.CompilerExtensionLanguages" Version="1.0.0" />
+    <PackageVersion Include="KeelMatrix.Phase0.ContentInjection" Version="1.0.0" />
+    <PackageVersion Include="KeelMatrix.Phase0.ContentInjectionLanguages" Version="1.0.0" />
+    <PackageVersion Include="KeelMatrix.Phase0.ManagedRuntime" Version="1.0.0" />
+    <PackageVersion Include="KeelMatrix.Phase0.NativeRuntime" Version="1.0.0" />
+    <PackageVersion Include="KeelMatrix.Phase0.NativeRuntimeTransitive" Version="1.0.0" />
+    <PackageVersion Include="KeelMatrix.Phase0.OrdinaryLibrary" Version="1.0.0" />
+    <PackageVersion Include="KeelMatrix.Phase0.ToolScript" Version="1.0.0" />
+    <PackageVersion Include="KeelMatrix.Phase0.TransitiveBundle" Version="1.0.0" />
+    <PackageVersion Include="KeelMatrix.Phase0.TransitiveRoot" Version="1.0.0" />
+    <PackageVersion Include="KeelMatrix.Telemetry" Version="0.1.1" />
+    <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="10.0.401" />
+  </ItemGroup>
+</Project>

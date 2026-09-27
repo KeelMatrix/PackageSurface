@@ -110,6 +110,7 @@ static void RunClassifierHardeningTests()
         RunMalformedAssetsShapeRegression(assets, scratch);
         RunAssetsFormatRegression(assets, scratch);
         RunFrameworkMonikerRegression(assets, scratch);
+        RunRestoreIdentityCanonicalizationRegression(assets, scratch);
         RunDiagnosticPathLeakRegression(scratch);
         RunApplicabilityHardeningRegressions(scratch);
         RunNestedImportRegression(scratch);
@@ -1840,6 +1841,262 @@ static void RunFrameworkMonikerRegression(string assets, string scratch)
     finally
     {
         File.Delete(negativePath);
+    }
+}
+
+static void RunRestoreIdentityCanonicalizationRegression(string assets, string scratch)
+{
+    var format4Path = Path.Combine(Path.GetDirectoryName(assets)!, "restore-identity-valid.assets.json");
+    var baselinePath = Path.Combine(Path.GetDirectoryName(assets)!, "restore-identity-valid-baseline.json");
+    var baseDocument = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
+    baseDocument["version"] = 4;
+    baseDocument["projectFileDependencyGroups"] = new JsonObject
+    {
+        ["net8.0"] = new JsonArray("../Referenced/Referenced.csproj", "XmlPackage >= 1.0.0")
+    };
+    baseDocument["project"]!["frameworks"] = new JsonObject
+    {
+        ["net8.0"] = new JsonObject
+        {
+            ["framework"] = "net8.0",
+            ["targetAlias"] = "net8.0",
+            ["dependencies"] = new JsonObject { ["XmlPackage"] = new JsonObject() }
+        }
+    };
+    baseDocument["project"]!["restore"]!["frameworks"] = new JsonObject
+    {
+        ["net8.0"] = new JsonObject { ["framework"] = "net8.0", ["targetAlias"] = "net8.0" }
+    };
+    File.WriteAllText(format4Path, baseDocument.ToJsonString());
+    WriteGeneratedImportEvidence(format4Path);
+
+    try
+    {
+        var valid = ResolvedGraphClassifier.Analyze(format4Path, scratch, strictContent: false);
+        Require(valid.IsComplete && valid.Entries.Count == 0 && valid.ResolvedPackageCount == 1,
+            $"The valid dependency-group paths fixture was rejected: {string.Join(" | ", valid.IncompleteReasons)}");
+        Require(CaptureCommand("baseline", format4Path, "--output", baselinePath, "--no-telemetry").ExitCode == 0,
+            "The valid restore-identity fixture could not create its baseline.");
+
+        var duplicateMaps = new[]
+        {
+            (Name: "project-frameworks", MapPath: "project.frameworks", Alias: ".NETCoreApp,Version=v8.0"),
+            (Name: "restore-frameworks", MapPath: "project.restore.frameworks", Alias: ".NETCoreApp,Version=v8.0"),
+            (Name: "target-graphs", MapPath: "targets", Alias: ".NETCoreApp,Version=v8.0"),
+            (Name: "dependency-groups", MapPath: "projectFileDependencyGroups", Alias: ".NETCoreApp,Version=v8.0")
+        };
+
+        foreach (var duplicateMap in duplicateMaps)
+        {
+            foreach (var duplicateKind in new[] { "case", "moniker" })
+            {
+                var path = Path.Combine(Path.GetDirectoryName(assets)!, $"restore-identity-{duplicateMap.Name}-{duplicateKind}.assets.json");
+                var document = JsonNode.Parse(File.ReadAllText(format4Path))!.AsObject();
+                var map = GetIdentityMap(document, duplicateMap.MapPath);
+                var alias = duplicateKind == "case" ? "NET8.0" : duplicateMap.Alias;
+                var duplicate = map["net8.0"]!.DeepClone();
+                if (duplicateMap.MapPath.Contains("frameworks", StringComparison.Ordinal))
+                {
+                    duplicate!["framework"] = "net9.0";
+                    duplicate["targetAlias"] = "net9.0";
+                }
+                map[alias] = duplicate;
+                File.WriteAllText(path, document.ToJsonString());
+                try
+                {
+                    AssertRestoreIdentityFailure(path, scratch, baselinePath, $"{duplicateMap.Name} {duplicateKind} duplicate");
+                }
+                finally
+                {
+                    File.Delete(path);
+                }
+            }
+
+            var exactPath = Path.Combine(Path.GetDirectoryName(assets)!, $"restore-identity-{duplicateMap.Name}-raw-exact.assets.json");
+            var raw = File.ReadAllText(format4Path);
+            var rawMap = GetIdentityMap(JsonNode.Parse(raw)!.AsObject(), duplicateMap.MapPath);
+            var rawValue = rawMap["net8.0"]!.ToJsonString();
+            var rawDuplicate = InsertExactPropertyDuplicate(raw, "net8.0", rawValue);
+            File.WriteAllText(exactPath, rawDuplicate);
+            try
+            {
+                AssertRestoreIdentityFailure(exactPath, scratch, baselinePath, $"{duplicateMap.Name} raw exact duplicate");
+            }
+            finally
+            {
+                File.Delete(exactPath);
+            }
+        }
+
+        foreach (var (name, mutate) in new (string Name, Action<JsonObject> Mutate)[]
+        {
+            ("library-no-slash", root => root["libraries"]!.AsObject()["MalformedPackage"] = new JsonObject
+            {
+                ["type"] = "package", ["path"] = "MalformedPackage", ["files"] = new JsonArray()
+            }),
+            ("library-empty-id", root => root["libraries"]!.AsObject()["/1.0.0"] = new JsonObject
+            {
+                ["type"] = "package", ["path"] = "/1.0.0", ["files"] = new JsonArray()
+            }),
+            ("library-empty-version", root => root["libraries"]!.AsObject()["MalformedPackage/"] = new JsonObject
+            {
+                ["type"] = "package", ["path"] = "MalformedPackage/", ["files"] = new JsonArray()
+            }),
+            ("library-extra-slash", root => root["libraries"]!.AsObject()["Malformed/1.0.0/extra"] = new JsonObject
+            {
+                ["type"] = "package", ["path"] = "Malformed/1.0.0/extra", ["files"] = new JsonArray()
+            }),
+            ("library-invalid-id", root => root["libraries"]!.AsObject()["Malformed Package/1.0.0"] = new JsonObject
+            {
+                ["type"] = "package", ["path"] = "Malformed Package/1.0.0", ["files"] = new JsonArray()
+            }),
+            ("library-invalid-version", root => root["libraries"]!.AsObject()["Malformed/1.x"] = new JsonObject
+            {
+                ["type"] = "package", ["path"] = "Malformed/1.x", ["files"] = new JsonArray()
+            }),
+            ("target-no-slash", root => root["targets"]!["net8.0"]!.AsObject()["MalformedPackage"] = new JsonObject()),
+            ("target-empty-id", root => root["targets"]!["net8.0"]!.AsObject()["/1.0.0"] = new JsonObject()),
+            ("target-empty-version", root => root["targets"]!["net8.0"]!.AsObject()["MalformedPackage/"] = new JsonObject()),
+            ("target-extra-slash", root => root["targets"]!["net8.0"]!.AsObject()["Malformed/1.0.0/extra"] = new JsonObject())
+        })
+        {
+            var path = Path.Combine(Path.GetDirectoryName(assets)!, "restore-identity-" + name + ".assets.json");
+            var document = JsonNode.Parse(File.ReadAllText(format4Path))!.AsObject();
+            mutate(document);
+            File.WriteAllText(path, document.ToJsonString());
+            try
+            {
+                AssertRestoreIdentityFailure(path, scratch, baselinePath, name);
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        }
+
+        var recovered = ResolvedGraphClassifier.Analyze(format4Path, scratch, strictContent: false);
+        Require(recovered.IsComplete && recovered.ResolvedPackageCount == 1,
+            "The valid restore-identity fixture did not recover after invalid identity probes.");
+
+        var narrowedRoot = Path.Combine(scratch, "restore-identity-narrowed");
+        var validProject = Path.Combine(narrowedRoot, "Valid", "Valid.csproj");
+        var invalidProject = Path.Combine(narrowedRoot, "Invalid", "Invalid.csproj");
+        foreach (var projectPath in new[] { validProject, invalidProject })
+        {
+            var projectRoot = Path.GetDirectoryName(projectPath)!;
+            var projectAssets = Path.Combine(projectRoot, "obj", "project.assets.json");
+            Directory.CreateDirectory(Path.GetDirectoryName(projectAssets)!);
+            File.WriteAllText(projectPath, "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>");
+            var narrowedDocument = JsonNode.Parse(File.ReadAllText(format4Path))!.AsObject();
+            narrowedDocument["project"]!["restore"]!["projectPath"] = projectPath;
+            if (projectPath == invalidProject)
+            {
+                narrowedDocument["project"]!["frameworks"]!.AsObject()[".NETCoreApp,Version=v8.0"] = new JsonObject
+                {
+                    ["framework"] = "net9.0",
+                    ["targetAlias"] = "net9.0",
+                    ["dependencies"] = new JsonObject { ["XmlPackage"] = new JsonObject() }
+                };
+            }
+
+            File.WriteAllText(projectAssets, narrowedDocument.ToJsonString());
+            WriteGeneratedImportEvidence(projectAssets, Path.GetFileName(projectPath));
+        }
+
+        var solution = Path.Combine(narrowedRoot, "RestoreIdentity.sln");
+        File.WriteAllText(solution, string.Join(Environment.NewLine,
+            "Project(\"{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}\") = \"Valid\", \"Valid\\Valid.csproj\", \"{11111111-1111-1111-1111-111111111111}\"",
+            "EndProject",
+            "Project(\"{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}\") = \"Invalid\", \"Invalid\\Invalid.csproj\", \"{22222222-2222-2222-2222-222222222222}\"",
+            "EndProject"));
+
+        var aggregate = CaptureCommand("scan", solution, "--format", "json", "--no-telemetry");
+        Require(aggregate.ExitCode == 2 && aggregate.Output.Contains("PS007", StringComparison.Ordinal) &&
+                !aggregate.Output.Contains("ToolOrScriptPresent", StringComparison.Ordinal),
+            "Selecting a valid and malformed restore identity together did not fail closed.");
+        var narrowed = CaptureCommand("scan", solution, "--project", validProject, "--format", "json", "--no-telemetry");
+        Require(narrowed.ExitCode == 0 && !narrowed.Output.Contains("PS007", StringComparison.Ordinal),
+            $"--project did not recover the valid restore identity from a malformed sibling: exit={narrowed.ExitCode}; output={narrowed.Output}");
+    }
+    finally
+    {
+        if (File.Exists(format4Path)) File.Delete(format4Path);
+        if (File.Exists(baselinePath)) File.Delete(baselinePath);
+    }
+}
+
+static JsonObject GetIdentityMap(JsonObject document, string path)
+{
+    var segments = path.Split('.');
+    JsonNode current = document;
+    foreach (var segment in segments)
+    {
+        current = current[segment] ?? throw new InvalidOperationException($"Identity map path '{path}' was not found.");
+    }
+
+    return current.AsObject();
+}
+
+static string InsertExactPropertyDuplicate(string json, string propertyName, string value)
+{
+    var token = JsonSerializer.Serialize(propertyName) + ":" + value;
+    var first = json.IndexOf(token, StringComparison.Ordinal);
+    Require(first >= 0, $"Could not locate exact property token for '{propertyName}'.");
+    return json[..first] + token + "," + token + json[(first + token.Length)..];
+}
+
+static void AssertRestoreIdentityFailure(string assets, string projectRoot, string baseline, string label)
+{
+    var baselineBefore = File.ReadAllBytes(baseline);
+    foreach (var format in new[] { "text", "json", "sarif" })
+    {
+        var direct = ResolvedGraphClassifier.Analyze(assets, projectRoot, strictContent: false);
+        Require(!direct.IsComplete && direct.Entries.Count == 0 && direct.IncompleteReasons.Count > 0,
+            $"{label} was not rejected before capability filtering.");
+
+        var scan = CaptureCommand("scan", assets, "--format", format, "--no-telemetry");
+        Require(scan.ExitCode == 2 && scan.Output.Contains("PS007", StringComparison.Ordinal),
+            $"{label} emitted a clean {format} scan.");
+        AssertNoSuccessfulSurfaceOutput(scan.Output, format, label + " scan");
+
+        var failedBaseline = CaptureCommand("baseline", assets, "--output", baseline, "--format", format, "--no-telemetry");
+        Require(failedBaseline.ExitCode == 2 && failedBaseline.Output.Contains("PS007", StringComparison.Ordinal),
+            $"{label} emitted a clean {format} baseline.");
+        AssertNoSuccessfulSurfaceOutput(failedBaseline.Output, format, label + " baseline");
+        Require(baselineBefore.SequenceEqual(File.ReadAllBytes(baseline)),
+            $"{label} mutated the existing baseline.");
+
+        var check = CaptureCommand("check", assets, "--baseline", baseline, "--format", format, "--no-telemetry");
+        Require(check.ExitCode == 2 && check.Output.Contains("PS007", StringComparison.Ordinal),
+            $"{label} emitted a clean {format} check.");
+        AssertNoSuccessfulSurfaceOutput(check.Output, format, label + " check");
+    }
+}
+
+static void AssertNoSuccessfulSurfaceOutput(string output, string format, string label)
+{
+    var entryLine = output.Contains("Entries:", StringComparison.Ordinal);
+    Require((!entryLine || output.Contains("Entries: 0;", StringComparison.Ordinal)) &&
+            !output.Contains("PS001", StringComparison.Ordinal) &&
+            !output.Contains("PS002", StringComparison.Ordinal) &&
+            !output.Contains("PS003", StringComparison.Ordinal) &&
+            !output.Contains("PS004", StringComparison.Ordinal) &&
+            !output.Contains("PS005", StringComparison.Ordinal) &&
+            !output.Contains("PS006", StringComparison.Ordinal),
+        $"{label} emitted success-looking output.");
+
+    if (format.Equals("json", StringComparison.Ordinal))
+    {
+        using var document = JsonDocument.Parse(output);
+        Require(document.RootElement.GetProperty("entries").GetArrayLength() == 0,
+            $"{label} emitted surface entries.");
+    }
+    else if (format.Equals("sarif", StringComparison.Ordinal))
+    {
+        using var document = JsonDocument.Parse(output);
+        var results = document.RootElement.GetProperty("runs")[0].GetProperty("results");
+        Require(results.EnumerateArray().All(result => result.GetProperty("ruleId").GetString() == "PS007"),
+            $"{label} emitted a non-PS007 SARIF result.");
     }
 }
 

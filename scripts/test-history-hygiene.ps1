@@ -121,6 +121,10 @@ try {
     if ($historyText.Output -match $pattern) {
         $violations.Add('history metadata')
     }
+    $historyTaskIdPattern = '\b(?!SHA-)[A-Z]{2,8}-[0-9]{3,6}\b'
+    if ($historyText.Output -match $historyTaskIdPattern) {
+        $violations.Add('history task identifier')
+    }
 
     if ($violations.Count -gt 0) {
         throw ('Restricted text found: ' + ($violations -join ', '))

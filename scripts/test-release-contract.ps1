@@ -3,9 +3,6 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $validator = Join-Path $root 'scripts/validate-release.ps1'
 $projectFile = Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/KeelMatrix.PackageSurface.Cli.csproj'
 $realChangelog = Join-Path $root 'CHANGELOG.md'
-$workflowDirectory = Join-Path $root '.github/workflows'
-$ciWorkflowPath = Join-Path $workflowDirectory 'ci.yml'
-$releaseWorkflowPath = Join-Path $workflowDirectory 'release.yml'
 $localGatePath = Join-Path $root 'scripts/run-local-gate.ps1'
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('packagesurface-release-contract-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $scratch | Out-Null
@@ -52,70 +49,11 @@ try {
     if (-not $versionMatch.Success) { throw 'The real packable project has no explicit package version.' }
     $version = $versionMatch.Groups['version'].Value.Trim()
 
-    if (-not (Test-Path -LiteralPath $ciWorkflowPath -PathType Leaf)) { throw 'CI workflow is missing.' }
-    if (-not (Test-Path -LiteralPath $releaseWorkflowPath -PathType Leaf)) { throw 'Release workflow is missing.' }
-    $ciWorkflow = Get-Content -LiteralPath $ciWorkflowPath -Raw
-    $releaseWorkflow = Get-Content -LiteralPath $releaseWorkflowPath -Raw
-
-    foreach ($required in @(
-        'push:',
-        'branches:',
-        '- main',
-        'pull_request:',
-        'workflow_dispatch:',
-        'commit_sha:',
-        'required: false',
-        'type: string',
-        'inputs.commit_sha || github.sha',
-        'fetch-depth: 0',
-        'persist-credentials: false',
-        'global-json-file: global.json',
-        'dotnet restore ./KeelMatrix.PackageSurface.sln --configfile ./NuGet.config --force',
-        'pwsh -NoLogo -NoProfile -File ./scripts/run-local-gate.ps1',
-        'windows-latest',
-        'ubuntu-latest',
-        'macos-latest',
-        'fail-fast: false',
-        'KEELMATRIX_TELEMETRY: ''off''',
-        'permissions:',
-        'contents: read',
-        'cancel-in-progress: true',
-        'timeout-minutes: 45',
-        'commit_sha must be a full 40-character commit SHA.',
-        'git rev-parse HEAD'
-    )) {
-        if (-not $ciWorkflow.Contains($required, [StringComparison]::Ordinal)) { throw "CI workflow is missing '$required'." }
-    }
-
-    if ($releaseWorkflow -notmatch "(?ms)^on:\s*\r?\n\s+push:\s*\r?\n\s+tags:\s*\r?\n\s+- 'v\*\.\*\.\*'") {
-        throw 'Release workflow must be tag-triggered only for v*.*.*.'
-    }
-    foreach ($required in @(
-        'global-json-file: global.json',
-        'timeout-minutes: 45',
-        'actions/download-artifact@v4',
-        'KEELMATRIX_TELEMETRY: ''off''',
-        './scripts/validate-release.ps1 -Version $version -RequireFinalized -FirstRelease',
-        './scripts/run-local-gate.ps1 -ArtifactDirectory artifacts/release',
-        'path: artifacts/release/*',
-        'NuGet/login@v1',
-        'user: dmitriyzen',
-        'needs: validate',
-        'needs: [validate, publish]',
-        'dotnet nuget push',
-        'gh release create',
-        '--verify-tag',
-        '--repo "${{ github.repository }}"'
-    )) {
-        if (-not $releaseWorkflow.Contains($required, [StringComparison]::Ordinal)) { throw "Release workflow is missing '$required'." }
-    }
-    if ($releaseWorkflow.Contains("PACKAGE_VERSION:", [StringComparison]::Ordinal)) { throw 'Release workflow maintains a second hard-coded package-version definition.' }
-    if ($releaseWorkflow.Contains('run-phase0.ps1', [StringComparison]::Ordinal)) { throw 'Release workflow runs a mutating standalone Phase 0 step.' }
-    if ($releaseWorkflow -match '(?m)dotnet\s+run\s+--project\s+tests/') { throw 'Release workflow duplicates console leaf tests beside the canonical gate.' }
-    if ($releaseWorkflow -match '(?m)^\s*run:\s*dotnet\s+pack\b') { throw 'Release workflow repacks a separately validated artifact.' }
-    if ($releaseWorkflow -notmatch '(?s)validate:.*outputs:.*version:.*release_contract') { throw 'Release workflow does not pass the validated tag version to downstream jobs.' }
-    if ($releaseWorkflow -notmatch '(?s)publish:.*needs:\s*validate.*NuGet/login@v1') { throw 'Publish does not depend on validation and Trusted Publishing.' }
-    if ($releaseWorkflow -notmatch '(?s)github-release:.*needs:\s*\[validate, publish\]') { throw 'GitHub Release is not ordered after validation and publication.' }
+    $hostedWorkflowDirectory = Join-Path $root '.github'
+    if (Test-Path -LiteralPath $hostedWorkflowDirectory) { throw 'Hosted workflow configuration is outside this repository contract.' }
+    $trackedHostedFiles = @(& git -C $root ls-files -- .github 2>&1)
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to verify that hosted workflow files are absent.' }
+    if ($trackedHostedFiles.Count -ne 0) { throw 'Tracked hosted workflow files are outside this repository contract.' }
 
     $localGate = Get-Content -LiteralPath $localGatePath -Raw
     foreach ($requiredGate in @('scripts/test-release-contract.ps1', 'scripts/test-vulnerability-audit.ps1', 'validate-package-artifact.ps1', 'dotnet pack')) {
@@ -155,7 +93,7 @@ try {
     [IO.File]::WriteAllText($mismatchedChangelog, "# Changelog`n`n## [9.9.9] - 2026-09-22`n`n- Wrong version.`n", [Text.UTF8Encoding]::new($false))
     Assert-ValidationRejects 'changelog/version disagreement' (Invoke-ReleaseValidation -Version $version -ChangelogPath $mismatchedChangelog -RequireFinalized -FirstRelease)
 
-    Write-Output 'PASS: restored CI/release workflows use one shared fail-closed release contract; real candidate, finalized, and version-mismatch cases behave as required.'
+    Write-Output 'PASS: the repository has no hosted workflow configuration and its shared fail-closed release contract rejects planned, invalid, and version-mismatched candidates.'
 }
 finally {
     if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force }

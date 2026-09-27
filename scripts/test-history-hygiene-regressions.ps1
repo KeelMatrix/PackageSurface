@@ -20,7 +20,7 @@ function Invoke-External {
 }
 
 function New-Repository {
-    param([string] $Path, [switch] $WithMarker, [switch] $TwoCommits)
+    param([string] $Path, [switch] $WithMarker, [switch] $WithTaskId, [switch] $TwoCommits)
 
     New-Item -ItemType Directory -Force -Path $Path | Out-Null
     Invoke-External 'git' @('init', '--quiet', '--', $Path) | Out-Null
@@ -35,7 +35,8 @@ function New-Repository {
     }
     [IO.File]::WriteAllText((Join-Path $Path 'tracked.txt'), $content)
     Invoke-External 'git' @('-C', $Path, 'add', '--', 'tracked.txt') | Out-Null
-    Invoke-External 'git' @('-C', $Path, 'commit', '--quiet', '-m', 'fixture') | Out-Null
+    $message = if ($WithTaskId) { 'fixture ' + ('A' + 'BC' + '-' + '1' + '234') } else { 'fixture' }
+    Invoke-External 'git' @('-C', $Path, 'commit', '--quiet', '-m', $message) | Out-Null
     if ($TwoCommits) {
         [IO.File]::AppendAllText((Join-Path $Path 'tracked.txt'), [Environment]::NewLine + 'second')
         Invoke-External 'git' @('-C', $Path, 'add', '--', 'tracked.txt') | Out-Null
@@ -187,7 +188,11 @@ exit 128
     New-Repository $markerRoot -WithMarker
     Assert-ExpectedFailure 'restricted-marker' $markerRoot 'Restricted text found' ''
 
-    Write-Output 'PASS: hygiene gate rejects command failure, shallow history, and a tracked restricted marker in disposable repositories.'
+    $taskIdRoot = Join-Path $scratch 'task-id'
+    New-Repository $taskIdRoot -WithTaskId
+    Assert-ExpectedFailure 'history-task-identifier' $taskIdRoot 'history task identifier' ''
+
+    Write-Output 'PASS: hygiene gate rejects command failure, shallow history, tracked restricted markers, and task identifiers in disposable repositories.'
     exit 0
 }
 finally {

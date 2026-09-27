@@ -18,7 +18,7 @@ Installed check: exit 0, 190 ms
 Result: REAL_MULTI_TARGET_FRAMEWORK_RECONCILIATION=PASS
 ```
 
-Synthetic coverage also passes for `.NETCoreApp,Version=v8.0` ↔ `net8.0`, `.NETFramework,Version=v4.7.2` ↔ `net472`, dotted `net4.7.2` aliases, case-insensitive forms, RID-suffixed targets, format-4 project/restore metadata with different equivalent spellings, and a declared framework with no target graph. The negative remains incomplete with `PS007` semantics.
+Synthetic coverage also passes for `.NETCoreApp,Version=v8.0` ↔ `net8.0`, `.NETFramework,Version=v4.7.2` ↔ `net472`, dotted `net4.7.2` aliases, case-insensitive forms, RID-suffixed targets, format-4 project/restore metadata with different equivalent spellings, and a declared framework with no target graph. Format-4 dependency-group values are restore identities and casing-equivalent duplicates remain incomplete with `PS007`; generated-import reachability likewise fails closed when an import is absent from an applicable target graph. The negative remains incomplete with `PS007` semantics.
 
 ## Native assets format evidence
 

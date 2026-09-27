@@ -6,7 +6,7 @@
 
 The probe reads only reachable entries from `project.assets.json`; it does not restore, evaluate MSBuild, load dependency assemblies, start analysis processes, or query a feed.
 
-Supported restore evidence formats: coherent SDK-style assets formats 1 through 4. Format 4 framework aliases are mapped to their effective framework for surface entries, while mismatched or incomplete v4 metadata remains `PS007` evidence.
+Supported restore evidence formats: coherent SDK-style assets formats 1 through 4. Format 4 framework aliases are mapped to their effective framework for surface entries, dependency-group identities are case-insensitive, and mismatched, duplicate, or incomplete v4 metadata remains `PS007` evidence. Generated top-level and nested imports are checked against the applicable target-graph package closure before active filtering.
 
 ## Per-category comparison
 

@@ -294,7 +294,7 @@ static void RunGeneratedImportFileIdentityRegression(string baselineAssets)
         File.WriteAllText(Path.Combine(scratch, "obj", "Other.csproj.nuget.g.props"), "<Project />");
 
         var analyzed = ResolvedGraphClassifier.Analyze(Path.Combine(scratch, "obj", "project.assets.json"), scratch, strictContent: false);
-        if (analyzed.IsComplete || !analyzed.IncompleteReasons.Any(reason => reason.Contains("required generated NuGet import evidence is missing", StringComparison.OrdinalIgnoreCase)))
+        if (analyzed.IsComplete || !analyzed.IncompleteReasons.Any(reason => reason.Contains("Expected generated import file", StringComparison.OrdinalIgnoreCase)))
         {
             throw new InvalidOperationException($"Generated import filename mismatch was treated as complete; expected {projectFileName}.nuget.g.props evidence. Reasons: {string.Join("; ", analyzed.IncompleteReasons)}");
         }

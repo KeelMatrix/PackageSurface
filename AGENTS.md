@@ -7,7 +7,7 @@
 - `fixtures/packages/` and `fixtures/consumer/` contain the controlled restored package corpus and consumer projects.
 - `scripts/run-phase0.ps1` builds the permanent fixture corpus, restores consumers, runs the classifier, and writes evidence.
 - `scripts/run-local-gate.ps1` is the validation entrypoint for restore, fixture coverage, formatting, Release build, no-execution proof, package inspection, vulnerability policy, installed-tool smoke, and consumer regressions.
-- `scripts/validate-release.ps1` is the shared package-version/changelog contract used by local checks before any founder-authorized release.
+- `scripts/validate-release.ps1` is the shared package-version/changelog contract used by local checks before an approved release.
 - `tools/NoExecutionProof/` checks the compiled classifier for forbidden execution, MSBuild, and network references.
 
 ## Commands
@@ -28,11 +28,11 @@ The local gate is the authoritative validation entrypoint. It uses a controlled 
 - Analysis starts at an existing `project.assets.json` and inspects only reachable package versions.
 - The classifier never loads package assemblies, evaluates MSBuild, starts processes, or accesses a network API.
 - Present and active are separate facts; unsupported or malformed material is incomplete.
-- One canonical restore-identity index reconciles framework keys, effective frameworks, target aliases, target/RID keys, dependency groups, and package `ID/version` identities before reachability and capability filtering; incoherent or duplicate identities are incomplete.
+- One canonical restore-identity index reconciles framework keys, effective frameworks, target aliases, target/RID keys, dependency groups, and package `ID/version` identities before reachability and capability filtering; both-direction set differences and incoherent or duplicate identities are incomplete. Project, target-package, and format-4 dependency values must use supported restore grammar and match selected package versions.
 - Package-relative paths are used in evidence; machine cache roots never enter reports or baseline files.
 - Direct/transitive rules and analyzer applicability are evaluated per target framework and consuming language.
 - Fixture packages are test inputs, not shipping dependencies.
-- The root `icon.png` is founder-owned and must not be created, copied, edited, moved, or deleted.
+- The root `icon.png` is a protected repository asset and must not be created, copied, edited, moved, or deleted.
 
 ## Validation escalation
 

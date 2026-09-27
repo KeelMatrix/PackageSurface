@@ -80,15 +80,6 @@ public static class ResolvedGraphClassifier
             {
                 budget.AddLibrary();
             }
-            var directAssetRules = ReadDirectPackageAssetRules(root);
-            var targetAliases = ReadTargetAliases(root);
-            var targetFrameworks = ReadTargetFrameworks(root);
-            compilerApiVersion ??= ReadCompilerApiVersion(root);
-            var entries = new List<SurfaceEntry>();
-            var projectEntries = new Dictionary<string, List<SurfaceEntry>>(StringComparer.OrdinalIgnoreCase);
-            var resolvedPackages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var accumulatedEntries = 0;
-
             if (!root.TryGetProperty("targets", out var targets))
             {
                 throw new InvalidDataException("project.assets.json has no targets object.");
@@ -103,6 +94,21 @@ public static class ResolvedGraphClassifier
             {
                 budget.AddTargetGraph();
             }
+
+            ValidateRestoreIdentities(root, libraries, targets, incomplete);
+            if (incomplete.Count > 0)
+            {
+                return new ProbeResult(Array.Empty<SurfaceEntry>(), incomplete.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray());
+            }
+
+            var directAssetRules = ReadDirectPackageAssetRules(root);
+            var targetAliases = ReadTargetAliases(root);
+            var targetFrameworks = ReadTargetFrameworks(root);
+            compilerApiVersion ??= ReadCompilerApiVersion(root);
+            var entries = new List<SurfaceEntry>();
+            var projectEntries = new Dictionary<string, List<SurfaceEntry>>(StringComparer.OrdinalIgnoreCase);
+            var resolvedPackages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var accumulatedEntries = 0;
             var packageRoots = ResolvePackageRoots(libraries, packageFolders, incomplete);
             var packageInventories = BuildPackageInventories(packageRoots, libraries, incomplete, budget);
             ValidateRestoreEvidence(root, libraries, targets, packageFolders, packageRoots, packageInventories, incomplete, budget);
@@ -1030,6 +1036,171 @@ public static class ResolvedGraphClassifier
             }
         }
 
+        return true;
+    }
+
+    private static void ValidateRestoreIdentities(JsonElement root, JsonElement libraries, JsonElement targets, List<string> incomplete)
+    {
+        AddPackageIdentityReasons(libraries, "library identity", incomplete);
+        AddTargetIdentityReasons(targets, incomplete);
+
+        if (root.TryGetProperty("project", out var project) && project.ValueKind == JsonValueKind.Object)
+        {
+            if (project.TryGetProperty("frameworks", out var frameworks))
+            {
+                AddFrameworkIdentityReasons(frameworks, "project framework identity", includeMetadata: true, incomplete);
+            }
+            else
+            {
+                incomplete.Add("Restore evidence has no declared framework graph.");
+            }
+
+            if (project.TryGetProperty("restore", out var restore))
+            {
+                if (restore.ValueKind != JsonValueKind.Object)
+                {
+                    incomplete.Add("Assets restore metadata is not an object.");
+                }
+                else if (restore.TryGetProperty("frameworks", out var restoreFrameworks))
+                {
+                    AddFrameworkIdentityReasons(restoreFrameworks, "restore framework identity", includeMetadata: true, incomplete);
+                }
+            }
+        }
+        else
+        {
+            incomplete.Add("Restore evidence has no project object.");
+        }
+
+        if (root.TryGetProperty("projectFileDependencyGroups", out var dependencyGroups))
+        {
+            AddFrameworkIdentityReasons(dependencyGroups, "format 4 dependency group", includeMetadata: false, incomplete);
+        }
+    }
+
+    private static void AddFrameworkIdentityReasons(JsonElement value, string description, bool includeMetadata, List<string> incomplete)
+    {
+        if (value.ValueKind != JsonValueKind.Object)
+        {
+            incomplete.Add($"Restore evidence contains an invalid {description} map.");
+            return;
+        }
+
+        AddDuplicatePropertyReasons(value, description, incomplete);
+        var identities = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var property in value.EnumerateObject())
+        {
+            if (!TryGetFrameworkIdentity(property.Name, out var identity))
+            {
+                incomplete.Add($"Restore evidence contains an invalid {description}.");
+                continue;
+            }
+
+            AddCanonicalIdentity(identities, identity, property.Name, description, incomplete);
+            if (!includeMetadata || property.Value.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            foreach (var metadataName in new[] { "framework", "targetAlias" })
+            {
+                if (!property.Value.TryGetProperty(metadataName, out var metadata))
+                {
+                    continue;
+                }
+
+                if (metadata.ValueKind != JsonValueKind.String || !TryGetFrameworkIdentity(metadata.GetString() ?? string.Empty, out var metadataIdentity))
+                {
+                    incomplete.Add($"Restore evidence contains an invalid {metadataName} for {description} {property.Name}.");
+                    continue;
+                }
+
+                AddCanonicalIdentity(identities, metadataIdentity, property.Name, description, incomplete);
+            }
+        }
+    }
+
+    private static void AddTargetIdentityReasons(JsonElement targets, List<string> incomplete)
+    {
+        if (targets.ValueKind != JsonValueKind.Object)
+        {
+            incomplete.Add("Restore evidence contains an invalid target graph map.");
+            return;
+        }
+
+        AddDuplicatePropertyReasons(targets, "target identity", incomplete);
+        var identities = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var target in targets.EnumerateObject())
+        {
+            if (!TryGetTargetIdentity(target.Name, out var identity))
+            {
+                incomplete.Add("Restore evidence contains an invalid target identity.");
+                continue;
+            }
+
+            AddCanonicalIdentity(identities, identity, target.Name, "target identity", incomplete);
+            if (target.Value.ValueKind != JsonValueKind.Object)
+            {
+                incomplete.Add($"Target {target.Name} is not an object.");
+            }
+        }
+    }
+
+    private static void AddPackageIdentityReasons(JsonElement packages, string description, List<string> incomplete)
+    {
+        if (packages.ValueKind != JsonValueKind.Object)
+        {
+            incomplete.Add($"Restore evidence contains an invalid {description} map.");
+            return;
+        }
+
+        AddDuplicatePropertyReasons(packages, description, incomplete);
+        var identities = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var package in packages.EnumerateObject())
+        {
+            if (!TrySplitPackageIdentity(package.Name, out var packageId, out var version))
+            {
+                incomplete.Add($"Restore evidence contains an invalid {description}.");
+                continue;
+            }
+
+            AddCanonicalIdentity(identities, packageId + "/" + version, package.Name, description, incomplete);
+        }
+    }
+
+    private static void AddCanonicalIdentity(
+        Dictionary<string, string> identities,
+        string identity,
+        string propertyName,
+        string description,
+        List<string> incomplete)
+    {
+        if (identities.TryGetValue(identity, out var prior) && !prior.Equals(propertyName, StringComparison.Ordinal))
+        {
+            incomplete.Add($"Restore evidence contains ambiguous {description} aliases.");
+            return;
+        }
+
+        identities.TryAdd(identity, propertyName);
+    }
+
+    private static bool TryGetFrameworkIdentity(string value, out string identity)
+    {
+        identity = NormalizeFrameworkMoniker(value);
+        return !string.IsNullOrEmpty(identity) && !identity.Contains('/', StringComparison.Ordinal);
+    }
+
+    private static bool TryGetTargetIdentity(string value, out string identity)
+    {
+        var (tfm, rid) = SplitTarget(value);
+        if (!TryGetFrameworkIdentity(tfm, out var frameworkIdentity) ||
+            rid is not null && (string.IsNullOrWhiteSpace(rid) || rid.Contains('/', StringComparison.Ordinal)))
+        {
+            identity = string.Empty;
+            return false;
+        }
+
+        identity = rid is null ? frameworkIdentity : frameworkIdentity + "/" + rid.Trim().ToLowerInvariant();
         return true;
     }
 
@@ -2414,9 +2585,69 @@ public static class ResolvedGraphClassifier
 
     private static (string Id, string Version) SplitPackageKey(string key)
     {
-        var slash = key.LastIndexOf('/');
-        return slash < 0 ? (key, string.Empty) : (key[..slash], key[(slash + 1)..]);
+        return TrySplitPackageIdentity(key, out var id, out var version)
+            ? (id, version)
+            : (string.Empty, string.Empty);
     }
+
+    private static bool TrySplitPackageIdentity(string key, out string id, out string version)
+    {
+        var slash = key.IndexOf('/');
+        if (slash <= 0 || slash != key.LastIndexOf('/') || slash == key.Length - 1)
+        {
+            id = string.Empty;
+            version = string.Empty;
+            return false;
+        }
+
+        id = key[..slash];
+        version = key[(slash + 1)..];
+        if (!IsValidPackageId(id) || !IsValidPackageVersion(version))
+        {
+            id = string.Empty;
+            version = string.Empty;
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool IsValidPackageId(string value)
+    {
+        if (value.Length == 0 || value is "." or "..") return false;
+        foreach (var character in value)
+        {
+            if (!char.IsLetterOrDigit(character) && character is not ('.' or '-' or '_'))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsValidPackageVersion(string value)
+    {
+        if (value.Length == 0 || !char.IsDigit(value[0])) return false;
+        var buildSeparator = value.IndexOf('+');
+        var versionWithoutBuild = buildSeparator < 0 ? value : value[..buildSeparator];
+        var build = buildSeparator < 0 ? null : value[(buildSeparator + 1)..];
+        if (buildSeparator >= 0 && (build!.Length == 0 || build.Contains('+', StringComparison.Ordinal))) return false;
+
+        var prereleaseSeparator = versionWithoutBuild.IndexOf('-');
+        var numeric = prereleaseSeparator < 0 ? versionWithoutBuild : versionWithoutBuild[..prereleaseSeparator];
+        var prerelease = prereleaseSeparator < 0 ? null : versionWithoutBuild[(prereleaseSeparator + 1)..];
+        if (numeric.Length == 0 || numeric.Split('.').Any(part => part.Length == 0 || part.Any(character => !char.IsDigit(character))))
+        {
+            return false;
+        }
+
+        return (prerelease is null || IsValidVersionIdentifiers(prerelease)) &&
+            (build is null || IsValidVersionIdentifiers(build));
+    }
+
+    private static bool IsValidVersionIdentifiers(string value) =>
+        value.Length > 0 && value.Split('.').All(part => part.Length > 0 && part.All(character => char.IsLetterOrDigit(character) || character == '-'));
 
     private static bool TryNormalizeRelativePath(string value, out string normalized)
     {

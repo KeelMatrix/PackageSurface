@@ -321,8 +321,10 @@ public sealed record Options(
         follows only bounded static package-import chains, and reports PS007 when applicability
         or restore consistency cannot be established. Generated top-level and nested imports
         must resolve to packages in every applicable target graph. An incomplete invocation
-        emits no surface entries and never replaces a baseline. It does not evaluate MSBuild
-        conditions, execute package code, or crawl the global package cache.
+        emits no surface entries and never replaces a baseline. Framework, target, dependency-
+        group, and library identities use case/effective-moniker canonicalization before capability
+        filtering; duplicate aliases or malformed package ID/version keys are PS007. It does not
+        evaluate MSBuild conditions, execute package code, or crawl the global package cache.
         """;
 
     public static ParseResult Parse(string[] args)

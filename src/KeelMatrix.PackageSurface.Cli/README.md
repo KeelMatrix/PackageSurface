@@ -43,6 +43,8 @@ Exit code `0` means a scan or baseline succeeded, or a check passed. A check dif
 
 Fail-closed analysis is transactional across the complete selection: a `PS007` result emits no surface entries or success-looking report, `baseline` preserves its existing file, and `check` does not report a policy difference. Use `--project` to recover from an over-budget or ambiguous multi-project selection. Generated top-level and nested imports must resolve to packages reachable in every applicable target graph; orphan, case-variant, cross-TFM/RID, or incomplete import evidence is `PS007`.
 
+Restore identity validation runs before capability filtering. `project.frameworks`, `project.restore.frameworks`, format-4 dependency-group keys, and target-graph keys must be non-empty and unique after case and effective-moniker canonicalization. Library and target package keys must be valid, non-empty `ID/version` identities. Exact duplicates, case-folded duplicates, effective-moniker aliases such as `net8.0` and `.NETCoreApp,Version=v8.0`, and malformed package ID/version keys return `PS007`; valid project paths and package requirements in dependency-group values remain supported.
+
 Review and commit the baseline. A later dependency update that changes active build, compiler, source-injection, or native capability produces `PS001`–`PS006` and exit code `1`. Missing or incomplete restore evidence produces `PS007` and exit code `2`.
 
 ## Contract

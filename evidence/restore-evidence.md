@@ -1,6 +1,8 @@
-# Restore evidence
+# Restore compatibility evidence
 
-This record captures the restore-framework compatibility and assets-format evidence for the current pre-release candidate.
+This record captures restore-framework compatibility and assets-format evidence from controlled candidate runs. The exact
+candidate SHA, command durations, and current platform status belong in the candidate handoff; the examples below are
+not a claim that a later checkout has the same state.
 
 ## Framework reconciliation
 
@@ -32,13 +34,8 @@ pwsh -NoLogo -NoProfile -File scripts/test-assets-format.ps1 -SdkVersion 10.0.40
 
 Observed results were formats 3, 3, 3, 3, and 4 respectively. SDK `10.0.401` therefore produced a real native format-4 assets file with the default restore configuration; its installed-tool scan, baseline, and check each returned exit 0. Native format-4 production is verified with SDK `10.0.401`, while the pinned SDK `8.0.425` produces format 3. No claim is made that every SDK or restore configuration produces format 4.
 
-## Acceptance accounting
+## Interpretation
 
-The first-release acceptance self-review accounting for the restore-evidence row is now:
-
-- 144 criteria met
-- 26 criteria not applicable
-- 0 criteria unmet
-- 0 checklist rows unverified
-
-Native format-4 generation under the pinned SDK is retained as an explicitly documented environment distinction, not counted as an unmet checklist row.
+Native format-4 generation under the pinned SDK remains an explicitly documented environment distinction. Candidate
+acceptance accounting is maintained against the read-only first-release criteria for the exact reviewed SHA and must not be
+inferred from this reusable restore evidence alone.

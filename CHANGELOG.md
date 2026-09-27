@@ -21,4 +21,7 @@ PackageSurface release history.
 
 - Restore validation now fails closed for malformed typed metadata and shares structural, import-edge, and dependency-traversal budgets across the complete invocation.
 - Nested package imports inherit their importing capability and phase context, generated-import edges consume the cumulative edge budget, and baseline replacement is coupled transactionally to final report generation.
+- Incomplete multi-project selections are transactional: every `PS007`/structural-budget failure discards accumulated entries, emits no clean-looking text/JSON/SARIF result, and preserves an existing baseline so `--project` narrowing can recover.
+- Generated top-level and nested imports are validated against the case-insensitive package identities reachable in every applicable target graph, including conditional, phase/diamond, TFM/RID, and orphan-package cases; format-4 dependency-group identities are also case-insensitive.
+- Filesystem containment uses a canonicalization seam for deterministic ancestor-link regression coverage while continuing to reject reparse points within the declared package/cache root.
 - Activation telemetry remains best-effort and opt-out. The shared payload contract is explicit: activation serializes `event`, `tool`, `tool_version`, `telemetry_version`, `schema_version`, `project_hash`, `installation_hash`, `runtime`, `os`, `ci`, and `timestamp`; PackageSurface adds no scanned package, asset, path, TFM, RID, baseline, or diagnostic data.

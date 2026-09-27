@@ -38,7 +38,9 @@ if (incomplete.Diagnostics.Count != 1 || incomplete.Diagnostics[0].Id != "PS007"
 }
 
 if (!Options.HelpText.Contains("Activation fields: event, tool, tool_version, telemetry_version, schema_version", StringComparison.Ordinal) ||
-    !Options.HelpText.Contains("https://github.com/KeelMatrix/Telemetry/blob/main/PRIVACY.md", StringComparison.Ordinal))
+    !Options.HelpText.Contains("https://github.com/KeelMatrix/Telemetry/blob/main/PRIVACY.md", StringComparison.Ordinal) ||
+    !Options.HelpText.Contains("Generated top-level and nested imports", StringComparison.Ordinal) ||
+    !Options.HelpText.Contains("never replaces a baseline", StringComparison.Ordinal))
 {
     Console.Error.WriteLine("CLI telemetry privacy contract is missing from --help.");
     return 1;
@@ -111,6 +113,7 @@ static void RunClassifierHardeningTests()
         RunDiagnosticPathLeakRegression(scratch);
         RunApplicabilityHardeningRegressions(scratch);
         RunNestedImportRegression(scratch);
+        RunGeneratedImportReachabilityRegression(scratch);
         RunImportEdgeBudgetRegression(scratch);
         RunInvocationStructuralBudgetRegression(scratch);
 
@@ -128,6 +131,8 @@ static void RunClassifierHardeningTests()
         File.WriteAllBytes(Path.Combine(invalidPe, "invalid.dll"), new byte[] { 0x4D, 0x5A, 0x00, 0x01, 0x02 });
         var invalidPeResult = ResolvedGraphClassifier.Analyze(invalidPeAssets, scratch, strictContent: false);
         Require(!invalidPeResult.IsComplete && invalidPeResult.IncompleteReasons.Any(reason => reason.Contains("analyzer metadata", StringComparison.OrdinalIgnoreCase)), "Invalid compiler metadata was not rejected.");
+
+        RunAncestorCanonicalizationRegression(scratch);
 
         var oversized = Path.Combine(obj, "oversized.assets.json");
         File.WriteAllText(oversized, new string('x', 16 * 1024 * 1024 + 1));
@@ -749,6 +754,113 @@ static void RunImportEdgeBudgetRegression(string scratch)
         "The over-budget import graph emitted partial capability success output.");
 }
 
+static void RunGeneratedImportReachabilityRegression(string scratch)
+{
+    var directRoot = Path.Combine(scratch, "orphan-generated-import");
+    var directCache = Path.Combine(directRoot, "cache");
+    var directObj = Path.Combine(directRoot, "obj");
+    Directory.CreateDirectory(directObj);
+    var directAssets = Path.Combine(directObj, "project.assets.json");
+    WriteAssets(directAssets, directCache, "Reachable.Package", Array.Empty<string>());
+    var directBaseline = Path.Combine(directRoot, "baseline.json");
+    Require(CaptureCommand("baseline", directAssets, "--output", directBaseline, "--no-telemetry").ExitCode == 0,
+        "The coherent direct-import fixture could not create its baseline.");
+    var directDocument = JsonNode.Parse(File.ReadAllText(directAssets))!.AsObject();
+    AddUnreachableImportPackage(directDocument, directCache, "Unused.Package", "build/unused.targets");
+    File.WriteAllText(directAssets, directDocument.ToJsonString());
+    File.WriteAllText(Path.Combine(directObj, "Test.csproj.nuget.g.props"),
+        "<Project><Import Project=\"$(NuGetPackageRoot)/unused.package/1.0.0/build/unused.targets\" /></Project>");
+    AssertGeneratedImportFailure("direct orphan import", directAssets, directBaseline);
+
+    var coherentRoot = Path.Combine(scratch, "nested-orphan-generated-import");
+    var coherentCache = Path.Combine(coherentRoot, "cache");
+    var coherentObj = Path.Combine(coherentRoot, "obj");
+    Directory.CreateDirectory(coherentObj);
+    var coherentAssets = Path.Combine(coherentObj, "project.assets.json");
+    var coherentFiles = new[] { "build/outer.targets" };
+    WriteAssets(coherentAssets, coherentCache, "Reachable.Package", coherentFiles, createFiles: true);
+    File.WriteAllText(Path.Combine(coherentCache, "Reachable.Package", "1.0.0", "build", "outer.targets"), "<Project />");
+    var coherentBaseline = Path.Combine(coherentRoot, "baseline.json");
+    Require(CaptureCommand("baseline", coherentAssets, "--output", coherentBaseline, "--no-telemetry").ExitCode == 0,
+        "The coherent nested-import fixture could not create its baseline.");
+    var coherentDocument = JsonNode.Parse(File.ReadAllText(coherentAssets))!.AsObject();
+    coherentDocument["targets"]!["net8.0"]!["Reachable.Package/1.0.0"]!["build"] = new JsonObject { ["build/outer.targets"] = new JsonObject() };
+    File.WriteAllText(coherentAssets, coherentDocument.ToJsonString());
+    File.WriteAllText(Path.Combine(coherentObj, "Test.csproj.nuget.g.props"),
+        "<Project><Import Project=\"$(NuGetPackageRoot)/Reachable.Package/1.0.0/build/outer.targets\" /></Project>");
+    File.WriteAllText(Path.Combine(coherentObj, "Test.csproj.nuget.g.targets"), "<Project />");
+    File.WriteAllText(Path.Combine(coherentCache, "Reachable.Package", "1.0.0", "build", "outer.targets"), "<Project />");
+
+    coherentDocument = JsonNode.Parse(File.ReadAllText(coherentAssets))!.AsObject();
+    AddUnreachableImportPackage(coherentDocument, coherentCache, "Unused.Package", "build/unused.targets");
+    File.WriteAllText(coherentAssets, coherentDocument.ToJsonString());
+    File.WriteAllText(Path.Combine(coherentCache, "Reachable.Package", "1.0.0", "build", "outer.targets"),
+        "<Project><Import Project=\"$(NuGetPackageRoot)/Unused.Package/1.0.0/build/unused.targets\" /></Project>");
+    AssertGeneratedImportFailure("nested orphan import", coherentAssets, coherentBaseline);
+
+    var conditionalRoot = Path.Combine(scratch, "conditional-orphan-generated-import");
+    var conditionalCache = Path.Combine(conditionalRoot, "cache");
+    var conditionalObj = Path.Combine(conditionalRoot, "obj");
+    Directory.CreateDirectory(conditionalObj);
+    var conditionalAssets = Path.Combine(conditionalObj, "project.assets.json");
+    WriteAssets(conditionalAssets, conditionalCache, "Reachable.Package", Array.Empty<string>());
+    var conditionalBaseline = Path.Combine(conditionalRoot, "baseline.json");
+    Require(CaptureCommand("baseline", conditionalAssets, "--output", conditionalBaseline, "--no-telemetry").ExitCode == 0,
+        "The coherent conditional-import fixture could not create its baseline.");
+    var conditionalDocument = JsonNode.Parse(File.ReadAllText(conditionalAssets))!.AsObject();
+    conditionalDocument["project"]!["frameworks"]!["net9.0"] = new JsonObject { ["dependencies"] = new JsonObject() };
+    AddUnreachableImportPackage(conditionalDocument, conditionalCache, "Only.Net9", "build/net9.targets");
+    conditionalDocument["targets"]!["net9.0"] = new JsonObject
+    {
+        ["Only.Net9/1.0.0"] = new JsonObject { ["build"] = new JsonObject { ["build/net9.targets"] = new JsonObject() } }
+    };
+    File.WriteAllText(conditionalAssets, conditionalDocument.ToJsonString());
+    File.WriteAllText(Path.Combine(conditionalCache, "Only.Net9", "1.0.0", "build", "net9.targets"), "<Project />");
+    var conditionalImport = Path.Combine(conditionalObj, "Test.csproj.nuget.g.props");
+    File.WriteAllText(Path.Combine(conditionalObj, "Test.csproj.nuget.g.targets"), "<Project />");
+    File.WriteAllText(conditionalImport,
+        "<Project><Import Project=\"$(NuGetPackageRoot)/Only.Net9/1.0.0/build/net9.targets\" Condition=\"'$(TargetFramework)' == 'net8.0'\" /></Project>");
+    AssertGeneratedImportFailure("conditional target graph", conditionalAssets, conditionalBaseline);
+}
+
+static void AddUnreachableImportPackage(JsonObject document, string cache, string packageId, string relativePath)
+{
+    var packageKey = packageId + "/1.0.0";
+    document["libraries"]!.AsObject()[packageKey] = new JsonObject
+    {
+        ["type"] = "package",
+        ["path"] = packageKey,
+        ["files"] = new JsonArray(relativePath)
+    };
+    var packagePath = Path.Combine(cache, packageId, "1.0.0", relativePath.Replace('/', Path.DirectorySeparatorChar));
+    Directory.CreateDirectory(Path.GetDirectoryName(packagePath)!);
+    File.WriteAllText(packagePath, "<Project />");
+}
+
+static void AssertGeneratedImportFailure(string label, string assets, string baseline)
+{
+    var baselineBefore = File.ReadAllBytes(baseline);
+    foreach (var format in new[] { "text", "json", "sarif" })
+    {
+        var scan = CaptureCommand("scan", assets, "--format", format, "--no-telemetry");
+        Require(scan.ExitCode == 2 && scan.Output.Contains("PS007", StringComparison.Ordinal) &&
+                !scan.Output.Contains("BuildTargets", StringComparison.Ordinal) &&
+                !scan.Output.Contains("Unused.Package", StringComparison.Ordinal),
+            $"{label} emitted a clean or partial {format} scan result.");
+
+        var failedBaseline = CaptureCommand("baseline", assets, "--output", baseline, "--format", format, "--no-telemetry");
+        Require(failedBaseline.ExitCode == 2 && failedBaseline.Output.Contains("PS007", StringComparison.Ordinal) &&
+                !failedBaseline.Output.Contains("BuildTargets", StringComparison.Ordinal),
+            $"{label} emitted a clean or partial {format} baseline result.");
+        Require(baselineBefore.SequenceEqual(File.ReadAllBytes(baseline)), $"{label} mutated the baseline.");
+
+        var check = CaptureCommand("check", assets, "--baseline", baseline, "--format", format, "--no-telemetry");
+        Require(check.ExitCode == 2 && check.Output.Contains("PS007", StringComparison.Ordinal) &&
+                !check.Output.Contains("PS003", StringComparison.Ordinal),
+            $"{label} emitted a clean or policy-diff {format} check result.");
+    }
+}
+
 static void RunInvocationStructuralBudgetRegression(string scratch)
 {
     var root = Path.Combine(scratch, "invocation-budget");
@@ -760,13 +872,43 @@ static void RunInvocationStructuralBudgetRegression(string scratch)
         var obj = Path.Combine(projectRoot, "obj");
         Directory.CreateDirectory(obj);
         File.WriteAllText(Path.Combine(projectRoot, name + ".csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>");
-        WriteTargetGraphAssets(Path.Combine(obj, "project.assets.json"), Path.Combine(projectRoot, "cache"), Path.Combine(projectRoot, name + ".csproj"), 257);
+        WriteTargetGraphAssets(Path.Combine(obj, "project.assets.json"), Path.Combine(projectRoot, "cache"), Path.Combine(projectRoot, name + ".csproj"), 257, includeToolAsset: true);
     }
 
-    Require(CommandLine.Run(new[] { "scan", root, "--no-telemetry" }) == 2,
-        "Selecting two projects did not share the cumulative target-graph budget.");
-    Require(CommandLine.Run(new[] { "scan", Path.Combine(root, "ProjectA", "ProjectA.csproj"), "--project", Path.Combine(root, "ProjectA", "ProjectA.csproj"), "--no-telemetry" }) == 0,
+    var projectA = Path.Combine(root, "ProjectA", "ProjectA.csproj");
+    var baselinePath = Path.Combine(root, "approved.json");
+    var baselineResult = CaptureCommand("baseline", projectA, "--output", baselinePath, "--no-telemetry");
+    Require(baselineResult.ExitCode == 0, "The within-budget project could not create its recovery baseline.");
+    var baselineBefore = File.ReadAllBytes(baselinePath);
+
+    foreach (var format in new[] { "text", "json", "sarif" })
+    {
+        var scan = CaptureCommand("scan", root, "--format", format, "--no-telemetry");
+        Require(scan.ExitCode == 2 && scan.Output.Contains("PS007", StringComparison.Ordinal) &&
+                !scan.Output.Contains("ToolOrScriptPresent", StringComparison.Ordinal),
+            $"Cumulative target-graph overflow emitted partial {format} scan output.");
+
+        var baseline = CaptureCommand("baseline", root, "--output", baselinePath, "--format", format, "--no-telemetry");
+        Require(baseline.ExitCode == 2 && baseline.Output.Contains("PS007", StringComparison.Ordinal) &&
+                !baseline.Output.Contains("ToolOrScriptPresent", StringComparison.Ordinal),
+            $"Cumulative target-graph overflow emitted partial {format} baseline output.");
+        Require(baselineBefore.SequenceEqual(File.ReadAllBytes(baselinePath)),
+            $"Cumulative target-graph overflow mutated the baseline for {format} output.");
+
+        var check = CaptureCommand("check", root, "--baseline", baselinePath, "--format", format, "--no-telemetry");
+        Require(check.ExitCode == 2 && check.Output.Contains("PS007", StringComparison.Ordinal) &&
+                !check.Output.Contains("ToolOrScriptPresent", StringComparison.Ordinal) &&
+                !check.Output.Contains("PS003", StringComparison.Ordinal),
+            $"Cumulative target-graph overflow emitted a clean-looking {format} check result.");
+    }
+
+    var narrowed = CaptureCommand("scan", projectA, "--project", projectA, "--no-telemetry");
+    Require(narrowed.ExitCode == 0 && narrowed.Output.Contains("ToolOrScriptPresent", StringComparison.Ordinal),
         "--project did not provide the documented recovery path after an aggregate structural-budget failure.");
+    Require(CaptureCommand("baseline", projectA, "--project", projectA, "--output", Path.Combine(root, "recovery.json"), "--no-telemetry").ExitCode == 0,
+        "--project baseline recovery failed after the aggregate structural-budget failure.");
+    Require(CaptureCommand("check", projectA, "--project", projectA, "--baseline", baselinePath, "--no-telemetry").ExitCode == 0,
+        "--project check recovery failed after the aggregate structural-budget failure.");
 
     var inventoryRoot = Path.Combine(scratch, "invocation-inventory-budget");
     var inventoryFiles = Enumerable.Range(0, 10_001)
@@ -781,9 +923,10 @@ static void RunInvocationStructuralBudgetRegression(string scratch)
         WriteAssets(Path.Combine(obj, "project.assets.json"), Path.Combine(projectRoot, "cache"), name + ".Inventory", inventoryFiles, projectFileName: name + ".csproj");
     }
 
-    Require(CommandLine.Run(new[] { "scan", inventoryRoot, "--no-telemetry" }) == 2,
-        "Selecting two projects did not share the cumulative package-inventory file budget.");
-    Require(CommandLine.Run(new[] { "scan", Path.Combine(inventoryRoot, "ProjectA", "ProjectA.csproj"), "--project", Path.Combine(inventoryRoot, "ProjectA", "ProjectA.csproj"), "--no-telemetry" }) == 0,
+    var inventoryFailure = CaptureCommand("scan", inventoryRoot, "--format", "json", "--no-telemetry");
+    Require(inventoryFailure.ExitCode == 2 && !inventoryFailure.Output.Contains("inventory-", StringComparison.Ordinal),
+        "Selecting two projects did not fail closed without partial package-inventory output.");
+    Require(CaptureCommand("scan", Path.Combine(inventoryRoot, "ProjectA", "ProjectA.csproj"), "--project", Path.Combine(inventoryRoot, "ProjectA", "ProjectA.csproj"), "--no-telemetry").ExitCode == 0,
         "A narrowed project did not remain within the package-inventory file budget.");
 }
 
@@ -827,19 +970,41 @@ static void WritePackageBuildFiles(string cache, IReadOnlyList<string> files)
     }
 }
 
-static void WriteTargetGraphAssets(string assets, string cache, string projectPath, int targetCount)
+static void WriteTargetGraphAssets(string assets, string cache, string projectPath, int targetCount, bool includeToolAsset = false)
 {
+    const string packageKey = "TargetGraph.Package/1.0.0";
+    const string toolPath = "tools/fixture.ps1";
     var targets = new JsonObject();
     for (var index = 0; index < targetCount; index++)
     {
-        targets[$"net8.0/rid{index.ToString(CultureInfo.InvariantCulture)}"] = new JsonObject();
+        targets[$"net8.0/rid{index.ToString(CultureInfo.InvariantCulture)}"] = includeToolAsset
+            ? new JsonObject { [packageKey] = new JsonObject() }
+            : new JsonObject();
+    }
+
+    var libraries = includeToolAsset
+        ? new JsonObject
+        {
+            [packageKey] = new JsonObject
+            {
+                ["type"] = "package",
+                ["path"] = packageKey,
+                ["files"] = new JsonArray(toolPath)
+            }
+        }
+        : new JsonObject();
+    if (includeToolAsset)
+    {
+        var packageRoot = Path.Combine(cache, "TargetGraph.Package", "1.0.0", "tools");
+        Directory.CreateDirectory(packageRoot);
+        File.WriteAllText(Path.Combine(packageRoot, "fixture.ps1"), "fixture");
     }
 
     var root = new JsonObject
     {
         ["version"] = 3,
         ["targets"] = targets,
-        ["libraries"] = new JsonObject(),
+        ["libraries"] = libraries,
         ["packageFolders"] = new JsonObject { [cache] = new JsonObject() },
         ["project"] = new JsonObject
         {
@@ -911,6 +1076,39 @@ static void RunProjectAggregationRegression(string scratch)
     var entry = result.Entries.SingleOrDefault(candidate => candidate.Capability == CapabilityKind.BuildMultiTargeting);
     Require(result.IsComplete && entry is not null && entry.Relationship == "direct" && entry.Active,
         "Project-level direct/transitive aggregation was not deterministic or direct-wins.");
+}
+
+static void RunAncestorCanonicalizationRegression(string scratch)
+{
+    var root = Path.Combine(scratch, "ancestor-canonicalization-seam", "link");
+    var target = Path.Combine(scratch, "ancestor-canonicalization-seam", "target");
+    var cache = Path.Combine(root, "cache");
+    var obj = Path.Combine(root, "obj");
+    Directory.CreateDirectory(obj);
+    Directory.CreateDirectory(target);
+    var assets = Path.Combine(obj, "project.assets.json");
+    var ancestorFiles = new[] { "tools/inside.ps1" };
+    WriteAssets(assets, cache, "Ancestor.Seam", ancestorFiles, createFiles: true);
+    var canonicalizer = new AncestorLinkCanonicalizer(root, target);
+    var canonicalizerSlot = typeof(ResolvedGraphClassifier).GetField("PathCanonicalizer", BindingFlags.Static | BindingFlags.NonPublic)
+        ?? throw new InvalidOperationException("The canonicalization seam is unavailable.");
+    var canonicalizerValue = canonicalizerSlot.GetValue(null)
+        ?? throw new InvalidOperationException("The canonicalization seam was not initialized.");
+    var valueProperty = canonicalizerValue.GetType().GetProperty("Value")
+        ?? throw new InvalidOperationException("The canonicalization seam has no value slot.");
+    var priorCanonicalizer = valueProperty.GetValue(canonicalizerValue);
+    valueProperty.SetValue(canonicalizerValue, (Func<string, string>)canonicalizer.Canonicalize);
+    ProbeResult result;
+    try
+    {
+        result = ResolvedGraphClassifier.Analyze(assets, root, strictContent: false);
+    }
+    finally
+    {
+        valueProperty.SetValue(canonicalizerValue, priorCanonicalizer);
+    }
+    Require(result.IsComplete && canonicalizer.AncestorPathObserved,
+        "The canonicalization seam did not exercise a deterministic ancestor-link containment case: " + string.Join(" | ", result.IncompleteReasons));
 }
 
 static void RunReparsePointRegression(string scratch)
@@ -1184,6 +1382,26 @@ static void SetOutputSink(Action<string>? hook)
     var property = typeof(CommandLine).GetProperty("OutputSink", BindingFlags.NonPublic | BindingFlags.Static)
         ?? throw new InvalidOperationException("Output sink test hook was not found.");
     property.SetValue(null, hook);
+}
+
+static (int ExitCode, string Output) CaptureCommand(params string[] args)
+{
+    var output = new StringWriter(CultureInfo.InvariantCulture);
+    var error = new StringWriter(CultureInfo.InvariantCulture);
+    var priorOutput = Console.Out;
+    var priorError = Console.Error;
+    try
+    {
+        Console.SetOut(output);
+        Console.SetError(error);
+        var exitCode = CommandLine.Run(args);
+        return (exitCode, output.ToString() + error.ToString());
+    }
+    finally
+    {
+        Console.SetOut(priorOutput);
+        Console.SetError(priorError);
+    }
 }
 
 static void RunTelemetryPayloadAllowlistRegression()
@@ -1469,7 +1687,8 @@ static void RunAssetsFormatRegression(string assets, string scratch)
             ("format4-mismatched-restore-framework", value => value["project"]!["restore"]!["frameworks"]!["net8.0"]!["framework"] = "net9.0"),
             ("format4-dependency-object-element", value => value["projectFileDependencyGroups"]!["net8.0"] = new JsonArray(new JsonObject())),
             ("format4-dependency-null-element", value => value["projectFileDependencyGroups"]!["net8.0"] = new JsonArray { null }),
-            ("format4-dependency-duplicate", value => value["projectFileDependencyGroups"]!["net8.0"] = new JsonArray("XmlPackage >= 1.0.0", "XmlPackage >= 1.0.0"))
+            ("format4-dependency-duplicate", value => value["projectFileDependencyGroups"]!["net8.0"] = new JsonArray("XmlPackage >= 1.0.0", "XmlPackage >= 1.0.0")),
+            ("format4-dependency-case-duplicate", value => value["projectFileDependencyGroups"]!["net8.0"] = new JsonArray("XmlPackage >= 1.0.0", "xmlpackage >= 1.0.0"))
         };
 
         foreach (var (name, mutate) in malformedV4)
@@ -1482,6 +1701,20 @@ static void RunAssetsFormatRegression(string assets, string scratch)
             {
                 var malformedResult = ResolvedGraphClassifier.Analyze(path, scratch, strictContent: false);
                 Require(!malformedResult.IsComplete, $"Malformed assets format 4 shape '{name}' was not fail-closed.");
+                if (name == "format4-dependency-case-duplicate")
+                {
+                    var validBaseline = Path.Combine(Path.GetDirectoryName(assets)!, "format4-case-baseline.json");
+                    try
+                    {
+                        Require(CaptureCommand("baseline", v4Path, "--output", validBaseline, "--no-telemetry").ExitCode == 0,
+                            "The coherent format 4 dependency-group fixture could not create its baseline.");
+                        AssertFormat4DependencyGroupFailure(path, validBaseline);
+                    }
+                    finally
+                    {
+                        if (File.Exists(validBaseline)) File.Delete(validBaseline);
+                    }
+                }
             }
             finally
             {
@@ -1492,6 +1725,29 @@ static void RunAssetsFormatRegression(string assets, string scratch)
     finally
     {
         File.Delete(v4Path);
+    }
+}
+
+static void AssertFormat4DependencyGroupFailure(string assets, string baseline)
+{
+    var baselineBefore = File.ReadAllBytes(baseline);
+    foreach (var format in new[] { "text", "json", "sarif" })
+    {
+        var scan = CaptureCommand("scan", assets, "--format", format, "--no-telemetry");
+        Require(scan.ExitCode == 2 && scan.Output.Contains("PS007", StringComparison.Ordinal) &&
+                !scan.Output.Contains("Entries: 1", StringComparison.Ordinal),
+            $"Format 4 casing-equivalent dependency groups emitted a clean {format} scan.");
+
+        var failedBaseline = CaptureCommand("baseline", assets, "--output", baseline, "--format", format, "--no-telemetry");
+        Require(failedBaseline.ExitCode == 2 && failedBaseline.Output.Contains("PS007", StringComparison.Ordinal),
+            $"Format 4 casing-equivalent dependency groups emitted a clean {format} baseline.");
+        Require(baselineBefore.SequenceEqual(File.ReadAllBytes(baseline)),
+            $"Format 4 casing-equivalent dependency groups mutated the baseline.");
+
+        var check = CaptureCommand("check", assets, "--baseline", baseline, "--format", format, "--no-telemetry");
+        Require(check.ExitCode == 2 && check.Output.Contains("PS007", StringComparison.Ordinal) &&
+                !check.Output.Contains("PS003", StringComparison.Ordinal),
+            $"Format 4 casing-equivalent dependency groups emitted a clean {format} check.");
     }
 }
 
@@ -1762,5 +2018,32 @@ static void Require(bool condition, string message)
     if (!condition)
     {
         throw new InvalidOperationException(message);
+    }
+}
+
+sealed class AncestorLinkCanonicalizer
+{
+    private readonly string linkRoot;
+    private readonly string targetRoot;
+
+    public AncestorLinkCanonicalizer(string linkRoot, string targetRoot)
+    {
+        this.linkRoot = Path.GetFullPath(linkRoot);
+        this.targetRoot = Path.GetFullPath(targetRoot);
+    }
+
+    public bool AncestorPathObserved { get; private set; }
+
+    public string Canonicalize(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var relative = Path.GetRelativePath(linkRoot, fullPath);
+        if (relative == "." || (!Path.IsPathRooted(relative) && !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)))
+        {
+            AncestorPathObserved = true;
+            return Path.GetFullPath(Path.Combine(targetRoot, relative));
+        }
+
+        return fullPath;
     }
 }

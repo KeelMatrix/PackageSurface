@@ -11,12 +11,12 @@ namespace KeelMatrix.PackageSurface.Probe;
 public static class ResolvedGraphClassifier
 {
     private const int MaxJsonDepth = 64;
-    private const int MaxTargets = 512;
-    private const int MaxLibraries = 20_000;
-    private const int MaxFilesPerLibrary = 20_000;
+    private const int MaxTargets = AnalysisBudget.MaxTargetGraphs;
+    private const int MaxLibraries = AnalysisBudget.MaxLibraries;
+    private const int MaxFilesPerLibrary = AnalysisBudget.MaxLibraryFiles;
     private const int MaxGeneratedImportFiles = 256;
     private const int MaxEntries = AnalysisBudget.MaxEntries;
-    private const int MaxDependencyNodes = 20_000;
+    private const int MaxDependencyNodes = AnalysisBudget.MaxDependencyNodes;
     private const int MaxDependencyDepth = 256;
     private const int MaxConditionLength = 64 * 1024;
     private const int MaxConditionTokens = 2_048;
@@ -56,9 +56,14 @@ public static class ResolvedGraphClassifier
             var libraries = root.TryGetProperty("libraries", out var librariesElement)
                 ? librariesElement
                 : throw new InvalidDataException("project.assets.json has no libraries object.");
-            if (libraries.ValueKind != JsonValueKind.Object || libraries.EnumerateObject().Take(MaxLibraries + 1).Count() > MaxLibraries)
+            if (libraries.ValueKind != JsonValueKind.Object)
             {
-                throw new InvalidDataException("project.assets.json contains too many resolved libraries.");
+                throw new InvalidDataException("project.assets.json has an invalid libraries object.");
+            }
+
+            foreach (var _ in libraries.EnumerateObject())
+            {
+                budget.AddLibrary();
             }
             var directAssetRules = ReadDirectPackageAssetRules(root);
             var targetAliases = ReadTargetAliases(root);
@@ -74,13 +79,18 @@ public static class ResolvedGraphClassifier
                 throw new InvalidDataException("project.assets.json has no targets object.");
             }
 
-            if (targets.ValueKind != JsonValueKind.Object || targets.EnumerateObject().Take(MaxTargets + 1).Count() > MaxTargets)
+            if (targets.ValueKind != JsonValueKind.Object)
             {
-                throw new InvalidDataException("project.assets.json contains too many target graphs.");
+                throw new InvalidDataException("project.assets.json has an invalid targets object.");
             }
-            ValidateRestoreEvidence(root, libraries, targets, packageFolders, incomplete);
+
+            foreach (var _ in targets.EnumerateObject())
+            {
+                budget.AddTargetGraph();
+            }
             var packageRoots = ResolvePackageRoots(libraries, packageFolders, incomplete);
-            var packageInventories = BuildPackageInventories(packageRoots, libraries, incomplete);
+            var packageInventories = BuildPackageInventories(packageRoots, libraries, incomplete, budget);
+            ValidateRestoreEvidence(root, libraries, targets, packageFolders, packageRoots, packageInventories, incomplete, budget);
             var targetFrameworkContexts = targets.EnumerateObject()
                 .Select(target => SplitTarget(target.Name).Tfm)
                 .Concat(targetFrameworks.Values)
@@ -88,7 +98,7 @@ public static class ResolvedGraphClassifier
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var expectedGeneratedImportSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var generatedImports = ReadGeneratedImports(root, assetsFile, projectRoot, selectedProjectPath, packageRoots, packageInventories, libraries, targetFrameworkContexts, incomplete, budget, expectedGeneratedImportSources);
-            ValidateGeneratedImportEvidence(generatedImports, packageRoots, libraries, incomplete);
+            ValidateGeneratedImportEvidence(generatedImports, packageRoots, packageInventories, libraries, incomplete, budget);
             var projectLanguage = ReadProjectLanguage(root, projectRoot, selectedProjectPath, incomplete);
             var isMultiTargetingProject = targets.EnumerateObject()
                 .Select(target => NormalizeFrameworkMoniker(SplitTarget(target.Name).Tfm))
@@ -111,7 +121,7 @@ public static class ResolvedGraphClassifier
                     ? rules
                     : new Dictionary<string, PackageAssetRule>(StringComparer.OrdinalIgnoreCase);
                 var directPackages = targetDirectRules.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
-                var analyzerPackages = DetermineAnalyzerPackages(target.Value, targetDirectRules);
+                var analyzerPackages = DetermineAnalyzerPackages(target.Value, targetDirectRules, budget);
                 foreach (var package in target.Value.EnumerateObject())
                 {
                     var (packageId, version) = SplitPackageKey(package.Name);
@@ -125,7 +135,7 @@ public static class ResolvedGraphClassifier
                     if (library.TryGetProperty("type", out var typeElement) && typeElement.ValueKind == JsonValueKind.String &&
                         typeElement.GetString()!.Equals("project", StringComparison.OrdinalIgnoreCase))
                     {
-                        ReadProjectDependencies(package.Value, target.Value, libraryKey, incomplete);
+                        ReadProjectDependencies(package.Value, target.Value, libraryKey, incomplete, budget);
                         continue;
                     }
 
@@ -158,7 +168,7 @@ public static class ResolvedGraphClassifier
 
                     var files = packageInventories.TryGetValue(Path.GetFullPath(packageRoot), out var inventory)
                         ? inventory.Order(StringComparer.OrdinalIgnoreCase).ToArray()
-                        : ReadLibraryFiles(library, libraryKey, incomplete).ToArray();
+                        : ReadLibraryFiles(library, libraryKey, incomplete, budget).ToArray();
                     var selectedAnalyzers = SelectAnalyzerPaths(files, projectLanguage, analyzerPackages, packageId, libraryKey, incomplete, compilerApiVersion);
                     var targetAssets = package.Value;
                     foreach (var relativePath in files)
@@ -314,7 +324,7 @@ public static class ResolvedGraphClassifier
         !message.Contains(Path.AltDirectorySeparatorChar) &&
         !message.Contains(":\\", StringComparison.Ordinal);
 
-    private static void ReadProjectDependencies(JsonElement projectNode, JsonElement targetAssets, string projectKey, List<string> incomplete)
+    private static void ReadProjectDependencies(JsonElement projectNode, JsonElement targetAssets, string projectKey, List<string> incomplete, AnalysisBudget budget)
     {
         if (!projectNode.TryGetProperty("dependencies", out var dependencies)) return;
         if (dependencies.ValueKind != JsonValueKind.Object)
@@ -325,6 +335,13 @@ public static class ResolvedGraphClassifier
 
         foreach (var dependency in dependencies.EnumerateObject())
         {
+            budget.AddDependencyNode();
+            if (dependency.Value.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(dependency.Value.GetString()))
+            {
+                incomplete.Add($"Project node {projectKey} has malformed dependency value {dependency.Name}.");
+                continue;
+            }
+
             var found = targetAssets.EnumerateObject().Any(candidate =>
             {
                 var (id, _) = SplitPackageKey(candidate.Name);
@@ -422,7 +439,7 @@ public static class ResolvedGraphClassifier
     private static IEnumerable<SurfaceEntry> CreateNestedImportEntries(
         IReadOnlyList<GeneratedImport> generatedImports,
         IReadOnlyDictionary<string, string> packageRoots,
-        IReadOnlyDictionary<string, HashSet<string>> packageInventories,
+        Dictionary<string, HashSet<string>> packageInventories,
         JsonElement libraries,
         string targetFramework,
         string? runtimeIdentifier,
@@ -664,7 +681,7 @@ public static class ResolvedGraphClassifier
         selector?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Any(value => value.Equals(expected, StringComparison.OrdinalIgnoreCase)) == true;
 
-    private static HashSet<string> DetermineAnalyzerPackages(JsonElement targetAssets, IReadOnlyDictionary<string, PackageAssetRule> directAssetRules)
+    private static HashSet<string> DetermineAnalyzerPackages(JsonElement targetAssets, IReadOnlyDictionary<string, PackageAssetRule> directAssetRules, AnalysisBudget budget)
     {
         var packageProperties = targetAssets.EnumerateObject().ToArray();
         var packageKeysById = packageProperties
@@ -705,6 +722,7 @@ public static class ResolvedGraphClassifier
         {
             var (packageKey, depth) = work.Pop();
             if (!visited.Add(packageKey)) continue;
+            budget.AddDependencyNode();
             if (depth > MaxDependencyDepth || visited.Count > MaxDependencyNodes)
             {
                 throw new InvalidDataException("The resolved dependency graph exceeds the supported traversal limits.");
@@ -895,11 +913,26 @@ public static class ResolvedGraphClassifier
         }
         else
         {
+            AddDuplicatePropertyReasons(dependencyGroups, "format 4 dependency group", incomplete);
             foreach (var dependencyGroup in dependencyGroups.EnumerateObject())
             {
                 if (dependencyGroup.Value.ValueKind != JsonValueKind.Array)
                 {
                     incomplete.Add($"Assets format 4 dependency group {dependencyGroup.Name} is not an array.");
+                    continue;
+                }
+
+                var values = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var dependency in dependencyGroup.Value.EnumerateArray())
+                {
+                    if (dependency.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(dependency.GetString()))
+                    {
+                        incomplete.Add($"Assets format 4 dependency group {dependencyGroup.Name} contains a non-string dependency.");
+                    }
+                    else if (!values.Add(dependency.GetString()!))
+                    {
+                        incomplete.Add($"Assets format 4 dependency group {dependencyGroup.Name} contains a duplicate dependency.");
+                    }
                 }
             }
         }
@@ -990,7 +1023,10 @@ public static class ResolvedGraphClassifier
         JsonElement libraries,
         JsonElement targets,
         IReadOnlyList<string> packageFolders,
-        List<string> incomplete)
+        IReadOnlyDictionary<string, string> packageRoots,
+        Dictionary<string, HashSet<string>> packageInventories,
+        List<string> incomplete,
+        AnalysisBudget budget)
     {
         if (libraries.ValueKind != JsonValueKind.Object || targets.ValueKind != JsonValueKind.Object) return;
         AddDuplicatePropertyReasons(libraries, "library identity", incomplete);
@@ -1039,6 +1075,17 @@ public static class ResolvedGraphClassifier
             {
                 incomplete.Add($"Declared framework {framework.Name} has malformed dependency metadata.");
             }
+            else if (framework.Value.TryGetProperty("dependencies", out dependencies))
+            {
+                AddDuplicatePropertyReasons(dependencies, $"declared dependency for {framework.Name}", incomplete);
+                foreach (var dependency in dependencies.EnumerateObject())
+                {
+                    if (dependency.Value.ValueKind != JsonValueKind.Object)
+                    {
+                        incomplete.Add($"Declared framework {framework.Name} has malformed dependency value {dependency.Name}.");
+                    }
+                }
+            }
         }
 
         foreach (var target in targets.EnumerateObject())
@@ -1061,6 +1108,7 @@ public static class ResolvedGraphClassifier
             var packageIds = target.Value.EnumerateObject()
                 .Select(property => SplitPackageKey(property.Name).Id)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            AddDuplicatePropertyReasons(target.Value, "target package identity", incomplete);
             foreach (var package in target.Value.EnumerateObject())
             {
                 if (!TryGetPropertyIgnoreCase(libraries, package.Name, out var library))
@@ -1084,8 +1132,8 @@ public static class ResolvedGraphClassifier
                     continue;
                 }
 
-                ValidateTargetPackageAssets(package.Value, library, package.Name, libraryType, incomplete);
-                if (package.Value.TryGetProperty("dependencies", out var dependencies))
+                ValidateTargetPackageAssets(package.Value, library, package.Name, libraryType, packageRoots, packageInventories, incomplete, budget);
+                if (TryGetPropertyIgnoreCase(package.Value, "dependencies", out var dependencies))
                 {
                     if (dependencies.ValueKind != JsonValueKind.Object)
                     {
@@ -1109,6 +1157,7 @@ public static class ResolvedGraphClassifier
                 if (!framework.Value.TryGetProperty("dependencies", out var dependencies) || dependencies.ValueKind != JsonValueKind.Object) continue;
                 foreach (var dependency in dependencies.EnumerateObject())
                 {
+                    budget.AddDependencyNode();
                     if (!packageIds.Contains(dependency.Name))
                     {
                         incomplete.Add($"Declared framework {framework.Name} refers to unresolved dependency {dependency.Name}.");
@@ -1118,22 +1167,63 @@ public static class ResolvedGraphClassifier
         }
     }
 
-    private static void ValidateTargetPackageAssets(JsonElement package, JsonElement library, string packageKey, string? libraryType, List<string> incomplete)
+    private static void ValidateTargetPackageAssets(
+        JsonElement package,
+        JsonElement library,
+        string packageKey,
+        string? libraryType,
+        IReadOnlyDictionary<string, string> packageRoots,
+        Dictionary<string, HashSet<string>> packageInventories,
+        List<string> incomplete,
+        AnalysisBudget budget)
     {
         var isPackage = string.Equals(libraryType, "package", StringComparison.OrdinalIgnoreCase);
-        var files = isPackage
-            ? ReadLibraryFiles(library, packageKey, incomplete).ToHashSet(StringComparer.OrdinalIgnoreCase)
-            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var files = isPackage && packageRoots.TryGetValue(packageKey, out var packageRoot) &&
+                    packageInventories.TryGetValue(Path.GetFullPath(packageRoot), out var inventory)
+            ? inventory
+            : isPackage
+                ? ReadLibraryFiles(library, packageKey, incomplete, budget).ToHashSet(StringComparer.OrdinalIgnoreCase)
+                : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        AddDuplicatePropertyReasons(package, "target package metadata", incomplete);
         foreach (var group in package.EnumerateObject())
         {
-            if (group.Name is "dependencies" or "type" or "framework")
+            if (group.Name.Equals("dependencies", StringComparison.OrdinalIgnoreCase))
             {
+                if (group.Value.ValueKind != JsonValueKind.Object)
+                {
+                    incomplete.Add($"Target package {packageKey} has malformed dependency metadata.");
+                    continue;
+                }
+
+                AddDuplicatePropertyReasons(group.Value, "target dependency", incomplete);
+                foreach (var dependency in group.Value.EnumerateObject())
+                {
+                    budget.AddDependencyNode();
+                    if (dependency.Value.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(dependency.Value.GetString()))
+                    {
+                        incomplete.Add($"Target package {packageKey} has malformed dependency value {dependency.Name}.");
+                    }
+                }
+                continue;
+            }
+
+            if (group.Name.Equals("type", StringComparison.OrdinalIgnoreCase) || group.Name.Equals("framework", StringComparison.OrdinalIgnoreCase))
+            {
+                if (group.Value.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(group.Value.GetString()))
+                {
+                    incomplete.Add($"Target package {packageKey} has malformed {group.Name} metadata.");
+                }
+                continue;
+            }
+
+            if (group.Name.Equals("frameworkAssemblies", StringComparison.OrdinalIgnoreCase) || group.Name.Equals("frameworkReferences", StringComparison.OrdinalIgnoreCase))
+            {
+                ValidateStringArrayMetadata(group.Value, group.Name, packageKey, incomplete);
                 continue;
             }
 
             if (group.Value.ValueKind == JsonValueKind.Array)
             {
-                if (group.Name is "frameworkAssemblies" or "frameworkReferences") continue;
                 incomplete.Add($"Target package {packageKey} has malformed asset group {group.Name}.");
                 continue;
             }
@@ -1185,6 +1275,30 @@ public static class ResolvedGraphClassifier
         }
     }
 
+    private static void ValidateStringArrayMetadata(JsonElement value, string propertyName, string packageKey, List<string> incomplete)
+    {
+        if (value.ValueKind != JsonValueKind.Array)
+        {
+            incomplete.Add($"Target package {packageKey} has malformed {propertyName} metadata.");
+            return;
+        }
+
+        var values = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in value.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(item.GetString()))
+            {
+                incomplete.Add($"Target package {packageKey} has malformed {propertyName} metadata.");
+                continue;
+            }
+
+            if (!values.Add(item.GetString()!))
+            {
+                incomplete.Add($"Target package {packageKey} has duplicate {propertyName} metadata.");
+            }
+        }
+    }
+
     private static void AddDuplicatePropertyReasons(JsonElement value, string description, List<string> incomplete)
     {
         var duplicate = value.EnumerateObject()
@@ -1225,7 +1339,8 @@ public static class ResolvedGraphClassifier
     private static Dictionary<string, HashSet<string>> BuildPackageInventories(
         IReadOnlyDictionary<string, string> packageRoots,
         JsonElement libraries,
-        List<string> incomplete)
+        List<string> incomplete,
+        AnalysisBudget budget)
     {
         var result = new Dictionary<string, HashSet<string>>(FileSystemPathComparer);
         foreach (var package in packageRoots)
@@ -1236,7 +1351,7 @@ public static class ResolvedGraphClassifier
                 continue;
             }
 
-            result[Path.GetFullPath(package.Value)] = ReadLibraryFiles(library, package.Key, incomplete)
+            result[Path.GetFullPath(package.Value)] = ReadLibraryFiles(library, package.Key, incomplete, budget)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
         }
 
@@ -1246,8 +1361,10 @@ public static class ResolvedGraphClassifier
     private static void ValidateGeneratedImportEvidence(
         IReadOnlyList<GeneratedImport> imports,
         IReadOnlyDictionary<string, string> packageRoots,
+        Dictionary<string, HashSet<string>> packageInventories,
         JsonElement libraries,
-        List<string> incomplete)
+        List<string> incomplete,
+        AnalysisBudget budget)
     {
         foreach (var import in imports)
         {
@@ -1262,7 +1379,9 @@ public static class ResolvedGraphClassifier
                 continue;
             }
 
-            var files = ReadLibraryFiles(library, match, incomplete);
+            var files = packageInventories.TryGetValue(Path.GetFullPath(packageRoots[match]), out var inventory)
+                ? inventory
+                : ReadLibraryFiles(library, match, incomplete, budget).ToHashSet(StringComparer.OrdinalIgnoreCase);
             if (!files.Any(file => file.Equals(relative, StringComparison.OrdinalIgnoreCase)))
             {
                 incomplete.Add("Generated NuGet import evidence refers to a file absent from the resolved package inventory.");
@@ -1270,7 +1389,7 @@ public static class ResolvedGraphClassifier
         }
     }
 
-    private static IReadOnlyList<string> ReadLibraryFiles(JsonElement library, string libraryKey, List<string> incomplete)
+    private static IReadOnlyList<string> ReadLibraryFiles(JsonElement library, string libraryKey, List<string> incomplete, AnalysisBudget budget)
     {
         if (!library.TryGetProperty("files", out var files) || files.ValueKind != JsonValueKind.Array || files.GetArrayLength() > MaxFilesPerLibrary)
         {
@@ -1281,6 +1400,7 @@ public static class ResolvedGraphClassifier
         var result = new List<string>();
         foreach (var file in files.EnumerateArray())
         {
+            budget.AddLibraryFile();
             if (file.ValueKind != JsonValueKind.String || !TryNormalizeRelativePath(file.GetString()!, out var normalized))
             {
                 incomplete.Add($"Library {libraryKey} contains an invalid relative asset path.");
@@ -1398,6 +1518,7 @@ public static class ResolvedGraphClassifier
                         var condition = reader.GetAttribute("Condition");
                         if (elementName.Equals("Import", StringComparison.Ordinal) && reader.GetAttribute("Project") is string project)
                         {
+                            budget.AddImportedEdge();
                             var conditions = conditionStack
                                 .Append(new ConditionClause(elementName, condition))
                                 .Where(clause => !string.IsNullOrWhiteSpace(clause.Expression))
@@ -1784,14 +1905,14 @@ public static class ResolvedGraphClassifier
                 var normalizedImport = NormalizeText(import.Project);
                 var referencesAsset = string.Equals(normalizedImport, fullAsset, StringComparison.OrdinalIgnoreCase) ||
                     PackageRootImportEquals(normalizedImport, "$(NuGetPackageRoot)/" + NormalizeText(libraryPath) + "/" + relativePath);
-                return IsExpectedGeneratedImportSource(import.SourceFile, relativePath, expectedGeneratedImportSources) && referencesAsset;
+                return IsNestedOrExpectedGeneratedImportSource(import, relativePath, expectedGeneratedImportSources) && referencesAsset;
             });
             var imported = generatedImports.Any(import =>
             {
                 var normalizedImport = NormalizeText(import.Project);
                 var referencesAsset = string.Equals(normalizedImport, fullAsset, StringComparison.OrdinalIgnoreCase) ||
                     PackageRootImportEquals(normalizedImport, "$(NuGetPackageRoot)/" + NormalizeText(libraryPath) + "/" + relativePath);
-                return IsExpectedGeneratedImportSource(import.SourceFile, relativePath, expectedGeneratedImportSources) &&
+                return IsNestedOrExpectedGeneratedImportSource(import, relativePath, expectedGeneratedImportSources) &&
                        referencesAsset &&
                        import.AppliesTo(context, targetFramework, capability == CapabilityKind.BuildMultiTargeting);
             });
@@ -1800,7 +1921,7 @@ public static class ResolvedGraphClassifier
                 var normalizedImport = NormalizeText(import.Project);
                 var referencesAsset = string.Equals(normalizedImport, fullAsset, StringComparison.OrdinalIgnoreCase) ||
                     PackageRootImportEquals(normalizedImport, "$(NuGetPackageRoot)/" + NormalizeText(libraryPath) + "/" + relativePath);
-                return referencesAsset && !IsExpectedGeneratedImportSource(import.SourceFile, relativePath, expectedGeneratedImportSources);
+                return !import.IsNested && referencesAsset && !IsExpectedGeneratedImportSource(import.SourceFile, relativePath, expectedGeneratedImportSources);
             });
             if (!imported &&
                 (hasWrongPhaseImport ||
@@ -1843,6 +1964,12 @@ public static class ResolvedGraphClassifier
 
         return expectedGeneratedImportSources.Count == 0 || expectedGeneratedImportSources.Contains(sourceFile);
     }
+
+    private static bool IsNestedOrExpectedGeneratedImportSource(
+        GeneratedImport import,
+        string relativePath,
+        IReadOnlySet<string> expectedGeneratedImportSources) =>
+        import.IsNested || IsExpectedGeneratedImportSource(import.SourceFile, relativePath, expectedGeneratedImportSources);
 
     private static IEnumerable<string> GetExpectedGeneratedImportSources(JsonElement root, string projectRoot, string? selectedProjectPath, List<string> incomplete)
     {

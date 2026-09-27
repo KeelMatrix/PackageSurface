@@ -3,15 +3,16 @@ using System.Text.Json;
 using System.Xml.Linq;
 using KeelMatrix.PackageSurface.Probe;
 
-if (args.Length != 2)
+if (args.Length < 2 || args.Length > 3)
 {
-    Console.Error.WriteLine("Usage: probe-tests <project.assets.json> <capabilities>");
+    Console.Error.WriteLine("Usage: probe-tests <project.assets.json> <capabilities> [compiler-api-version]");
     return 2;
 }
 
 var assets = Path.GetFullPath(args[0]);
 var projectRoot = Directory.GetParent(Path.GetDirectoryName(assets)!)!.FullName;
-var result = ResolvedGraphClassifier.Analyze(assets, projectRoot);
+var compilerApiVersion = args.Length == 3 ? args[2] : null;
+var result = ResolvedGraphClassifier.Analyze(assets, projectRoot, compilerApiVersion: compilerApiVersion);
 if (!result.IsComplete)
 {
     Console.Error.WriteLine(string.Join(Environment.NewLine, result.IncompleteReasons));

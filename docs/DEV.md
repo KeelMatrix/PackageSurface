@@ -43,6 +43,8 @@ No restore, MSBuild evaluation, dependency assembly loading, process execution, 
 
 The classifier accepts coherent SDK-style `project.assets.json` formats 1 through 4. Format 4 restore metadata is validated as a schema: project and restore framework maps must agree on effective framework and target alias, and project dependency groups must be arrays for declared frameworks. Incomplete or inconsistent evidence remains a `PS007` analysis failure.
 
+Versioned analyzer applicability is fail-closed unless the consuming compiler API version is explicit (`--compiler-api-version` or a test-supplied resolved context). The classifier selects the highest compatible version and never uses the review machine's installed compiler as an oracle. Nested static-import coverage is inventory-backed and bounded across arbitrary package-relative helper paths; nested descendants inherit the importing capability/context, while generated top-level imports retain automatic NuGet phase validation. The CLI shares one cumulative analysis budget across selected projects and preflights report/baseline size before replacing a baseline.
+
 ## Restore framework compatibility evidence
 
 Framework reconciliation uses the restore metadata's effective framework and target alias, so equivalent short and long monikers such as `netstandard2.0` and `.NETStandard,Version=v2.0` match case-insensitively. RID-qualified target names are split before matching. The installed-tool regression covers a real `net8.0;netstandard2.0` PackageReference restore through `scan`, `baseline`, and `check`.

@@ -14,7 +14,6 @@ public static class CommandLine
     private const long MaxInputBytes = 16 * 1024 * 1024;
     private const long MaxTotalInputBytes = 128 * 1024 * 1024;
     private static readonly string[] GenericIncompleteReasons = { "The input, baseline, or restore evidence could not be analyzed completely." };
-    private static readonly Diagnostic[] GenericIncompleteDiagnostics = { Diagnostic.Create("PS007", "Analysis or baseline input is invalid, missing, or unreadable.") };
     public const string ToolVersion = "0.1.0";
 
     public static int Run(string[] args)
@@ -60,7 +59,7 @@ public static class CommandLine
             }
 
             var selection = ProjectSelection.Resolve(options.InputPath!, options.ProjectPath);
-            var current = AnalyzeSelection(selection, strictContent);
+            var current = AnalyzeSelection(selection, strictContent, options.CompilerApiVersion);
             var diagnostics = current.IncompleteReasons
                 .Select(reason => Diagnostic.Create("PS007", reason))
                 .ToList();
@@ -80,20 +79,22 @@ public static class CommandLine
             }
 
             var incomplete = diagnostics.Any(diagnostic => diagnostic.Id == "PS007");
+            var report = ReportDocument.Create(options.Command, current, diagnostics);
             if (options.Command == CommandKind.Baseline && !incomplete)
             {
                 try
                 {
+                    report.EnsureOutputWithinLimit(MaxOutputBytes);
                     BaselineDocument.Write(options.OutputPath!, current);
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException or JsonException or NotSupportedException)
                 {
                     diagnostics.Add(Diagnostic.Create("PS007", "The baseline could not be persisted after validating the analyzed surface."));
                     incomplete = true;
+                    report = ReportDocument.Create(options.Command, current, diagnostics);
                 }
             }
 
-            var report = ReportDocument.Create(options.Command, current, diagnostics);
             WriteOutput(report, options.Format);
 
             if (!incomplete &&
@@ -113,10 +114,11 @@ public static class CommandLine
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException or JsonException or NotSupportedException or InvalidOperationException)
         {
+            var message = SafeFailureMessage(ex);
             var report = ReportDocument.Create(
                 options.Command,
                 new SurfaceSnapshot(Array.Empty<SurfaceEntry>(), GenericIncompleteReasons, options.StrictContent, 0),
-                GenericIncompleteDiagnostics);
+                new[] { Diagnostic.Create("PS007", message) });
             try
             {
                 WriteOutput(report, options.Format);
@@ -129,14 +131,16 @@ public static class CommandLine
         }
     }
 
-    private static SurfaceSnapshot AnalyzeSelection(ProjectSelection selection, bool strictContent)
+    private static SurfaceSnapshot AnalyzeSelection(ProjectSelection selection, bool strictContent, string? compilerApiVersion)
     {
         var entries = new List<SurfaceEntry>();
         var reasons = new List<string>();
         var resolvedPackages = 0;
         long totalInputBytes = 0;
+        var budget = new AnalysisBudget();
         foreach (var project in selection.Projects)
         {
+            budget.AddOperation("selected project");
             if (!File.Exists(project.AssetsPath))
             {
                 reasons.Add($"{project.DisplayPath}: project.assets.json is missing; run restore before analysis.");
@@ -152,9 +156,14 @@ public static class CommandLine
 
             totalInputBytes += inputBytes;
 
-            var result = ResolvedGraphClassifier.Analyze(project.AssetsPath, project.ProjectRoot, strictContent, project.DisplayPath, project.ProjectPath);
+            var result = ResolvedGraphClassifier.Analyze(project.AssetsPath, project.ProjectRoot, strictContent, project.DisplayPath, project.ProjectPath, budget, compilerApiVersion);
+            budget.AddEntries(result.Entries.Count);
             entries.AddRange(result.Entries);
-            reasons.AddRange(result.IncompleteReasons.Select(reason => $"{project.DisplayPath}: {reason}"));
+            foreach (var reason in result.IncompleteReasons)
+            {
+                budget.AddOperation("diagnostic");
+                reasons.Add($"{project.DisplayPath}: {reason}");
+            }
             resolvedPackages += result.ResolvedPackageCount;
         }
 
@@ -164,6 +173,19 @@ public static class CommandLine
         }
 
         return SurfaceSnapshot.Create(entries, reasons, strictContent, resolvedPackages);
+    }
+
+    private static string SafeFailureMessage(Exception exception)
+    {
+        if (exception is InvalidDataException invalid &&
+            !invalid.Message.Contains(Path.DirectorySeparatorChar, StringComparison.Ordinal) &&
+            !invalid.Message.Contains(Path.AltDirectorySeparatorChar, StringComparison.Ordinal) &&
+            !invalid.Message.Contains(":\\", StringComparison.Ordinal))
+        {
+            return invalid.Message;
+        }
+
+        return "The input, baseline, or restore evidence could not be analyzed completely.";
     }
 
     private static Action? TelemetryHook { get; set; }
@@ -187,6 +209,7 @@ public static class CommandLine
 
     private static void WriteOutput(ReportDocument report, OutputFormat format)
     {
+        report.EnsureOutputWithinLimit(MaxOutputBytes);
         var output = format switch
         {
             OutputFormat.Text => report.ToText(),
@@ -217,6 +240,7 @@ public sealed record Options(
     string? ProjectPath,
     OutputFormat Format,
     bool StrictContent,
+    string? CompilerApiVersion,
     bool TelemetryEnabled)
 {
     public static readonly string HelpText = """
@@ -233,6 +257,7 @@ public sealed record Options(
           --format text|json|sarif  Report format (default: text).
                                    SARIF scan/baseline output includes one note per classified surface fact.
           --strict-content          Record SHA-256 fingerprints for present, active build/compiler execution assets.
+          --compiler-api-version <v>  Declare the consuming compiler API version for versioned analyzer assets.
           --project <path>          Select one project when a solution contains several projects.
           --telemetry on|off        Enable or disable best-effort activation telemetry.
           --no-telemetry             Disable best-effort activation telemetry.
@@ -279,6 +304,7 @@ public sealed record Options(
         string? output = null;
         string? baseline = null;
         string? project = null;
+        string? compilerApiVersion = null;
         var format = OutputFormat.Text;
         var strict = false;
         var telemetry = true;
@@ -326,6 +352,12 @@ public sealed record Options(
                 continue;
             }
 
+            if (IsOption(argument, "--compiler-api-version"))
+            {
+                compilerApiVersion = ReadOptionValue(args, ref index, argument, "--compiler-api-version");
+                continue;
+            }
+
             if (IsOption(argument, "--telemetry"))
             {
                 var value = ReadOptionValue(args, ref index, argument, "--telemetry");
@@ -354,7 +386,7 @@ public sealed record Options(
         if (command == CommandKind.Check && string.IsNullOrWhiteSpace(baseline)) return new(ParseResultKind.Invalid, Error: "check requires --baseline <baseline>.");
         if (command != CommandKind.Check && baseline is not null) return new(ParseResultKind.Invalid, Error: "--baseline is only valid with check.");
 
-        return new(ParseResultKind.Valid, new(command, input, output, baseline, project, format, strict, telemetry));
+        return new(ParseResultKind.Valid, new(command, input, output, baseline, project, format, strict, compilerApiVersion, telemetry));
     }
 
     private static string ReadOptionValue(string[] args, ref int index, string argument, string option)
@@ -374,6 +406,7 @@ public sealed record SelectedProject(string ProjectRoot, string AssetsPath, stri
 public sealed record ProjectSelection(IReadOnlyList<SelectedProject> Projects)
 {
     private const int MaxProjects = 128;
+    private const int MaxProjectMemberships = 4_096;
     private const long MaxInputBytes = 16 * 1024 * 1024;
 
     public static ProjectSelection Resolve(string inputPath, string? projectPath)
@@ -395,7 +428,7 @@ public sealed record ProjectSelection(IReadOnlyList<SelectedProject> Projects)
             if (File.Exists(input) && input.EndsWith(".sln", StringComparison.OrdinalIgnoreCase))
             {
                 var root = Path.GetDirectoryName(input)!;
-                var members = ReadSolutionProjectPaths(input, root);
+                var members = ReadSolutionProjectPaths(input, root, enforceAnalysisLimit: false);
                 if (!members.Any(path => PathsEqual(path, selectedPath)))
                 {
                     throw new InvalidDataException("The --project path is not a member of the supplied solution.");
@@ -423,7 +456,7 @@ public sealed record ProjectSelection(IReadOnlyList<SelectedProject> Projects)
 
             if (Directory.Exists(input))
             {
-                var members = ReadDirectoryProjectPaths(input);
+                var members = ReadDirectoryProjectPaths(input, enforceAnalysisLimit: false);
                 if (!members.Any(path => PathsEqual(path, selectedPath)))
                 {
                     throw new InvalidDataException("The --project path is not a member of the supplied directory input.");
@@ -440,19 +473,14 @@ public sealed record ProjectSelection(IReadOnlyList<SelectedProject> Projects)
         if (File.Exists(input) && input.EndsWith(".sln", StringComparison.OrdinalIgnoreCase))
         {
             var root = Path.GetDirectoryName(input)!;
-            return new(ReadSolutionProjectPaths(input, root).Select(path => ResolveProject(path, root)).ToArray());
+            return new(ReadSolutionProjectPaths(input, root, enforceAnalysisLimit: true).Select(path => ResolveProject(path, root)).ToArray());
         }
 
         if (Directory.Exists(input))
         {
             var direct = Path.Combine(input, "obj", "project.assets.json");
             if (File.Exists(direct)) return new(new[] { ResolveAssets(direct) });
-            var paths = Directory.EnumerateFiles(input, "*proj", SearchOption.TopDirectoryOnly)
-                .Take(MaxProjects + 1)
-                .ToArray();
-            if (paths.Any(path => !IsSupportedProjectPath(path))) throw new InvalidDataException("The directory contains an unsupported project kind.");
-            EnsureProjectLimit(paths.Length);
-            return new(paths.Select(path => ResolveProject(path, input)).ToArray());
+            return new(ReadDirectoryProjectPaths(input, enforceAnalysisLimit: true).Select(path => ResolveProject(path, input)).ToArray());
         }
 
         throw new InvalidDataException("The input path does not exist or is not a supported SDK-style project input.");
@@ -498,7 +526,7 @@ public sealed record ProjectSelection(IReadOnlyList<SelectedProject> Projects)
         path.EndsWith(".vbproj", StringComparison.OrdinalIgnoreCase) ||
         path.EndsWith(".fsproj", StringComparison.OrdinalIgnoreCase);
 
-    private static string[] ReadSolutionProjectPaths(string solutionPath, string root)
+    private static string[] ReadSolutionProjectPaths(string solutionPath, string root, bool enforceAnalysisLimit)
     {
         var paths = new List<string>();
         foreach (var line in File.ReadLines(solutionPath))
@@ -512,22 +540,30 @@ public sealed record ProjectSelection(IReadOnlyList<SelectedProject> Projects)
             if (!Path.HasExtension(relativePath)) continue;
             if (!IsSupportedProjectPath(relativePath)) throw new InvalidDataException("The solution contains an unsupported project kind.");
             paths.Add(Path.GetFullPath(Path.Combine(root, relativePath.Replace('\\', Path.DirectorySeparatorChar))));
-            EnsureProjectLimit(paths.Count);
+            EnsureMembershipLimit(paths.Count);
         }
 
+        if (enforceAnalysisLimit) EnsureProjectLimit(paths.Count);
         return paths.ToArray();
     }
 
-    private static string[] ReadDirectoryProjectPaths(string input)
+    private static string[] ReadDirectoryProjectPaths(string input, bool enforceAnalysisLimit)
     {
-        var paths = Directory.EnumerateFiles(input, "*proj", SearchOption.TopDirectoryOnly).Take(MaxProjects + 1).ToArray();
+        var paths = Directory.EnumerateFiles(input, "*proj", SearchOption.TopDirectoryOnly).Take(MaxProjectMemberships + 1).ToArray();
         if (paths.Any(path => !IsSupportedProjectPath(path))) throw new InvalidDataException("The directory contains an unsupported project kind.");
-        EnsureProjectLimit(paths.Length);
+        EnsureMembershipLimit(paths.Length);
+        if (enforceAnalysisLimit) EnsureProjectLimit(paths.Length);
         return paths;
     }
 
     private static bool PathsEqual(string left, string right) =>
-        string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), StringComparison.OrdinalIgnoreCase);
+        string.Equals(Path.GetFullPath(left), Path.GetFullPath(right),
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+
+    private static void EnsureMembershipLimit(int count)
+    {
+        if (count > MaxProjectMemberships) throw new InvalidDataException("The input contains too many project members to validate safely.");
+    }
 
     private static void EnsureProjectLimit(int count)
     {
@@ -593,6 +629,7 @@ public sealed record BaselineDocument(
         Directory.CreateDirectory(directory);
         var baseline = new BaselineDocument(CommandLineSchema.Version, "0.1.0", snapshot.StrictContent, snapshot.Entries.Select(BaselineEntry.From).ToArray(), Array.Empty<string>());
         Validate(baseline);
+        EnsureEstimatedSizeWithinLimit(baseline);
         var temporary = full + ".tmp-" + Guid.NewGuid().ToString("N");
         try
         {
@@ -611,9 +648,20 @@ public sealed record BaselineDocument(
             _ = Read(temporary);
             File.Move(temporary, full, overwrite: true);
         }
-        finally
+        catch
         {
             if (File.Exists(temporary)) File.Delete(temporary);
+            throw;
+        }
+    }
+
+    private static void EnsureEstimatedSizeWithinLimit(BaselineDocument baseline)
+    {
+        long estimated = 512;
+        foreach (var entry in baseline.Entries)
+        {
+            estimated += 512L + (entry.Project?.Length ?? 0) + entry.PackageId.Length + entry.Version.Length + entry.PackageRelativePath.Length + (entry.Sha256?.Length ?? 0);
+            if (estimated > MaxBaselineBytes) throw new InvalidDataException("The generated baseline exceeds the supported size limit.");
         }
     }
 
@@ -816,6 +864,25 @@ public sealed record ReportDocument(
     IReadOnlyList<string> IncompleteReasons)
 {
     public static ReportDocument Create(CommandKind command, SurfaceSnapshot snapshot, IReadOnlyList<Diagnostic> diagnostics) => new(CommandLineSchema.Version, command.ToString().ToLowerInvariant(), snapshot.StrictContent, snapshot.Entries, diagnostics, snapshot.IncompleteReasons);
+
+    public void EnsureOutputWithinLimit(long limit)
+    {
+        long estimated = 512;
+        foreach (var entry in Entries)
+        {
+            estimated += 768L + (entry.Project?.Length ?? 0) + entry.PackageId.Length + entry.Version.Length + entry.PackageRelativePath.Length;
+            if (estimated > limit) throw new InvalidDataException("The report exceeds the supported output size limit.");
+        }
+
+        foreach (var diagnostic in Diagnostics)
+        {
+            estimated += 512L + diagnostic.Message.Length + (diagnostic.Project?.Length ?? 0) + (diagnostic.PackageId?.Length ?? 0) + (diagnostic.PackageRelativePath?.Length ?? 0);
+            if (estimated > limit) throw new InvalidDataException("The report exceeds the supported output size limit.");
+        }
+
+        estimated += IncompleteReasons.Sum(reason => 128L + reason.Length);
+        if (estimated > limit) throw new InvalidDataException("The report exceeds the supported output size limit.");
+    }
 
     public string ToText()
     {

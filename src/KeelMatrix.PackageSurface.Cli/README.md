@@ -31,12 +31,13 @@ package-surface baseline <path> --output <baseline>
 package-surface check <path> --baseline <baseline>
 --format text|json|sarif
 --strict-content
+--compiler-api-version <version>
 --project <path>
 --telemetry on|off
 --no-telemetry
 ```
 
-Supported options are `--format text|json|sarif`, `--strict-content`, `--project <path>`, `--telemetry on|off`, and `--no-telemetry`. SARIF scan and baseline output contains `PS-SURFACE` note results for classified facts; check output contains diagnostics. Exit code `0` means success, `1` means a check found a reviewed surface or policy difference, and `2` means invalid invocation or incomplete analysis.
+Supported options are `--format text|json|sarif`, `--strict-content`, `--compiler-api-version <version>`, `--project <path>`, `--telemetry on|off`, and `--no-telemetry`. SARIF scan and baseline output contains `PS-SURFACE` note results for classified facts; check output contains diagnostics. Exit code `0` means success, `1` means a check found a reviewed surface or policy difference, and `2` means invalid invocation or incomplete analysis.
 
 Exit code `0` means a scan or baseline succeeded, or a check passed. A check difference returns exit code `1`; invalid invocation, missing restore artifacts, unsupported input, incomplete analysis, or an environment error returns exit code `2`.
 
@@ -51,6 +52,8 @@ The capability classes are `BuildProps`, `BuildTargets`, `BuildTransitive`, `Bui
 Schema version `1` requires `schemaVersion`, `toolVersion`, `strictContent`, `entries`, and `incompleteReasons`. Each entry requires its context, project identity, target framework when target-scoped, package identity, relationship, capability, safe package-relative path, presence/active flags, and valid incomplete/hash markers. Null entries, duplicate identities, incomplete baselines, invalid hashes, active-but-missing assets, oversized input/output, unsafe package paths, inconsistent restore evidence, and unsupported schema values return exit `2`; versions other than `1` are not upgraded. `--strict-content` requires a baseline created with strict fingerprints; a strict baseline enables strict hashing even when the check flag is omitted.
 
 Strict-content eligibility is explicit and identical during scanning, baseline validation, and comparison: only present and active `BuildProps`, `BuildTargets`, `BuildTransitive`, `BuildMultiTargeting`, `CompilerExtension`, and `CompileSourceInjection` entries carry fingerprints. Inactive build assets, native runtime assets, and informational `ToolOrScriptPresent` entries remain visible as classified facts but are not hashed or compared by `PS005`.
+
+Versioned analyzer folders require an explicit consuming compiler API version. `--compiler-api-version <version>` selects the highest compatible folder; the tool does not infer compatibility from the review machine. Missing context or no compatible version is `PS007`. The bounded static import graph includes active package-relative helpers in arbitrary folders and with nonstandard XML filenames, so strict-content comparison also covers helper-only changes. Top-level generated NuGet imports use the automatic import phase rules; nested imports retain the importing asset's capability and context.
 
 ## Safety, privacy, and scope
 

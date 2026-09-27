@@ -6,6 +6,10 @@ $feed = Join-Path $root '.phase0/feed'
 $generated = Join-Path $root 'evidence/generated'
 if (Test-Path (Join-Path $root '.phase0')) { Remove-Item -LiteralPath (Join-Path $root '.phase0') -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $env:NUGET_PACKAGES, $feed, $generated | Out-Null
+$sdkBasePath = ((& dotnet --info | Select-String 'Base Path').ToString().Split(':', 2)[1]).Trim()
+$compilerAssembly = Join-Path $sdkBasePath 'Roslyn/bincore/Microsoft.CodeAnalysis.dll'
+if (-not (Test-Path -LiteralPath $compilerAssembly)) { throw "The SDK compiler assembly is missing: $compilerAssembly" }
+$compilerApiVersion = ([Diagnostics.FileVersionInfo]::GetVersionInfo($compilerAssembly).FileVersion -replace '^([0-9]+\.[0-9]+).*$', '$1')
 
 $evidence = [System.Collections.Generic.List[string]]::new()
 function Convert-ToPortableText {
@@ -93,14 +97,14 @@ foreach ($consumer in $consumers) {
     $assets = Join-Path (Join-Path $root "fixtures/consumer/$consumer") 'obj/project.assets.json'
     $consumerRoot = Split-Path $assets -Parent | Split-Path -Parent
     $jsonPath = Join-Path $generated "$consumer.json"
-    $probeOutput = Invoke-Recorded "dotnet run --project $probe --configuration Release --no-build -- $assets $consumerRoot" { dotnet run --project $probe --configuration Release --no-build -- $assets $consumerRoot }
+    $probeOutput = Invoke-Recorded "dotnet run --project $probe --configuration Release --no-build -- $assets $consumerRoot $compilerApiVersion" { dotnet run --project $probe --configuration Release --no-build -- $assets $consumerRoot $compilerApiVersion }
     [IO.File]::WriteAllText($jsonPath, $probeOutput.Output.Trim() + [Environment]::NewLine)
-    Invoke-Recorded "dotnet run --project $testProject --configuration Release --no-build -- $assets $($testCapabilities[$consumer])" { dotnet run --project $testProject --configuration Release --no-build -- $assets $($testCapabilities[$consumer]) }
+    Invoke-Recorded "dotnet run --project $testProject --configuration Release --no-build -- $assets $($testCapabilities[$consumer]) $compilerApiVersion" { dotnet run --project $testProject --configuration Release --no-build -- $assets $($testCapabilities[$consumer]) $compilerApiVersion }
 }
 foreach ($consumer in $exclusionConsumers) {
     $assets = Join-Path $root "fixtures/consumer/$consumer/obj/project.assets.json"
     $consumerRoot = Join-Path $root "fixtures/consumer/$consumer"
-    $probeOutput = Invoke-Recorded "dotnet run --project $probe --configuration Release --no-build -- $assets $consumerRoot" { dotnet run --project $probe --configuration Release --no-build -- $assets $consumerRoot }
+    $probeOutput = Invoke-Recorded "dotnet run --project $probe --configuration Release --no-build -- $assets $consumerRoot $compilerApiVersion" { dotnet run --project $probe --configuration Release --no-build -- $assets $consumerRoot $compilerApiVersion }
     $excluded = $probeOutput.Output.Trim() | ConvertFrom-Json
     if (-not $excluded.IsComplete -or @($excluded.Entries | Where-Object { $_.Capability -eq 'CompilerExtension' -and $_.Active }).Count -gt 0) {
         throw "$consumer analyzer exclusion regression failed."

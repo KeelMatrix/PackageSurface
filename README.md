@@ -53,6 +53,7 @@ package-surface baseline <path> --output <baseline>
 package-surface check <path> --baseline <baseline>
 --format text|json|sarif
 --strict-content
+--compiler-api-version <version>
 --project <path>
 --telemetry on|off
 --no-telemetry
@@ -61,6 +62,8 @@ package-surface check <path> --baseline <baseline>
 Exit code `0` means a scan or baseline succeeded, or a check passed. A check difference returns exit code `1`; invalid invocation, missing restore artifacts, unsupported input, incomplete analysis, or an environment error returns exit code `2`.
 
 Reports support `--format text|json|sarif`. JSON and SARIF report schemas are versioned; SARIF scan and baseline output contains `PS-SURFACE` note results for classified facts, while check output contains diagnostics. Exit code `0` means a successful scan/baseline or passing check, `1` means a check found a surface or policy difference, and `2` means invalid invocation, missing restore artifacts, unsupported input, incomplete analysis, or an environment error. `PS007 AnalysisIncomplete` always fails closed; it is never a clean check.
+
+When a package contains versioned analyzer folders such as `roslyn4.0`, the consuming compiler API version must be explicit. Pass `--compiler-api-version <version>` (or provide the supported restore context) to select the highest compatible version; the tool does not guess from the review machine. Missing context or no compatible version produces `PS007`. Static nested imports are part of the analyzed surface: declared package-relative helpers are followed across arbitrary package folders and XML filenames, and strict-content fingerprints include active imported helpers.
 
 ### Baseline contract
 
@@ -96,7 +99,7 @@ The tool targets `net8.0` and SDK-style `PackageReference` restore outputs, incl
 - `PS007`: inspect the incomplete-analysis text, correct the restore or input, and rerun. Do not approve a baseline from incomplete material.
 - Corrupt XML, package metadata, or compiler-extension files: restore a valid package and rerun; the tool will not execute the material to recover from corruption.
 - Different TFMs or RIDs: run the check against the same project graph used for the baseline, or review the separate entries and explicitly create a new baseline after approval.
-- More than 128 projects in a directory or solution: narrow the input with `--project`; the tool returns an explicit resource-limit failure rather than silently dropping projects.
+- More than 128 projects in a directory or solution: narrow the input with `--project`; membership validation is bounded separately so a valid selected member can still be analyzed without silently dropping projects.
 
 ## Documentation
 

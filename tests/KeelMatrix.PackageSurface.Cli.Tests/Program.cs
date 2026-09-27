@@ -315,10 +315,55 @@ static void RunBaselineContractRegression()
             Require(File.ReadAllText(path) == prior, "A rejected baseline write did not preserve the previous baseline.");
         }
 
+        var oversizedEntries = Enumerable.Range(0, 40_000)
+            .Select(index => Entry(CapabilityKind.BuildTargets, $"build/Generated{index}.targets", new string('b', 64)) with
+            {
+                PackageId = "Generated.Package." + index
+            })
+            .ToArray();
+        var oversizedSnapshot = new SurfaceSnapshot(oversizedEntries, Array.Empty<string>(), false, oversizedEntries.Length);
+        try
+        {
+            BaselineDocument.Write(path, oversizedSnapshot);
+            throw new InvalidOperationException("An oversized baseline was written.");
+        }
+        catch (InvalidDataException)
+        {
+            Require(File.ReadAllText(path) == prior, "An oversized baseline failure replaced the previous baseline.");
+        }
+
+        try
+        {
+            ReportDocument.Create(CommandKind.Scan, oversizedSnapshot, Array.Empty<Diagnostic>()).EnsureOutputWithinLimit(16 * 1024 * 1024);
+            throw new InvalidOperationException("An oversized report passed the output preflight.");
+        }
+        catch (InvalidDataException)
+        {
+        }
+
         var project = Path.Combine(scratch, "Selected.csproj");
         File.WriteAllText(project, "<Project />");
         Require(CommandLine.Run(new[] { "scan", Path.Combine(scratch, "missing.sln"), "--project", project, "--no-telemetry" }) == 2,
             "--project bypassed validation of a missing primary input.");
+
+        var manyProjects = Path.Combine(scratch, "many-projects");
+        Directory.CreateDirectory(manyProjects);
+        for (var index = 0; index < 129; index++)
+        {
+            File.WriteAllText(Path.Combine(manyProjects, $"Project{index:000}.csproj"), "<Project />");
+        }
+
+        var selectedAssets = Path.Combine(manyProjects, "obj", "project.assets.json");
+        Directory.CreateDirectory(Path.GetDirectoryName(selectedAssets)!);
+        WriteAssets(selectedAssets, Path.Combine(manyProjects, "cache"), "Narrowed.Package", Array.Empty<string>(), projectFileName: "Project000.csproj");
+        File.WriteAllText(Path.Combine(manyProjects, "Project000.csproj"), "<Project />");
+        Require(CommandLine.Run(new[] { "scan", manyProjects, "--project", Path.Combine(manyProjects, "Project000.csproj"), "--no-telemetry" }) == 0,
+            "--project did not narrow a directory with more than 128 members.");
+
+        var nonMember = Path.Combine(scratch, "not-a-member.csproj");
+        File.WriteAllText(nonMember, "<Project />");
+        Require(CommandLine.Run(new[] { "scan", manyProjects, "--project", nonMember, "--no-telemetry" }) == 2,
+            "--project accepted a project outside a large directory input.");
     }
     finally
     {
@@ -334,20 +379,27 @@ static void RunLanguageConventionRegression(string scratch)
     var baseAnalyzer = "analyzers/dotnet/cs/base.dll";
     var legacyAnalyzer = "analyzers/dotnet/roslyn3.8/cs/legacy.dll";
     var currentAnalyzer = "analyzers/dotnet/roslyn4.0/cs/current.dll";
+    var incompatibleAnalyzer = "analyzers/dotnet/roslyn99.0/cs/incompatible.dll";
     var satelliteAnalyzer = "analyzers/dotnet/cs/base.resources.dll";
     var neutralAnalyzer = "analyzers/dotnet/neutral.dll";
     var neutralLegacyAnalyzer = "analyzers/dotnet/roslyn3.8/neutral-legacy.dll";
     var neutralCurrentAnalyzer = "analyzers/dotnet/roslyn4.0/neutral-current.dll";
     WriteAnalyzerAssets(combinedAssets, Path.Combine(combinedRoot, "cache"), true, baseAnalyzer, "Test.csproj", includeAnalyzers: true,
-        additionalAnalyzerRelativePaths: new[] { legacyAnalyzer, currentAnalyzer, satelliteAnalyzer, neutralAnalyzer, neutralLegacyAnalyzer, neutralCurrentAnalyzer });
-    var combinedResult = ResolvedGraphClassifier.Analyze(combinedAssets, combinedRoot, strictContent: false);
+        additionalAnalyzerRelativePaths: new[] { legacyAnalyzer, currentAnalyzer, incompatibleAnalyzer, satelliteAnalyzer, neutralAnalyzer, neutralLegacyAnalyzer, neutralCurrentAnalyzer });
+    var combinedResult = ResolvedGraphClassifier.Analyze(combinedAssets, combinedRoot, strictContent: false, compilerApiVersion: "4.0");
     var combinedEntries = combinedResult.Entries
         .Where(entry => entry.Capability == CapabilityKind.CompilerExtension)
         .ToDictionary(entry => entry.PackageRelativePath, StringComparer.OrdinalIgnoreCase);
-    Require(combinedResult.IsComplete && combinedEntries[baseAnalyzer].Active && combinedEntries[currentAnalyzer].Active &&
+    Require(combinedResult.IsComplete && combinedEntries[baseAnalyzer].Active && combinedEntries[currentAnalyzer].Active && !combinedEntries[incompatibleAnalyzer].Active &&
         !combinedEntries[legacyAnalyzer].Active && !combinedEntries[satelliteAnalyzer].Active && combinedEntries[neutralAnalyzer].Active &&
         !combinedEntries[neutralLegacyAnalyzer].Active && combinedEntries[neutralCurrentAnalyzer].Active,
         $"SDK-selected base and highest applicable analyzer versions were not classified independently. complete={combinedResult.IsComplete}; entries={combinedResult.Entries.Count}; reasons={string.Join(" | ", combinedResult.IncompleteReasons)}");
+
+    var missingCompilerContext = ResolvedGraphClassifier.Analyze(combinedAssets, combinedRoot, strictContent: false);
+    Require(!missingCompilerContext.IsComplete && missingCompilerContext.IncompleteReasons.Any(reason => reason.Contains("explicit consuming compiler API version", StringComparison.Ordinal)),
+        "Versioned analyzer assets did not fail closed when consuming compiler context was unavailable.");
+    Require(CommandLine.Run(new[] { "scan", combinedAssets, "--compiler-api-version", "4.0", "--no-telemetry" }) == 0,
+        "The public CLI did not pass explicit compiler applicability context through to analysis.");
 
     var analyzerCases = new[]
     {
@@ -367,7 +419,8 @@ static void RunLanguageConventionRegression(string scratch)
         var assets = Path.Combine(root, "obj", "project.assets.json");
         Directory.CreateDirectory(Path.GetDirectoryName(assets)!);
         WriteAnalyzerAssets(assets, Path.Combine(root, "cache"), true, testCase.Path, testCase.Project, includeAnalyzers: true);
-        var result = ResolvedGraphClassifier.Analyze(assets, root, strictContent: false);
+        var result = ResolvedGraphClassifier.Analyze(assets, root, strictContent: false,
+            compilerApiVersion: testCase.Path.Contains("roslyn", StringComparison.OrdinalIgnoreCase) ? "4.0" : null);
         var entry = result.Entries.Single(candidate => candidate.Capability == CapabilityKind.CompilerExtension);
         Require(result.IsComplete && entry.Active == testCase.Active, $"Analyzer convention case '{testCase.Language}' was misclassified. Complete={result.IsComplete}; entries={result.Entries.Count}; reasons={string.Join(" | ", result.IncompleteReasons)}");
     }
@@ -472,25 +525,34 @@ static void RunNestedImportRegression(string scratch)
     var packageKey = "Nested.Package/1.0.0";
     var packageRoot = Path.Combine(cache, "Nested.Package", "1.0.0");
     var packageTargets = "build/Nested.Package.targets";
-    var helperTargets = "build/Helper.targets";
-    WriteAssets(assets, cache, "Nested.Package", new[] { packageTargets, helperTargets }, createFiles: true);
+    var helperTargets = "helpers/Helper.targets";
+    var grandchildProps = "helpers/Grandchild.props";
+    WriteAssets(assets, cache, "Nested.Package", new[] { packageTargets, helperTargets, grandchildProps }, createFiles: true);
     var document = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
     document["targets"]!["net8.0"]![packageKey]!["build"] = new JsonObject { [packageTargets] = new JsonObject() };
     File.WriteAllText(assets, document.ToJsonString());
-    File.WriteAllText(Path.Combine(packageRoot, packageTargets.Replace('/', Path.DirectorySeparatorChar)), "<Project><Import Project=\"Helper.targets\" /></Project>");
-    File.WriteAllText(Path.Combine(packageRoot, helperTargets.Replace('/', Path.DirectorySeparatorChar)), "<Project><Target Name=\"Helper\" /></Project>");
+    File.WriteAllText(Path.Combine(packageRoot, packageTargets.Replace('/', Path.DirectorySeparatorChar)), "<Project><Import Project=\"../helpers/Helper.targets\" /></Project>");
+    File.WriteAllText(Path.Combine(packageRoot, helperTargets.Replace('/', Path.DirectorySeparatorChar)), "<Project><Import Project=\"Grandchild.props\" /></Project>");
+    File.WriteAllText(Path.Combine(packageRoot, grandchildProps.Replace('/', Path.DirectorySeparatorChar)), "<Project><PropertyGroup><NestedValue>1</NestedValue></PropertyGroup></Project>");
     File.WriteAllText(Path.Combine(obj, "Test.csproj.nuget.g.targets"), $"<Project><Import Project=\"$(NuGetPackageRoot)/Nested.Package/1.0.0/{packageTargets}\" /></Project>");
 
     var baseline = ResolvedGraphClassifier.Analyze(assets, root, strictContent: true);
     var helper = baseline.Entries.Single(entry => entry.PackageRelativePath.Equals(helperTargets, StringComparison.OrdinalIgnoreCase));
-    Require(baseline.IsComplete && helper.Active && helper.Sha256 is not null, $"Nested helper import was not active and strictly fingerprinted. active={helper.Active}; hash={helper.Sha256}; complete={baseline.IsComplete}; reasons={string.Join(" | ", baseline.IncompleteReasons)}");
+    var grandchild = baseline.Entries.Single(entry => entry.PackageRelativePath.Equals(grandchildProps, StringComparison.OrdinalIgnoreCase));
+    Require(baseline.IsComplete && helper.Active && helper.Sha256 is not null && grandchild.Active && grandchild.Sha256 is not null,
+        $"Nested arbitrary-path import graph was not active and strictly fingerprinted. helper={helper.Active}/{helper.Sha256}; grandchild={grandchild.Active}/{grandchild.Sha256}; complete={baseline.IsComplete}; reasons={string.Join(" | ", baseline.IncompleteReasons)}");
 
-    File.AppendAllText(Path.Combine(packageRoot, helperTargets.Replace('/', Path.DirectorySeparatorChar)), "<!-- changed -->");
+    File.AppendAllText(Path.Combine(packageRoot, grandchildProps.Replace('/', Path.DirectorySeparatorChar)), "<!-- changed -->");
     var changed = ResolvedGraphClassifier.Analyze(assets, root, strictContent: true);
     Require(DiffEngine.Compare(baseline.Entries.Select(BaselineEntry.From).ToArray(), changed.Entries, strictContent: true).Any(diagnostic => diagnostic.Id == "PS005"),
         "A nested helper-only content change was not detected.");
 
-    File.WriteAllText(Path.Combine(packageRoot, helperTargets.Replace('/', Path.DirectorySeparatorChar)), "<Project><Import Project=\"Nested.Package.targets\" /></Project>");
+    File.WriteAllText(Path.Combine(packageRoot, helperTargets.Replace('/', Path.DirectorySeparatorChar)), "<Project><Import Project=\"Missing.props\" /></Project>");
+    var missing = ResolvedGraphClassifier.Analyze(assets, root, strictContent: true);
+    Require(!missing.IsComplete && missing.IncompleteReasons.Any(reason => reason.Contains("unsupported static import target", StringComparison.OrdinalIgnoreCase)),
+        "A missing arbitrary-path nested import was not fail-closed.");
+
+    File.WriteAllText(Path.Combine(packageRoot, helperTargets.Replace('/', Path.DirectorySeparatorChar)), "<Project><Import Project=\"../build/Nested.Package.targets\" /></Project>");
     var cycle = ResolvedGraphClassifier.Analyze(assets, root, strictContent: false);
     Require(cycle.IsComplete && cycle.Entries.Any(entry => entry.PackageRelativePath.Equals(helperTargets, StringComparison.OrdinalIgnoreCase) && entry.Active),
         "A bounded static import cycle was not handled deterministically.");
@@ -753,6 +815,46 @@ static void RunAnalyzerExclusionRegression(string scratch, string cache, string 
 
 static void RunMalformedAssetsShapeRegression(string assets, string scratch)
 {
+    var projectReferencePath = Path.Combine(Path.GetDirectoryName(assets)!, "project-reference.assets.json");
+    var projectReference = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
+    projectReference["targets"]!["net8.0"]!["Referenced.Project/1.0.0"] = new JsonObject
+    {
+        ["type"] = "project",
+        ["framework"] = ".NETCoreApp,Version=v8.0",
+        ["compile"] = new JsonObject { ["bin/placeholder/Referenced.Project.dll"] = new JsonObject() }
+    };
+    projectReference["libraries"]!["Referenced.Project/1.0.0"] = new JsonObject
+    {
+        ["type"] = "project",
+        ["path"] = "../Referenced.Project",
+        ["msbuildProject"] = "../Referenced.Project/Referenced.Project.csproj"
+    };
+    File.WriteAllText(projectReferencePath, projectReference.ToJsonString());
+    try
+    {
+        var result = ResolvedGraphClassifier.Analyze(projectReferencePath, scratch, strictContent: false);
+        Require(result.IsComplete, $"A normal project-reference target with scalar framework metadata was rejected. reasons={string.Join(" | ", result.IncompleteReasons)}");
+    }
+    finally
+    {
+        File.Delete(projectReferencePath);
+    }
+
+    var arrayMetadataPath = Path.Combine(Path.GetDirectoryName(assets)!, "array-metadata.assets.json");
+    var arrayMetadata = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
+    arrayMetadata["targets"]!["net8.0"]!["XmlPackage/1.0.0"]!["frameworkAssemblies"] = new JsonArray("System.Xml");
+    arrayMetadata["targets"]!["net8.0"]!["XmlPackage/1.0.0"]!["frameworkReferences"] = new JsonArray("Microsoft.NETCore.App");
+    File.WriteAllText(arrayMetadataPath, arrayMetadata.ToJsonString());
+    try
+    {
+        var result = ResolvedGraphClassifier.Analyze(arrayMetadataPath, scratch, strictContent: false);
+        Require(result.IsComplete, $"Legitimate array-valued framework metadata was rejected. reasons={string.Join(" | ", result.IncompleteReasons)}");
+    }
+    finally
+    {
+        File.Delete(arrayMetadataPath);
+    }
+
     var malformedShapes = new (string Name, Action<JsonObject> Mutate)[]
     {
         ("packageFolders-array", root => root["packageFolders"] = new JsonArray()),
@@ -760,8 +862,14 @@ static void RunMalformedAssetsShapeRegression(string assets, string scratch)
         ("target-array", root => root["targets"]!["net8.0"] = new JsonArray()),
         ("libraries-array", root => root["libraries"] = new JsonArray()),
         ("frameworks-array", root => root["project"]!["frameworks"] = new JsonArray()),
+        ("framework-dependencies-scalar", root => root["project"]!["frameworks"]!["net8.0"]!["dependencies"] = 7),
         ("package-path-number", root => root["libraries"]!["XmlPackage/1.0.0"]!["path"] = 7),
         ("missing-declared-target", root => root["targets"]!.AsObject().Remove("net8.0")),
+        ("empty-target-with-declarations", root =>
+        {
+            root["project"]!["frameworks"]!["net8.0"]!["dependencies"] = new JsonObject { ["XmlPackage"] = new JsonObject() };
+            root["targets"]!["net8.0"] = new JsonObject();
+        }),
         ("malformed-content-files", root => root["targets"]!["net8.0"]!["XmlPackage/1.0.0"]!["contentFiles"] = new JsonArray()),
         ("missing-target-file-inventory", root => root["targets"]!["net8.0"]!["XmlPackage/1.0.0"]!["build"] = new JsonObject { ["build/unrepresented.targets"] = new JsonObject() }),
         ("ambiguous-library-identity", root => root["libraries"]!.AsObject()["xmlpackage/1.0.0"] = root["libraries"]!["XmlPackage/1.0.0"]!.DeepClone())

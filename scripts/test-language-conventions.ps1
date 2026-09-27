@@ -3,6 +3,10 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Set-Location -LiteralPath $root
 $config = Join-Path $root 'NuGet.config'
 $probe = Join-Path $root 'src/KeelMatrix.PackageSurface.Probe/KeelMatrix.PackageSurface.Probe.csproj'
+$sdkBasePath = ((& dotnet --info | Select-String 'Base Path').ToString().Split(':', 2)[1]).Trim()
+$compilerAssembly = Join-Path $sdkBasePath 'Roslyn/bincore/Microsoft.CodeAnalysis.dll'
+if (-not (Test-Path -LiteralPath $compilerAssembly)) { throw "The SDK compiler assembly is missing: $compilerAssembly" }
+$compilerApiVersion = ([Diagnostics.FileVersionInfo]::GetVersionInfo($compilerAssembly).FileVersion -replace '^([0-9]+\.[0-9]+).*$', '$1')
 $cases = @(
     @{ Name = 'LanguageCSharp'; Project = 'fixtures/consumer/LanguageCSharp/LanguageCSharp.csproj'; Language = 'cs' },
     @{ Name = 'LanguageVisualBasic'; Project = 'fixtures/consumer/LanguageVisualBasic/LanguageVisualBasic.vbproj'; Language = 'vb' },
@@ -11,7 +15,8 @@ $cases = @(
 
 function Get-Entry([object[]] $entries, [string] $path) {
     $matches = @($entries | Where-Object { $_.capability -in 'CompilerExtension', 'CompileSourceInjection' -and $_.packageRelativePath -eq $path })
-    if ($matches.Count -ne 1) { throw "Expected one entry for '$path', found $($matches.Count)." }
+    if ($matches.Count -gt 1) { throw "Expected at most one entry for '$path', found $($matches.Count)." }
+    if ($matches.Count -eq 0) { return $null }
     return $matches[0]
 }
 
@@ -62,7 +67,7 @@ foreach ($case in $cases) {
     $assets = Join-Path $projectRoot 'obj/project.assets.json'
     $sdkAnalyzerPaths = Get-SdkPackagePaths $project 'ResolveLockFileAnalyzers' 'Analyzer' $assets
     $sdkCompilePaths = Get-SdkPackagePaths $project 'ResolvePackageDependenciesForBuild' 'Compile' $assets
-    $output = @(& dotnet run --project $probe --configuration Release --no-build -- $assets $projectRoot)
+    $output = @(& dotnet run --project $probe --configuration Release --no-build -- $assets $projectRoot $compilerApiVersion)
     if ($LASTEXITCODE -ne 0) { throw "Language fixture probe failed for $($case.Name)." }
     $result = ($output -join [Environment]::NewLine) | ConvertFrom-Json
     if (-not $result.isComplete) { throw "Language fixture $($case.Name) was incomplete: $($result.incompleteReasons -join '; ')." }

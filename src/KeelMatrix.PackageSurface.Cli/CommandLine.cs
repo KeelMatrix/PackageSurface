@@ -50,6 +50,10 @@ public static class CommandLine
         var options = parsed.Options!;
         try
         {
+            var baselinePath = options.Command == CommandKind.Baseline ? Path.GetFullPath(options.OutputPath!) : null;
+            var priorBaselineExists = baselinePath is not null && File.Exists(baselinePath);
+            var priorBaseline = priorBaselineExists ? File.ReadAllBytes(baselinePath!) : null;
+            var baselinePersisted = false;
             BaselineDocument? baseline = null;
             var strictContent = options.StrictContent;
             if (options.Command == CommandKind.Check)
@@ -80,22 +84,31 @@ public static class CommandLine
 
             var incomplete = diagnostics.Any(diagnostic => diagnostic.Id == "PS007");
             var report = ReportDocument.Create(options.Command, current, diagnostics);
-            if (options.Command == CommandKind.Baseline && !incomplete)
+            try
             {
-                try
+                if (options.Command == CommandKind.Baseline && !incomplete)
                 {
-                    report.EnsureOutputWithinLimit(MaxOutputBytes);
-                    BaselineDocument.Write(options.OutputPath!, current);
+                    try
+                    {
+                        report.EnsureOutputWithinLimit(MaxOutputBytes);
+                        BaselineDocument.Write(options.OutputPath!, current);
+                        baselinePersisted = true;
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException or JsonException or NotSupportedException)
+                    {
+                        diagnostics.Add(Diagnostic.Create("PS007", "The baseline could not be persisted after validating the analyzed surface."));
+                        incomplete = true;
+                        report = ReportDocument.Create(options.Command, current, diagnostics);
+                    }
                 }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException or JsonException or NotSupportedException)
-                {
-                    diagnostics.Add(Diagnostic.Create("PS007", "The baseline could not be persisted after validating the analyzed surface."));
-                    incomplete = true;
-                    report = ReportDocument.Create(options.Command, current, diagnostics);
-                }
-            }
 
-            WriteOutput(report, options.Format);
+                WriteOutput(report, options.Format);
+            }
+            catch when (baselinePersisted)
+            {
+                RestoreBaseline(baselinePath!, priorBaselineExists, priorBaseline);
+                throw;
+            }
 
             if (!incomplete &&
                 (options.Command is CommandKind.Baseline or CommandKind.Check) &&
@@ -190,6 +203,10 @@ public static class CommandLine
 
     private static Action? TelemetryHook { get; set; }
 
+    private static Func<ReportDocument, OutputFormat, string>? OutputSerializer { get; set; }
+
+    private static Action<string>? OutputSink { get; set; }
+
     private static void TrackActivation()
     {
         try
@@ -210,7 +227,7 @@ public static class CommandLine
     private static void WriteOutput(ReportDocument report, OutputFormat format)
     {
         report.EnsureOutputWithinLimit(MaxOutputBytes);
-        var output = format switch
+        var output = OutputSerializer?.Invoke(report, format) ?? format switch
         {
             OutputFormat.Text => report.ToText(),
             OutputFormat.Json => JsonSerializer.Serialize(report, JsonOptions.Indented),
@@ -222,7 +239,26 @@ public static class CommandLine
             throw new InvalidDataException("The report exceeds the supported output size limit.");
         }
 
-        Console.WriteLine(output);
+        if (OutputSink is not null)
+        {
+            OutputSink(output);
+        }
+        else
+        {
+            Console.WriteLine(output);
+        }
+    }
+
+    private static void RestoreBaseline(string path, bool existed, byte[]? content)
+    {
+        if (existed)
+        {
+            File.WriteAllBytes(path, content!);
+        }
+        else if (File.Exists(path))
+        {
+            File.Delete(path);
+        }
     }
 }
 
@@ -263,7 +299,11 @@ public sealed record Options(
           --no-telemetry             Disable best-effort activation telemetry.
 
         Telemetry privacy:
-          PackageSurface passes no analyzed dependency identity or content to telemetry.
+          Activation fields: event, tool, tool_version, telemetry_version, schema_version,
+          project_hash, installation_hash, runtime, os, ci, timestamp.
+          Heartbeat fields: the same common fields plus runtime, os, ci, and week.
+          PackageSurface requests activation only and adds no scanned package, asset, path,
+          TFM, RID, baseline, or diagnostic data.
           See https://github.com/KeelMatrix/PackageSurface/blob/main/PRIVACY.md and the
           shared policy at https://github.com/KeelMatrix/Telemetry/blob/main/PRIVACY.md.
 

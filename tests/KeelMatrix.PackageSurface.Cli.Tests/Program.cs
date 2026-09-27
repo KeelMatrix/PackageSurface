@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using KeelMatrix.PackageSurface;
 using KeelMatrix.PackageSurface.Probe;
+using KeelMatrix.Telemetry;
 
 var entries = new[]
 {
@@ -36,7 +37,7 @@ if (incomplete.Diagnostics.Count != 1 || incomplete.Diagnostics[0].Id != "PS007"
     return 1;
 }
 
-if (!Options.HelpText.Contains("passes no analyzed dependency identity or content", StringComparison.Ordinal) ||
+if (!Options.HelpText.Contains("Activation fields: event, tool, tool_version, telemetry_version, schema_version", StringComparison.Ordinal) ||
     !Options.HelpText.Contains("https://github.com/KeelMatrix/Telemetry/blob/main/PRIVACY.md", StringComparison.Ordinal))
 {
     Console.Error.WriteLine("CLI telemetry privacy contract is missing from --help.");
@@ -45,6 +46,7 @@ if (!Options.HelpText.Contains("passes no analyzed dependency identity or conten
 
 RunClassifierHardeningTests();
 RunTelemetryStateMachineTests();
+RunTelemetryPayloadAllowlistRegression();
 RunParserMessageRegression();
 RunBaselineContractRegression();
 
@@ -109,6 +111,8 @@ static void RunClassifierHardeningTests()
         RunDiagnosticPathLeakRegression(scratch);
         RunApplicabilityHardeningRegressions(scratch);
         RunNestedImportRegression(scratch);
+        RunImportEdgeBudgetRegression(scratch);
+        RunInvocationStructuralBudgetRegression(scratch);
 
         var traversalAssets = Path.Combine(obj, "traversal.assets.json");
         var traversalFiles = new[] { "../escape.props" };
@@ -364,10 +368,96 @@ static void RunBaselineContractRegression()
         File.WriteAllText(nonMember, "<Project />");
         Require(CommandLine.Run(new[] { "scan", manyProjects, "--project", nonMember, "--no-telemetry" }) == 2,
             "--project accepted a project outside a large directory input.");
+        RunBaselineTransactionRegression(scratch);
     }
     finally
     {
         if (Directory.Exists(scratch)) Directory.Delete(scratch, recursive: true);
+    }
+}
+
+static void RunBaselineTransactionRegression(string parent)
+{
+    var root = Path.Combine(parent, "baseline-transaction");
+    var cache = Path.Combine(root, "cache");
+    var obj = Path.Combine(root, "obj");
+    Directory.CreateDirectory(obj);
+    var assets = Path.Combine(obj, "project.assets.json");
+    var baseline = Path.Combine(root, "approved.json");
+    WriteAssets(assets, cache, "Transaction.Package", Array.Empty<string>());
+    Require(CommandLine.Run(new[] { "baseline", assets, "--output", baseline, "--no-telemetry" }) == 0,
+        "The transaction baseline seed did not succeed.");
+    var approved = File.ReadAllBytes(baseline);
+
+    foreach (var format in new[] { "text", "json", "sarif" })
+    {
+        var output = new StringWriter(CultureInfo.InvariantCulture);
+        var priorOutput = Console.Out;
+        try
+        {
+            SetOutputSerializer((_, _) => new string('x', 16 * 1024 * 1024 + 1));
+            Console.SetOut(output);
+            var exitCode = CommandLine.Run(new[] { "baseline", assets, "--output", baseline, "--format", format, "--no-telemetry" });
+            Require(exitCode == 2, $"An actual-size {format} output overflow returned exit {exitCode}.");
+        }
+        finally
+        {
+            Console.SetOut(priorOutput);
+            SetOutputSerializer(null);
+        }
+
+        Require(approved.SequenceEqual(File.ReadAllBytes(baseline)), $"An actual-size {format} output overflow replaced the approved baseline.");
+        Require(!output.ToString().Contains("Entries:", StringComparison.Ordinal), $"An actual-size {format} output overflow emitted partial success output.");
+    }
+
+    try
+    {
+        var output = new StringWriter(CultureInfo.InvariantCulture);
+        var priorOutput = Console.Out;
+        try
+        {
+            SetOutputSerializer((_, _) => throw new InvalidOperationException("serializer failure"));
+            Console.SetOut(output);
+            Require(CommandLine.Run(new[] { "baseline", assets, "--output", baseline, "--format", "json", "--no-telemetry" }) == 2,
+                "A serializer failure did not return exit 2.");
+        }
+        finally
+        {
+            Console.SetOut(priorOutput);
+            SetOutputSerializer(null);
+        }
+
+        Require(approved.SequenceEqual(File.ReadAllBytes(baseline)) && !output.ToString().Contains("Entries:", StringComparison.Ordinal),
+            "A serializer failure did not roll back the baseline transaction.");
+    }
+    finally
+    {
+        SetOutputSerializer(null);
+    }
+
+    try
+    {
+        var output = new StringWriter(CultureInfo.InvariantCulture);
+        var priorOutput = Console.Out;
+        try
+        {
+            SetOutputSink(_ => throw new InvalidOperationException("output failure"));
+            Console.SetOut(output);
+            Require(CommandLine.Run(new[] { "baseline", assets, "--output", baseline, "--format", "text", "--no-telemetry" }) == 2,
+                "An output sink failure did not return exit 2.");
+        }
+        finally
+        {
+            Console.SetOut(priorOutput);
+            SetOutputSink(null);
+        }
+
+        Require(approved.SequenceEqual(File.ReadAllBytes(baseline)) && !output.ToString().Contains("Entries:", StringComparison.Ordinal),
+            "An output sink failure did not roll back the baseline transaction.");
+    }
+    finally
+    {
+        SetOutputSink(null);
     }
 }
 
@@ -513,6 +603,7 @@ static void RunApplicabilityHardeningRegressions(string scratch)
 
     RunProjectAggregationRegression(scratch);
     RunReparsePointRegression(scratch);
+    RunReparsePathVariantRegression(scratch);
 }
 
 static void RunNestedImportRegression(string scratch)
@@ -562,6 +653,205 @@ static void RunNestedImportRegression(string scratch)
     Require(!dynamic.IsComplete && dynamic.IncompleteReasons.Any(reason => reason.Contains("unsupported static import target", StringComparison.OrdinalIgnoreCase)) &&
         dynamic.IncompleteReasons.All(reason => !reason.Contains("SensitiveDynamicImportMarker", StringComparison.OrdinalIgnoreCase)),
         "An unsupported dynamic nested import was not fail-closed without disclosing its expression.");
+
+    RunNestedPhaseMatrixRegression(scratch);
+}
+
+static void RunNestedPhaseMatrixRegression(string scratch)
+{
+    var root = Path.Combine(scratch, "nested-phase-matrix");
+    var cache = Path.Combine(root, "cache");
+    var obj = Path.Combine(root, "obj");
+    Directory.CreateDirectory(obj);
+    var assets = Path.Combine(obj, "project.assets.json");
+    var packageId = "Nested.Phase.Matrix";
+    var files = new[]
+    {
+        "build/Root.props",
+        "build/Helper.targets",
+        "buildTransitive/Transitive.targets",
+        "buildTransitive/TransitiveHelper.props",
+        "buildMultiTargeting/Outer.props",
+        "buildMultiTargeting/OuterHelper.targets"
+    };
+    WriteAssets(assets, cache, packageId, files, createFiles: true);
+    var document = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
+    var package = document["targets"]!["net8.0"]![packageId + "/1.0.0"]!.AsObject();
+    package["build"] = new JsonObject { ["build/Root.props"] = new JsonObject() };
+    package["buildTransitive"] = new JsonObject { ["buildTransitive/Transitive.targets"] = new JsonObject() };
+    package["buildMultiTargeting"] = new JsonObject { ["buildMultiTargeting/Outer.props"] = new JsonObject() };
+    File.WriteAllText(assets, document.ToJsonString());
+
+    var packageRoot = Path.Combine(cache, packageId, "1.0.0");
+    File.WriteAllText(Path.Combine(packageRoot, "build", "Root.props"), "<Project><Import Project=\"Helper.targets\" /></Project>");
+    File.WriteAllText(Path.Combine(packageRoot, "build", "Helper.targets"), "<Project><Import Project=\"Root.props\" /></Project>");
+    File.WriteAllText(Path.Combine(packageRoot, "buildTransitive", "Transitive.targets"), "<Project><Import Project=\"TransitiveHelper.props\" /></Project>");
+    File.WriteAllText(Path.Combine(packageRoot, "buildTransitive", "TransitiveHelper.props"), "<Project />");
+    File.WriteAllText(Path.Combine(packageRoot, "buildMultiTargeting", "Outer.props"), "<Project><Import Project=\"OuterHelper.targets\" /></Project>");
+    File.WriteAllText(Path.Combine(packageRoot, "buildMultiTargeting", "OuterHelper.targets"), "<Project />");
+    File.WriteAllText(Path.Combine(obj, "Test.csproj.nuget.g.props"),
+        "<Project>" +
+        "<Import Project=\"$(NuGetPackageRoot)/Nested.Phase.Matrix/1.0.0/build/Root.props\" />" +
+        "<Import Project=\"$(NuGetPackageRoot)/Nested.Phase.Matrix/1.0.0/buildMultiTargeting/Outer.props\" />" +
+        "</Project>");
+    File.WriteAllText(Path.Combine(obj, "Test.csproj.nuget.g.targets"),
+        "<Project><Import Project=\"$(NuGetPackageRoot)/Nested.Phase.Matrix/1.0.0/buildTransitive/Transitive.targets\" /></Project>");
+
+    var result = ResolvedGraphClassifier.Analyze(assets, root, strictContent: true);
+    Require(result.IsComplete, $"Nested phase matrix did not classify completely: {string.Join(" | ", result.IncompleteReasons)}");
+    foreach (var path in files.Skip(1))
+    {
+        var entries = result.Entries.Where(candidate => candidate.PackageRelativePath.Equals(path, StringComparison.OrdinalIgnoreCase)).ToArray();
+        Require(entries.Length > 0 && entries.All(entry => entry.Active && entry.Sha256 is not null), $"Nested phase matrix descendant '{path}' was not active and fingerprinted.");
+    }
+}
+
+static void RunImportEdgeBudgetRegression(string scratch)
+{
+    var root = Path.Combine(scratch, "import-edge-budget");
+    var cache = Path.Combine(root, "cache");
+    var obj = Path.Combine(root, "obj");
+    Directory.CreateDirectory(obj);
+    var files = new[] { "build/Edge.props", "build/Edge.targets" };
+
+    var withinPath = Path.Combine(obj, "within.assets.json");
+    WriteAssets(withinPath, cache, "Edge.Package", files, createFiles: true);
+    AddBuildGroups(withinPath, "Edge.Package", files);
+    WritePackageBuildFiles(cache, files);
+    WriteRepeatedGeneratedImports(obj, 4_096, 4_096, files);
+    var within = ResolvedGraphClassifier.Analyze(withinPath, root, strictContent: false);
+    Require(within.IsComplete && within.Entries.Count == 2, $"The 8,192 cumulative generated-import edge boundary failed: {string.Join(" | ", within.IncompleteReasons)}");
+
+    var overRoot = Path.Combine(scratch, "import-edge-budget-over");
+    var overCache = Path.Combine(overRoot, "cache");
+    var overObj = Path.Combine(overRoot, "obj");
+    Directory.CreateDirectory(overObj);
+    var overPath = Path.Combine(overObj, "over.assets.json");
+    WriteAssets(overPath, overCache, "Edge.Package", files, createFiles: true);
+    AddBuildGroups(overPath, "Edge.Package", files);
+    WritePackageBuildFiles(overCache, files);
+    WriteRepeatedGeneratedImports(overObj, 4_096, 4_097, files);
+    var output = new StringWriter(CultureInfo.InvariantCulture);
+    var priorOutput = Console.Out;
+    try
+    {
+        Console.SetOut(output);
+        var exitCode = CommandLine.Run(new[] { "scan", overPath, "--format", "json", "--no-telemetry" });
+        Require(exitCode == 2, $"An 8,193 cumulative generated-import edge graph returned exit {exitCode}.");
+    }
+    finally
+    {
+        Console.SetOut(priorOutput);
+    }
+
+    Require(!output.ToString().Contains("Edge.props", StringComparison.Ordinal) &&
+        !output.ToString().Contains("Edge.targets", StringComparison.Ordinal),
+        "The over-budget import graph emitted partial capability success output.");
+}
+
+static void RunInvocationStructuralBudgetRegression(string scratch)
+{
+    var root = Path.Combine(scratch, "invocation-budget");
+    Directory.CreateDirectory(root);
+    var projects = new[] { "ProjectA", "ProjectB" };
+    foreach (var name in projects)
+    {
+        var projectRoot = Path.Combine(root, name);
+        var obj = Path.Combine(projectRoot, "obj");
+        Directory.CreateDirectory(obj);
+        File.WriteAllText(Path.Combine(projectRoot, name + ".csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>");
+        WriteTargetGraphAssets(Path.Combine(obj, "project.assets.json"), Path.Combine(projectRoot, "cache"), Path.Combine(projectRoot, name + ".csproj"), 257);
+    }
+
+    Require(CommandLine.Run(new[] { "scan", root, "--no-telemetry" }) == 2,
+        "Selecting two projects did not share the cumulative target-graph budget.");
+    Require(CommandLine.Run(new[] { "scan", Path.Combine(root, "ProjectA", "ProjectA.csproj"), "--project", Path.Combine(root, "ProjectA", "ProjectA.csproj"), "--no-telemetry" }) == 0,
+        "--project did not provide the documented recovery path after an aggregate structural-budget failure.");
+
+    var inventoryRoot = Path.Combine(scratch, "invocation-inventory-budget");
+    var inventoryFiles = Enumerable.Range(0, 10_001)
+        .Select(index => $"lib/net8.0/inventory-{index.ToString(CultureInfo.InvariantCulture)}.dat")
+        .ToArray();
+    foreach (var name in projects)
+    {
+        var projectRoot = Path.Combine(inventoryRoot, name);
+        var obj = Path.Combine(projectRoot, "obj");
+        Directory.CreateDirectory(obj);
+        File.WriteAllText(Path.Combine(projectRoot, name + ".csproj"), "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>");
+        WriteAssets(Path.Combine(obj, "project.assets.json"), Path.Combine(projectRoot, "cache"), name + ".Inventory", inventoryFiles, projectFileName: name + ".csproj");
+    }
+
+    Require(CommandLine.Run(new[] { "scan", inventoryRoot, "--no-telemetry" }) == 2,
+        "Selecting two projects did not share the cumulative package-inventory file budget.");
+    Require(CommandLine.Run(new[] { "scan", Path.Combine(inventoryRoot, "ProjectA", "ProjectA.csproj"), "--project", Path.Combine(inventoryRoot, "ProjectA", "ProjectA.csproj"), "--no-telemetry" }) == 0,
+        "A narrowed project did not remain within the package-inventory file budget.");
+}
+
+static void AddBuildGroups(string assets, string packageId, IReadOnlyList<string> files)
+{
+    var document = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
+    var package = document["targets"]!["net8.0"]![packageId + "/1.0.0"]!.AsObject();
+    package["build"] = new JsonObject
+    {
+        [files[0]] = new JsonObject(),
+        [files[1]] = new JsonObject()
+    };
+    File.WriteAllText(assets, document.ToJsonString());
+}
+
+static void WriteRepeatedGeneratedImports(string obj, int propsCount, int targetsCount, IReadOnlyList<string> files)
+{
+    var props = new StringBuilder("<Project>");
+    for (var index = 0; index < propsCount; index++)
+    {
+        props.Append("<Import Project=\"$(NuGetPackageRoot)/Edge.Package/1.0.0/").Append(files[0]).Append("\" />");
+    }
+    props.Append("</Project>");
+    File.WriteAllText(Path.Combine(obj, "Test.csproj.nuget.g.props"), props.ToString());
+
+    var targets = new StringBuilder("<Project>");
+    for (var index = 0; index < targetsCount; index++)
+    {
+        targets.Append("<Import Project=\"$(NuGetPackageRoot)/Edge.Package/1.0.0/").Append(files[1]).Append("\" />");
+    }
+    targets.Append("</Project>");
+    File.WriteAllText(Path.Combine(obj, "Test.csproj.nuget.g.targets"), targets.ToString());
+}
+
+static void WritePackageBuildFiles(string cache, IReadOnlyList<string> files)
+{
+    foreach (var file in files)
+    {
+        var path = Path.Combine(cache, "Edge.Package", "1.0.0", file.Replace('/', Path.DirectorySeparatorChar));
+        File.WriteAllText(path, "<Project />");
+    }
+}
+
+static void WriteTargetGraphAssets(string assets, string cache, string projectPath, int targetCount)
+{
+    var targets = new JsonObject();
+    for (var index = 0; index < targetCount; index++)
+    {
+        targets[$"net8.0/rid{index.ToString(CultureInfo.InvariantCulture)}"] = new JsonObject();
+    }
+
+    var root = new JsonObject
+    {
+        ["version"] = 3,
+        ["targets"] = targets,
+        ["libraries"] = new JsonObject(),
+        ["packageFolders"] = new JsonObject { [cache] = new JsonObject() },
+        ["project"] = new JsonObject
+        {
+            ["restore"] = new JsonObject { ["projectPath"] = projectPath },
+            ["frameworks"] = new JsonObject { ["net8.0"] = new JsonObject { ["dependencies"] = new JsonObject() } }
+        }
+    };
+    Directory.CreateDirectory(cache);
+    File.WriteAllText(assets, root.ToJsonString());
+    var obj = Path.GetDirectoryName(assets)!;
+    var projectFile = Path.GetFileName(projectPath);
+    WriteGeneratedImportEvidence(assets, projectFile);
 }
 
 static void RunProjectAggregationRegression(string scratch)
@@ -641,9 +931,9 @@ static void RunReparsePointRegression(string scratch)
         Require(!result.IsComplete && result.IncompleteReasons.Any(reason => reason.Contains("unsafe package path", StringComparison.OrdinalIgnoreCase)),
             "A supported filesystem link escape was not rejected.");
     }
-    catch (UnauthorizedAccessException) { }
-    catch (IOException) { Console.WriteLine("SKIP: leaf reparse-point regression is unavailable on this filesystem."); }
-    catch (PlatformNotSupportedException) { Console.WriteLine("SKIP: leaf reparse-point regression is unavailable on this platform."); }
+    catch (UnauthorizedAccessException) { Console.WriteLine("UNVERIFIED: leaf reparse-point regression is unavailable on this filesystem."); }
+    catch (IOException) { Console.WriteLine("UNVERIFIED: leaf reparse-point regression is unavailable on this filesystem."); }
+    catch (PlatformNotSupportedException) { Console.WriteLine("UNVERIFIED: leaf reparse-point regression is unavailable on this platform."); }
     finally
     {
         if (File.Exists(outside)) File.Delete(outside);
@@ -668,9 +958,33 @@ static void RunReparsePointRegression(string scratch)
         Require(!rootLinkResult.IsComplete && rootLinkResult.Entries.All(entry => entry.Sha256 is null),
             "A rejected package-root link was opened or hashed through a fallback path.");
     }
-    catch (UnauthorizedAccessException) { Console.WriteLine("SKIP: package-root reparse-point regression is unavailable on this filesystem."); }
-    catch (IOException) { Console.WriteLine("SKIP: package-root reparse-point regression is unavailable on this filesystem."); }
-    catch (PlatformNotSupportedException) { Console.WriteLine("SKIP: package-root reparse-point regression is unavailable on this platform."); }
+    catch (UnauthorizedAccessException) { Console.WriteLine("UNVERIFIED: package-root reparse-point regression is unavailable on this filesystem."); }
+    catch (IOException) { Console.WriteLine("UNVERIFIED: package-root reparse-point regression is unavailable on this filesystem."); }
+    catch (PlatformNotSupportedException) { Console.WriteLine("UNVERIFIED: package-root reparse-point regression is unavailable on this platform."); }
+
+    var interiorRoot = Path.Combine(scratch, "interior-link");
+    var interiorCache = Path.Combine(interiorRoot, "cache");
+    var interiorObj = Path.Combine(interiorRoot, "obj");
+    Directory.CreateDirectory(interiorObj);
+    var interiorAssets = Path.Combine(interiorObj, "project.assets.json");
+    var interiorFiles = new[] { "build/inside.targets" };
+    WriteAssets(interiorAssets, interiorCache, "InteriorLink.Package", interiorFiles, createFiles: true);
+    var interiorPackage = Path.Combine(interiorCache, "InteriorLink.Package", "1.0.0");
+    var interiorBuild = Path.Combine(interiorPackage, "build");
+    var outsideBuild = Path.Combine(scratch, "outside-build");
+    Directory.CreateDirectory(outsideBuild);
+    File.WriteAllText(Path.Combine(outsideBuild, "inside.targets"), "<Project />");
+    Directory.Delete(interiorBuild, recursive: true);
+    try
+    {
+        Directory.CreateSymbolicLink(interiorBuild, outsideBuild);
+        var interiorResult = ResolvedGraphClassifier.Analyze(interiorAssets, interiorRoot, strictContent: false);
+        Require(!interiorResult.IsComplete && interiorResult.IncompleteReasons.Any(reason => reason.Contains("unsafe package path", StringComparison.OrdinalIgnoreCase)),
+            "An interior directory reparse point was not rejected.");
+    }
+    catch (UnauthorizedAccessException) { Console.WriteLine("UNVERIFIED: interior-directory reparse-point regression is unavailable on this filesystem."); }
+    catch (IOException) { Console.WriteLine("UNVERIFIED: interior-directory reparse-point regression is unavailable on this filesystem."); }
+    catch (PlatformNotSupportedException) { Console.WriteLine("UNVERIFIED: interior-directory reparse-point regression is unavailable on this platform."); }
 
     var ancestorTarget = Path.Combine(scratch, "ancestor-target");
     var ancestorLink = Path.Combine(scratch, "ancestor-link");
@@ -684,9 +998,94 @@ static void RunReparsePointRegression(string scratch)
         var ancestorResult = ResolvedGraphClassifier.Analyze(ancestorAssets, ancestorLink, strictContent: false);
         Require(ancestorResult.IsComplete, "A reparse point outside the resolved package root was treated as an unsafe package path.");
     }
-    catch (UnauthorizedAccessException) { Console.WriteLine("SKIP: ancestor reparse-point regression is unavailable on this filesystem."); }
-    catch (IOException) { Console.WriteLine("SKIP: ancestor reparse-point regression is unavailable on this filesystem."); }
-    catch (PlatformNotSupportedException) { Console.WriteLine("SKIP: ancestor reparse-point regression is unavailable on this platform."); }
+    catch (UnauthorizedAccessException) { Console.WriteLine("UNVERIFIED: ancestor reparse-point regression is unavailable on this filesystem."); }
+    catch (IOException) { Console.WriteLine("UNVERIFIED: ancestor reparse-point regression is unavailable on this filesystem."); }
+    catch (PlatformNotSupportedException) { Console.WriteLine("UNVERIFIED: ancestor reparse-point regression is unavailable on this platform."); }
+}
+
+static void RunReparsePathVariantRegression(string scratch)
+{
+    var variants = new[]
+    {
+        (Name: "mixed-case-separators", PackageId: "Case.Matrix", File: "BUILD\\Inside.TARGETS"),
+        (Name: "unicode-separators", PackageId: "Unicode.包", File: "build\\内部.targets")
+    };
+    var states = new[] { "leaf", "package-root", "interior-directory", "ancestor" };
+
+    foreach (var variant in variants)
+    {
+        foreach (var state in states)
+        {
+            var stateRoot = Path.Combine(scratch, "reparse-matrix", variant.Name, state);
+            var root = stateRoot;
+            var targetRoot = Path.Combine(stateRoot, "target");
+            if (state == "ancestor")
+            {
+                Directory.CreateDirectory(targetRoot);
+                root = Path.Combine(stateRoot, "link");
+                try
+                {
+                    Directory.CreateSymbolicLink(root, targetRoot);
+                }
+                catch (UnauthorizedAccessException) { Console.WriteLine($"UNVERIFIED: reparse matrix {variant.Name}/{state} is unavailable on this filesystem."); continue; }
+                catch (IOException) { Console.WriteLine($"UNVERIFIED: reparse matrix {variant.Name}/{state} is unavailable on this filesystem."); continue; }
+                catch (PlatformNotSupportedException) { Console.WriteLine($"UNVERIFIED: reparse matrix {variant.Name}/{state} is unavailable on this platform."); continue; }
+            }
+
+            var obj = Path.Combine(root, "obj");
+            var cache = Path.Combine(root, "cache");
+            Directory.CreateDirectory(obj);
+            var assets = Path.Combine(obj, "project.assets.json");
+            var files = new[] { variant.File };
+            WriteAssets(assets, cache, variant.PackageId, files, createFiles: true);
+            var packageRoot = Path.Combine(cache, variant.PackageId, "1.0.0");
+            var relativeFile = variant.File.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
+            var packageFile = Path.Combine(packageRoot, relativeFile);
+            File.WriteAllText(packageFile, "<Project />");
+
+            var outside = Path.Combine(stateRoot, "outside");
+            try
+            {
+                switch (state)
+                {
+                    case "leaf":
+                        File.Delete(packageFile);
+                        File.WriteAllText(outside + ".targets", "<Project />");
+                        File.CreateSymbolicLink(packageFile, outside + ".targets");
+                        break;
+                    case "package-root":
+                        Directory.Delete(packageRoot, recursive: true);
+                        Directory.CreateDirectory(Path.Combine(outside, "build"));
+                        File.WriteAllText(Path.Combine(outside, "build", "Inside.TARGETS"), "<Project />");
+                        Directory.CreateSymbolicLink(packageRoot, outside);
+                        break;
+                    case "interior-directory":
+                        var buildDirectory = Path.Combine(packageRoot, Path.GetDirectoryName(relativeFile)!);
+                        Directory.Delete(buildDirectory, recursive: true);
+                        Directory.CreateDirectory(Path.Combine(outside, "nested"));
+                        File.WriteAllText(Path.Combine(outside, "nested", Path.GetFileName(relativeFile)), "<Project />");
+                        Directory.CreateSymbolicLink(buildDirectory, Path.Combine(outside, "nested"));
+                        break;
+                    case "ancestor":
+                        break;
+                }
+            }
+            catch (UnauthorizedAccessException) { Console.WriteLine($"UNVERIFIED: reparse matrix {variant.Name}/{state} is unavailable on this filesystem."); continue; }
+            catch (IOException) { Console.WriteLine($"UNVERIFIED: reparse matrix {variant.Name}/{state} is unavailable on this filesystem."); continue; }
+            catch (PlatformNotSupportedException) { Console.WriteLine($"UNVERIFIED: reparse matrix {variant.Name}/{state} is unavailable on this platform."); continue; }
+
+            var result = ResolvedGraphClassifier.Analyze(assets, root, strictContent: true);
+            if (state == "ancestor")
+            {
+                Require(result.IsComplete, $"An ancestor reparse point was rejected for {variant.Name}.");
+            }
+            else
+            {
+                Require(!result.IsComplete && result.Entries.All(entry => entry.Sha256 is null),
+                    $"The {state} reparse point was not rejected for {variant.Name}.");
+            }
+        }
+    }
 }
 
 static void RenameJsonProperty(JsonObject parent, string oldName, string newName)
@@ -773,6 +1172,75 @@ static void SetTelemetryHook(Action? hook)
     property.SetValue(null, hook);
 }
 
+static void SetOutputSerializer(Func<ReportDocument, OutputFormat, string>? hook)
+{
+    var property = typeof(CommandLine).GetProperty("OutputSerializer", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new InvalidOperationException("Output serializer test hook was not found.");
+    property.SetValue(null, hook);
+}
+
+static void SetOutputSink(Action<string>? hook)
+{
+    var property = typeof(CommandLine).GetProperty("OutputSink", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new InvalidOperationException("Output sink test hook was not found.");
+    property.SetValue(null, hook);
+}
+
+static void RunTelemetryPayloadAllowlistRegression()
+{
+    var scratch = Path.Combine(Path.GetTempPath(), "packagesurface-telemetry-payload-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(scratch);
+    try
+    {
+        var assets = Path.Combine(scratch, "TelemetryRepresentative.csproj.assets.json");
+        var telemetryFiles = new[] { "tools/diagnostic-marker.ps1" };
+        WriteAssets(assets, Path.Combine(scratch, "cache"), "Telemetry.Representative.Package", telemetryFiles, createFiles: true, projectFileName: "TelemetryRepresentative.csproj");
+        var result = ResolvedGraphClassifier.Analyze(assets, scratch, strictContent: false);
+        Require(result.IsComplete && result.ResolvedPackageCount == 1, "The representative telemetry project was not classified completely.");
+
+        var telemetryAssembly = typeof(Client).Assembly;
+        var activationType = telemetryAssembly.GetType("KeelMatrix.Telemetry.Events.ActivationEvent", throwOnError: true)!;
+        var activationConstructor = activationType.GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic).Single();
+        var activation = activationConstructor.Invoke(new object[]
+        {
+            "packagesurface",
+            "0.1.0",
+            "0.1.1",
+            1,
+            new string('a', 64),
+            new string('b', 64),
+            "dotnet",
+            "windows",
+            false,
+            "2026-09-27T00:00:00Z"
+        });
+        var serializerType = telemetryAssembly.GetType("KeelMatrix.Telemetry.Serialization.TelemetrySerializer", throwOnError: true)!;
+        var serialize = serializerType.GetMethod("Serialize", BindingFlags.Static | BindingFlags.NonPublic)
+            ?? throw new InvalidOperationException("The shared telemetry serializer was not found.");
+        var json = (string?)serialize.Invoke(null, new[] { activation, "packagesurface" });
+        Require(json is not null, "The shared telemetry serializer rejected the representative activation payload.");
+
+        using var document = JsonDocument.Parse(json!);
+        var actual = document.RootElement.EnumerateObject().Select(property => property.Name).ToHashSet(StringComparer.Ordinal);
+        var expectedFields = new[]
+        {
+            "event", "tool", "tool_version", "telemetry_version", "schema_version", "project_hash", "installation_hash", "runtime", "os", "ci", "timestamp"
+        };
+        var expected = new HashSet<string>(expectedFields, StringComparer.Ordinal);
+        Require(actual.SetEquals(expected), $"Activation telemetry field allowlist drifted: {string.Join(", ", actual.Order(StringComparer.Ordinal))}");
+        var serialized = document.RootElement.GetRawText();
+        var forbiddenFields = new[] { "Telemetry.Representative.Package", "diagnostic-marker.ps1", "TelemetryRepresentative.csproj", "net8.0", "baseline", "PS007" };
+        foreach (var forbidden in forbiddenFields)
+        {
+            Require(!serialized.Contains(forbidden, StringComparison.OrdinalIgnoreCase), $"Activation telemetry serialized forbidden scanned data '{forbidden}'.");
+        }
+    }
+    finally
+    {
+        if (Directory.Exists(scratch)) Directory.Delete(scratch, recursive: true);
+    }
+}
+
 static void RunDiagnosticPathLeakRegression(string scratch)
 {
     var marker = "HomeCacheMarker-" + Guid.NewGuid().ToString("N");
@@ -837,6 +1305,7 @@ static void RunMalformedAssetsShapeRegression(string assets, string scratch)
     {
         ["type"] = "project",
         ["framework"] = ".NETCoreApp,Version=v8.0",
+        ["dependencies"] = new JsonObject { ["XmlPackage"] = "1.0.0" },
         ["compile"] = new JsonObject { ["bin/placeholder/Referenced.Project.dll"] = new JsonObject() }
     };
     projectReference["libraries"]!["Referenced.Project/1.0.0"] = new JsonObject
@@ -856,6 +1325,31 @@ static void RunMalformedAssetsShapeRegression(string assets, string scratch)
         File.Delete(projectReferencePath);
     }
 
+    var malformedProjectDependencyPath = Path.Combine(Path.GetDirectoryName(assets)!, "project-reference-malformed-dependency.assets.json");
+    var malformedProjectDependency = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
+    malformedProjectDependency["targets"]!["net8.0"]!["Referenced.Project/1.0.0"] = new JsonObject
+    {
+        ["type"] = "project",
+        ["framework"] = ".NETCoreApp,Version=v8.0",
+        ["dependencies"] = new JsonObject { ["XmlPackage"] = 7 }
+    };
+    malformedProjectDependency["libraries"]!["Referenced.Project/1.0.0"] = new JsonObject
+    {
+        ["type"] = "project",
+        ["path"] = "../Referenced.Project",
+        ["msbuildProject"] = "../Referenced.Project/Referenced.Project.csproj"
+    };
+    File.WriteAllText(malformedProjectDependencyPath, malformedProjectDependency.ToJsonString());
+    try
+    {
+        var result = ResolvedGraphClassifier.Analyze(malformedProjectDependencyPath, scratch, strictContent: false);
+        Require(!result.IsComplete, "A project-node dependency with a scalar value was accepted.");
+    }
+    finally
+    {
+        File.Delete(malformedProjectDependencyPath);
+    }
+
     var arrayMetadataPath = Path.Combine(Path.GetDirectoryName(assets)!, "array-metadata.assets.json");
     var arrayMetadata = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
     arrayMetadata["targets"]!["net8.0"]!["XmlPackage/1.0.0"]!["frameworkAssemblies"] = new JsonArray("System.Xml");
@@ -869,6 +1363,37 @@ static void RunMalformedAssetsShapeRegression(string assets, string scratch)
     finally
     {
         File.Delete(arrayMetadataPath);
+    }
+
+    foreach (var (name, mutate) in new (string Name, Action<JsonObject> Mutate)[]
+    {
+        ("framework-assemblies-number", root => root["targets"]!["net8.0"]!["XmlPackage/1.0.0"]!["frameworkAssemblies"] = new JsonArray(1)),
+        ("framework-references-object-element", root => root["targets"]!["net8.0"]!["XmlPackage/1.0.0"]!["frameworkReferences"] = new JsonArray(new JsonObject { ["name"] = "Microsoft.NETCore.App" })),
+        ("framework-references-null-element", root => root["targets"]!["net8.0"]!["XmlPackage/1.0.0"]!["frameworkReferences"] = new JsonArray { null }),
+        ("framework-assemblies-object", root => root["targets"]!["net8.0"]!["XmlPackage/1.0.0"]!["frameworkAssemblies"] = new JsonObject()),
+        ("framework-reference-case-duplicate", root =>
+        {
+            var package = root["targets"]!["net8.0"]!["XmlPackage/1.0.0"]!.AsObject();
+            package["frameworkReferences"] = new JsonArray("Microsoft.NETCore.App");
+            package["FRAMEWORKREFERENCES"] = new JsonArray("Microsoft.NETCore.App");
+        }),
+        ("target-dependency-number", root => root["targets"]!["net8.0"]!["XmlPackage/1.0.0"]!["dependencies"] = new JsonObject { ["XmlPackage"] = 7 }),
+        ("target-dependency-null", root => root["targets"]!["net8.0"]!["XmlPackage/1.0.0"]!["dependencies"] = new JsonObject { ["XmlPackage"] = null })
+    })
+    {
+        var path = Path.Combine(Path.GetDirectoryName(assets)!, name + ".assets.json");
+        var root = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
+        mutate(root);
+        File.WriteAllText(path, root.ToJsonString());
+        try
+        {
+            var result = ResolvedGraphClassifier.Analyze(path, scratch, strictContent: false);
+            Require(!result.IsComplete && result.IncompleteReasons.Count > 0, $"Malformed typed metadata '{name}' was accepted.");
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 
     var malformedShapes = new (string Name, Action<JsonObject> Mutate)[]
@@ -941,7 +1466,10 @@ static void RunAssetsFormatRegression(string assets, string scratch)
         {
             ("format4-missing-framework", value => value["project"]!["frameworks"]!["net8.0"]!.AsObject().Remove("framework")),
             ("format4-missing-dependency-groups", value => value.Remove("projectFileDependencyGroups")),
-            ("format4-mismatched-restore-framework", value => value["project"]!["restore"]!["frameworks"]!["net8.0"]!["framework"] = "net9.0")
+            ("format4-mismatched-restore-framework", value => value["project"]!["restore"]!["frameworks"]!["net8.0"]!["framework"] = "net9.0"),
+            ("format4-dependency-object-element", value => value["projectFileDependencyGroups"]!["net8.0"] = new JsonArray(new JsonObject())),
+            ("format4-dependency-null-element", value => value["projectFileDependencyGroups"]!["net8.0"] = new JsonArray { null }),
+            ("format4-dependency-duplicate", value => value["projectFileDependencyGroups"]!["net8.0"] = new JsonArray("XmlPackage >= 1.0.0", "XmlPackage >= 1.0.0"))
         };
 
         foreach (var (name, mutate) in malformedV4)
@@ -1073,7 +1601,7 @@ static void WriteAssets(string path, string cache, string packageId, IReadOnlyLi
     {
         foreach (var file in files.Where(value => !value.Contains("..", StringComparison.Ordinal) && !Path.IsPathRooted(value)))
         {
-            var physical = Path.Combine(cache, packageId, "1.0.0", file.Replace('/', Path.DirectorySeparatorChar));
+            var physical = Path.Combine(cache, packageId, "1.0.0", file.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar));
             Directory.CreateDirectory(Path.GetDirectoryName(physical)!);
             File.WriteAllText(physical, "fixture");
         }

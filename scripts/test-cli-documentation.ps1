@@ -17,7 +17,9 @@ $required = @(
     'Exit code `0`',
     'exit code `1`',
     'exit code `2`',
-    'PS-SURFACE'
+    'PS-SURFACE',
+    'serializes activation with exactly',
+    'does not request a heartbeat'
 )
 foreach ($document in $documents) {
     $text = Get-Content -Raw $document

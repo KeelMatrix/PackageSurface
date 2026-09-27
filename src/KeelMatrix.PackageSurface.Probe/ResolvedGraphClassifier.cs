@@ -38,6 +38,41 @@ public static class ResolvedGraphClassifier
     // private seam to exercise an ancestor link without weakening root reparse checks.
     private static readonly AsyncLocal<Func<string, string>?> PathCanonicalizer = new();
 
+    private sealed record RestoreFrameworkIdentity(
+        string SourceKey,
+        string CanonicalKey,
+        string EffectiveFramework,
+        string TargetAlias);
+
+    private sealed record RestoreTargetIdentity(
+        string SourceKey,
+        string CanonicalKey,
+        string FrameworkKey,
+        string TargetFramework,
+        string TargetAlias,
+        string? RuntimeIdentifier);
+
+    private sealed class RestoreIdentityIndex
+    {
+        public Dictionary<string, RestoreFrameworkIdentity> Frameworks { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, RestoreTargetIdentity> Targets { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, string> Libraries { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        public IReadOnlySet<string> FrameworkContexts => Frameworks.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        public bool TryGetTarget(string sourceKey, out RestoreTargetIdentity identity)
+        {
+            if (Targets.TryGetValue(sourceKey, out identity!))
+            {
+                return true;
+            }
+
+            var (tfm, rid) = SplitTarget(sourceKey);
+            var canonical = NormalizeFrameworkMoniker(tfm) + (rid is null ? string.Empty : "/" + rid.Trim().ToLowerInvariant());
+            return Targets.TryGetValue(canonical, out identity!);
+        }
+    }
+
     public static ProbeResult Analyze(
         string assetsFile,
         string projectRoot,
@@ -95,15 +130,13 @@ public static class ResolvedGraphClassifier
                 budget.AddTargetGraph();
             }
 
-            ValidateRestoreIdentities(root, libraries, targets, incomplete);
+            var restoreIdentities = BuildRestoreIdentityIndex(root, libraries, targets, incomplete);
             if (incomplete.Count > 0)
             {
                 return new ProbeResult(Array.Empty<SurfaceEntry>(), incomplete.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray());
             }
 
             var directAssetRules = ReadDirectPackageAssetRules(root);
-            var targetAliases = ReadTargetAliases(root);
-            var targetFrameworks = ReadTargetFrameworks(root);
             compilerApiVersion ??= ReadCompilerApiVersion(root);
             var entries = new List<SurfaceEntry>();
             var projectEntries = new Dictionary<string, List<SurfaceEntry>>(StringComparer.OrdinalIgnoreCase);
@@ -111,18 +144,14 @@ public static class ResolvedGraphClassifier
             var accumulatedEntries = 0;
             var packageRoots = ResolvePackageRoots(libraries, packageFolders, incomplete);
             var packageInventories = BuildPackageInventories(packageRoots, libraries, incomplete, budget);
-            ValidateRestoreEvidence(root, libraries, targets, packageFolders, packageRoots, packageInventories, incomplete, budget);
-            var targetFrameworkContexts = targets.EnumerateObject()
-                .Select(target => SplitTarget(target.Name).Tfm)
-                .Concat(targetFrameworks.Values)
-                .Concat(targetAliases.Values)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            ValidateRestoreEvidence(root, libraries, targets, restoreIdentities, packageFolders, packageRoots, packageInventories, incomplete, budget);
+            var targetFrameworkContexts = restoreIdentities.FrameworkContexts;
             var expectedGeneratedImportSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var generatedImports = ReadGeneratedImports(root, assetsFile, projectRoot, selectedProjectPath, packageRoots, packageInventories, libraries, targetFrameworkContexts, incomplete, budget, expectedGeneratedImportSources);
-            ValidateGeneratedImportEvidence(generatedImports, targets, targetFrameworks, packageRoots, packageInventories, libraries, incomplete, budget);
+            ValidateGeneratedImportEvidence(generatedImports, targets, restoreIdentities, packageRoots, packageInventories, libraries, incomplete, budget);
             var projectLanguage = ReadProjectLanguage(root, projectRoot, selectedProjectPath, incomplete);
-            var isMultiTargetingProject = targets.EnumerateObject()
-                .Select(target => NormalizeFrameworkMoniker(SplitTarget(target.Name).Tfm))
+            var isMultiTargetingProject = restoreIdentities.Targets.Values
+                .Select(target => target.FrameworkKey)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Count() > 1;
 
@@ -133,11 +162,16 @@ public static class ResolvedGraphClassifier
                     throw new InvalidDataException($"Target {target.Name} is not an object.");
                 }
 
-                var (targetFrameworkKey, rid) = SplitTarget(target.Name);
-                var tfm = TryGetFrameworkValue(targetFrameworks, targetFrameworkKey, out var effectiveTargetFramework)
-                    ? effectiveTargetFramework
-                    : targetFrameworkKey;
-                var targetAlias = TryGetFrameworkValue(targetAliases, targetFrameworkKey, out var alias) ? alias : targetFrameworkKey;
+                if (!restoreIdentities.TryGetTarget(target.Name, out var targetIdentity))
+                {
+                    incomplete.Add($"Restore evidence contains an unresolved target identity: {target.Name}.");
+                    continue;
+                }
+
+                var targetFrameworkKey = targetIdentity.FrameworkKey;
+                var tfm = targetIdentity.TargetFramework;
+                var rid = targetIdentity.RuntimeIdentifier;
+                var targetAlias = targetIdentity.TargetAlias;
                 var targetDirectRules = TryGetFrameworkValue(directAssetRules, targetFrameworkKey, out var rules)
                     ? rules
                     : new Dictionary<string, PackageAssetRule>(StringComparer.OrdinalIgnoreCase);
@@ -568,40 +602,6 @@ public static class ResolvedGraphClassifier
         return false;
     }
 
-    private static bool TryGetFrameworkProperty(JsonElement frameworks, string candidate, out JsonProperty property)
-    {
-        foreach (var framework in frameworks.EnumerateObject())
-        {
-            if (FrameworksMatch(framework.Name, candidate) || FrameworkMetadataMatches(framework.Value, candidate))
-            {
-                property = framework;
-                return true;
-            }
-        }
-
-        property = default;
-        return false;
-    }
-
-    private static bool FrameworkMetadataMatches(JsonElement framework, string candidate)
-    {
-        if (framework.ValueKind != JsonValueKind.Object)
-        {
-            return false;
-        }
-
-        foreach (var propertyName in new[] { "framework", "targetAlias" })
-        {
-            if (framework.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String &&
-                FrameworksMatch(value.GetString()!, candidate))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     private static bool FrameworksMatch(string left, string right) =>
         NormalizeFrameworkMoniker(left).Equals(NormalizeFrameworkMoniker(right), StringComparison.OrdinalIgnoreCase);
 
@@ -651,7 +651,35 @@ public static class ResolvedGraphClassifier
             }
         }
 
+        var platformSeparator = lower.IndexOf('-');
+        if (platformSeparator >= 0)
+        {
+            var platform = lower[(platformSeparator + 1)..];
+            foreach (var platformName in new[] { "android", "ios", "maccatalyst", "macos", "tvos", "windows" })
+            {
+                if (!platform.StartsWith(platformName, StringComparison.Ordinal) ||
+                    !IsVersionSuffix(platform[platformName.Length..]))
+                {
+                    continue;
+                }
+
+                lower = lower[..(platformSeparator + 1)] + platformName;
+                break;
+            }
+        }
+
         return lower;
+    }
+
+    private static bool IsVersionSuffix(string value)
+    {
+        if (value.Length == 0) return false;
+        foreach (var part in value.Split('.', StringSplitOptions.None))
+        {
+            if (part.Length == 0 || part.Any(character => !char.IsDigit(character))) return false;
+        }
+
+        return true;
     }
 
     private static string CanonicalFrameworkMoniker(string family, string version)
@@ -780,66 +808,6 @@ public static class ResolvedGraphClassifier
         return active;
     }
 
-    private static Dictionary<string, string> ReadTargetAliases(JsonElement root)
-    {
-        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        if (!root.TryGetProperty("project", out var project) || !project.TryGetProperty("frameworks", out var frameworks))
-        {
-            throw new InvalidDataException("project.assets.json has no frameworks object.");
-        }
-
-        if (project.ValueKind != JsonValueKind.Object || frameworks.ValueKind != JsonValueKind.Object)
-        {
-            throw new InvalidDataException("project.assets.json has an invalid frameworks object.");
-        }
-
-        foreach (var framework in frameworks.EnumerateObject())
-        {
-            if (framework.Value.ValueKind != JsonValueKind.Object)
-            {
-                throw new InvalidDataException($"Framework {framework.Name} is not an object.");
-            }
-
-            if (framework.Value.TryGetProperty("targetAlias", out var alias) && alias.ValueKind == JsonValueKind.String)
-            {
-                var targetKey = framework.Name;
-                result[targetKey] = alias.GetString()!;
-            }
-        }
-
-        return result;
-    }
-
-    private static Dictionary<string, string> ReadTargetFrameworks(JsonElement root)
-    {
-        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        if (!root.TryGetProperty("project", out var project) || project.ValueKind != JsonValueKind.Object ||
-            !project.TryGetProperty("frameworks", out var frameworks) || frameworks.ValueKind != JsonValueKind.Object)
-        {
-            throw new InvalidDataException("project.assets.json has no frameworks object.");
-        }
-
-        foreach (var framework in frameworks.EnumerateObject())
-        {
-            if (framework.Value.ValueKind != JsonValueKind.Object)
-            {
-                throw new InvalidDataException($"Framework {framework.Name} is not an object.");
-            }
-
-            if (framework.Value.TryGetProperty("framework", out var effective) && effective.ValueKind == JsonValueKind.String &&
-                !string.IsNullOrWhiteSpace(effective.GetString()))
-            {
-                result[framework.Name] = effective.GetString()!;
-            }
-            else
-            {
-                result[framework.Name] = framework.Name;
-            }
-        }
-
-        return result;
-    }
-
     private static ProjectLanguage ReadProjectLanguage(JsonElement root, string projectRoot, string? selectedProjectPath, List<string> incomplete)
     {
         string? projectPath = null;
@@ -964,46 +932,14 @@ public static class ResolvedGraphClassifier
             return;
         }
 
-        var hasProjectFrameworks = ValidateAssetsFormatV4Frameworks(project, "frameworks", incomplete, out var projectFrameworks);
+        _ = ValidateAssetsFormatV4Frameworks(project, "frameworks", incomplete, out _);
         if (!project.TryGetProperty("restore", out var restore) || restore.ValueKind != JsonValueKind.Object)
         {
             incomplete.Add("Assets format 4 has no project restore object.");
         }
         else
         {
-            var hasRestoreFrameworks = ValidateAssetsFormatV4Frameworks(restore, "frameworks", incomplete, out var restoreFrameworks);
-            if (hasProjectFrameworks && hasRestoreFrameworks)
-            {
-                foreach (var projectFramework in projectFrameworks.EnumerateObject())
-                {
-                    if (!TryGetFrameworkProperty(restoreFrameworks, projectFramework.Name, out var restoreFramework))
-                    {
-                        incomplete.Add($"Assets format 4 restore framework {projectFramework.Name} is missing.");
-                        continue;
-                    }
-
-                    var projectEffective = projectFramework.Value.GetProperty("framework").GetString();
-                    var restoreEffective = restoreFramework.Value.GetProperty("framework").GetString();
-                    var projectAlias = projectFramework.Value.GetProperty("targetAlias").GetString();
-                    var restoreAlias = restoreFramework.Value.GetProperty("targetAlias").GetString();
-                    if (!FrameworksMatch(projectEffective!, restoreEffective!) ||
-                        !FrameworksMatch(projectAlias!, restoreAlias!))
-                    {
-                        incomplete.Add($"Assets format 4 framework {projectFramework.Name} disagrees between project and restore metadata.");
-                    }
-                }
-            }
-
-            if (hasDependencyGroups && hasProjectFrameworks)
-            {
-                foreach (var dependencyGroup in dependencyGroups.EnumerateObject())
-                {
-                    if (!TryGetFrameworkProperty(projectFrameworks, dependencyGroup.Name, out _))
-                    {
-                        incomplete.Add($"Assets format 4 dependency group {dependencyGroup.Name} has no declared framework.");
-                    }
-                }
-            }
+            _ = ValidateAssetsFormatV4Frameworks(restore, "frameworks", incomplete, out _);
         }
     }
 
@@ -1039,55 +975,217 @@ public static class ResolvedGraphClassifier
         return true;
     }
 
-    private static void ValidateRestoreIdentities(JsonElement root, JsonElement libraries, JsonElement targets, List<string> incomplete)
+    private static RestoreIdentityIndex BuildRestoreIdentityIndex(
+        JsonElement root,
+        JsonElement libraries,
+        JsonElement targets,
+        List<string> incomplete)
     {
-        AddPackageIdentityReasons(libraries, "library identity", incomplete);
-        AddTargetIdentityReasons(targets, incomplete);
-
-        if (root.TryGetProperty("project", out var project) && project.ValueKind == JsonValueKind.Object)
+        var identities = new RestoreIdentityIndex();
+        foreach (var pair in ReadPackageIdentityMap(libraries, "library identity", incomplete))
         {
-            if (project.TryGetProperty("frameworks", out var frameworks))
-            {
-                AddFrameworkIdentityReasons(frameworks, "project framework identity", includeMetadata: true, incomplete);
-            }
-            else
-            {
-                incomplete.Add("Restore evidence has no declared framework graph.");
-            }
+            identities.Libraries[pair.Key] = pair.Value;
+        }
 
-            if (project.TryGetProperty("restore", out var restore))
-            {
-                if (restore.ValueKind != JsonValueKind.Object)
-                {
-                    incomplete.Add("Assets restore metadata is not an object.");
-                }
-                else if (restore.TryGetProperty("frameworks", out var restoreFrameworks))
-                {
-                    AddFrameworkIdentityReasons(restoreFrameworks, "restore framework identity", includeMetadata: true, incomplete);
-                }
-            }
+        if (!root.TryGetProperty("project", out var project) || project.ValueKind != JsonValueKind.Object)
+        {
+            incomplete.Add("Restore evidence has no project object.");
+            return identities;
+        }
+
+        if (!project.TryGetProperty("frameworks", out var projectFrameworks))
+        {
+            incomplete.Add("Restore evidence has no declared framework graph.");
         }
         else
         {
-            incomplete.Add("Restore evidence has no project object.");
+            foreach (var framework in ReadFrameworkIdentityMap(projectFrameworks, "project framework identity", incomplete))
+            {
+                identities.Frameworks[framework.Key] = framework.Value;
+            }
+        }
+
+        if (project.TryGetProperty("restore", out var restore))
+        {
+            if (restore.ValueKind != JsonValueKind.Object)
+            {
+                incomplete.Add("Assets restore metadata is not an object.");
+            }
+            else if (restore.TryGetProperty("frameworks", out var restoreFrameworks))
+            {
+                var restoreIdentities = ReadFrameworkIdentityMap(restoreFrameworks, "restore framework identity", incomplete);
+                foreach (var framework in restoreIdentities)
+                {
+                    if (!identities.Frameworks.TryGetValue(framework.Key, out var projectFramework) ||
+                        !FrameworksMatch(projectFramework.EffectiveFramework, framework.Value.EffectiveFramework) ||
+                        !FrameworksMatch(projectFramework.TargetAlias, framework.Value.TargetAlias))
+                    {
+                        incomplete.Add($"Restore evidence framework {framework.Value.SourceKey} disagrees between project and restore metadata.");
+                    }
+                }
+            }
         }
 
         if (root.TryGetProperty("projectFileDependencyGroups", out var dependencyGroups))
         {
-            AddFrameworkIdentityReasons(dependencyGroups, "format 4 dependency group", includeMetadata: false, incomplete);
+            foreach (var dependencyGroup in ReadFrameworkKeyMap(dependencyGroups, "format 4 dependency group", incomplete))
+            {
+                if (!identities.Frameworks.ContainsKey(dependencyGroup.Key))
+                {
+                    incomplete.Add($"Assets format 4 dependency group {dependencyGroup.Value} has no declared framework.");
+                }
+            }
         }
+
+        if (targets.ValueKind != JsonValueKind.Object)
+        {
+            incomplete.Add("Restore evidence contains an invalid target graph map.");
+            return identities;
+        }
+
+        AddDuplicatePropertyReasons(targets, "target identity", incomplete);
+        foreach (var target in targets.EnumerateObject())
+        {
+            if (!TryReadTargetIdentity(target.Name, identities.Frameworks, out var identity, incomplete))
+            {
+                continue;
+            }
+
+            if (identities.Targets.ContainsKey(identity.CanonicalKey))
+            {
+                incomplete.Add("Restore evidence contains ambiguous target identity aliases.");
+                continue;
+            }
+
+            identities.Targets[identity.CanonicalKey] = identity;
+            if (target.Value.ValueKind != JsonValueKind.Object)
+            {
+                incomplete.Add($"Target {target.Name} is not an object.");
+                continue;
+            }
+
+            foreach (var package in ReadPackageIdentityMap(target.Value, "target package identity", incomplete))
+            {
+                if (!identities.Libraries.ContainsKey(package.Key))
+                {
+                    incomplete.Add($"Target {target.Name} refers to missing library {package.Value}.");
+                }
+            }
+        }
+
+        return identities;
     }
 
-    private static void AddFrameworkIdentityReasons(JsonElement value, string description, bool includeMetadata, List<string> incomplete)
+    private static Dictionary<string, string> ReadPackageIdentityMap(JsonElement value, string description, List<string> incomplete)
     {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (value.ValueKind != JsonValueKind.Object)
         {
             incomplete.Add($"Restore evidence contains an invalid {description} map.");
-            return;
+            return result;
+        }
+
+        AddDuplicatePropertyReasons(value, description, incomplete);
+        foreach (var property in value.EnumerateObject())
+        {
+            if (!TrySplitPackageIdentity(property.Name, out var packageId, out var version))
+            {
+                incomplete.Add($"Restore evidence contains an invalid {description}.");
+                continue;
+            }
+
+            AddCanonicalIdentity(result, packageId + "/" + version, property.Name, description, incomplete);
+        }
+
+        return result;
+    }
+
+    private static Dictionary<string, RestoreFrameworkIdentity> ReadFrameworkIdentityMap(JsonElement value, string description, List<string> incomplete)
+    {
+        var result = new Dictionary<string, RestoreFrameworkIdentity>(StringComparer.OrdinalIgnoreCase);
+        if (value.ValueKind != JsonValueKind.Object)
+        {
+            incomplete.Add($"Restore evidence contains an invalid {description} map.");
+            return result;
         }
 
         AddDuplicatePropertyReasons(value, description, incomplete);
         var identities = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var property in value.EnumerateObject())
+        {
+            if (!TryGetFrameworkIdentity(property.Name, out var keyIdentity))
+            {
+                incomplete.Add($"Restore evidence contains an invalid {description}.");
+                continue;
+            }
+
+            var effective = property.Name;
+            var alias = property.Name;
+            if (property.Value.ValueKind == JsonValueKind.Object)
+            {
+                if (property.Value.EnumerateObject()
+                    .Where(metadata => metadata.Name.Equals("framework", StringComparison.OrdinalIgnoreCase) ||
+                                       metadata.Name.Equals("targetAlias", StringComparison.OrdinalIgnoreCase))
+                    .GroupBy(metadata => metadata.Name, StringComparer.OrdinalIgnoreCase)
+                    .Any(group => group.Count() > 1))
+                {
+                    incomplete.Add($"Restore evidence contains conflicting duplicate metadata for {description} {property.Name}.");
+                }
+
+                foreach (var metadataName in new[] { "framework", "targetAlias" })
+                {
+                    if (!property.Value.TryGetProperty(metadataName, out var metadata))
+                    {
+                        continue;
+                    }
+
+                    if (metadata.ValueKind != JsonValueKind.String || !TryGetFrameworkIdentity(metadata.GetString() ?? string.Empty, out var metadataIdentity))
+                    {
+                        incomplete.Add($"Restore evidence contains an invalid {metadataName} for {description} {property.Name}.");
+                        continue;
+                    }
+
+                    if (!FrameworksMatch(keyIdentity, metadataIdentity))
+                    {
+                        incomplete.Add($"Restore evidence contains incoherent {description} metadata for {property.Name}: {metadataName} disagrees with the framework key.");
+                    }
+
+                    if (metadataName.Equals("framework", StringComparison.Ordinal))
+                    {
+                        effective = metadata.GetString()!;
+                    }
+                    else
+                    {
+                        alias = metadata.GetString()!;
+                    }
+                }
+            }
+            else
+            {
+                incomplete.Add($"Restore evidence contains an invalid {description} entry.");
+                continue;
+            }
+
+            AddCanonicalIdentity(identities, keyIdentity, property.Name, description, incomplete);
+            if (!result.ContainsKey(keyIdentity))
+            {
+                result[keyIdentity] = new RestoreFrameworkIdentity(property.Name, keyIdentity, effective, alias);
+            }
+        }
+
+        return result;
+    }
+
+    private static Dictionary<string, string> ReadFrameworkKeyMap(JsonElement value, string description, List<string> incomplete)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (value.ValueKind != JsonValueKind.Object)
+        {
+            incomplete.Add($"Restore evidence contains an invalid {description} map.");
+            return result;
+        }
+
+        AddDuplicatePropertyReasons(value, description, incomplete);
         foreach (var property in value.EnumerateObject())
         {
             if (!TryGetFrameworkIdentity(property.Name, out var identity))
@@ -1096,76 +1194,43 @@ public static class ResolvedGraphClassifier
                 continue;
             }
 
-            AddCanonicalIdentity(identities, identity, property.Name, description, incomplete);
-            if (!includeMetadata || property.Value.ValueKind != JsonValueKind.Object)
-            {
-                continue;
-            }
-
-            foreach (var metadataName in new[] { "framework", "targetAlias" })
-            {
-                if (!property.Value.TryGetProperty(metadataName, out var metadata))
-                {
-                    continue;
-                }
-
-                if (metadata.ValueKind != JsonValueKind.String || !TryGetFrameworkIdentity(metadata.GetString() ?? string.Empty, out var metadataIdentity))
-                {
-                    incomplete.Add($"Restore evidence contains an invalid {metadataName} for {description} {property.Name}.");
-                    continue;
-                }
-
-                AddCanonicalIdentity(identities, metadataIdentity, property.Name, description, incomplete);
-            }
+            AddCanonicalIdentity(result, identity, property.Name, description, incomplete);
         }
+
+        return result;
     }
 
-    private static void AddTargetIdentityReasons(JsonElement targets, List<string> incomplete)
+    private static bool TryReadTargetIdentity(
+        string sourceKey,
+        IReadOnlyDictionary<string, RestoreFrameworkIdentity> frameworks,
+        out RestoreTargetIdentity identity,
+        List<string> incomplete)
     {
-        if (targets.ValueKind != JsonValueKind.Object)
+        var (tfm, rid) = SplitTarget(sourceKey);
+        if (!TryGetFrameworkIdentity(tfm, out var frameworkKey) ||
+            rid is not null && (string.IsNullOrWhiteSpace(rid) || rid.Contains('/', StringComparison.Ordinal)))
         {
-            incomplete.Add("Restore evidence contains an invalid target graph map.");
-            return;
+            incomplete.Add("Restore evidence contains an invalid target identity.");
+            identity = null!;
+            return false;
         }
 
-        AddDuplicatePropertyReasons(targets, "target identity", incomplete);
-        var identities = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var target in targets.EnumerateObject())
+        if (!frameworks.TryGetValue(frameworkKey, out var framework))
         {
-            if (!TryGetTargetIdentity(target.Name, out var identity))
-            {
-                incomplete.Add("Restore evidence contains an invalid target identity.");
-                continue;
-            }
-
-            AddCanonicalIdentity(identities, identity, target.Name, "target identity", incomplete);
-            if (target.Value.ValueKind != JsonValueKind.Object)
-            {
-                incomplete.Add($"Target {target.Name} is not an object.");
-            }
-        }
-    }
-
-    private static void AddPackageIdentityReasons(JsonElement packages, string description, List<string> incomplete)
-    {
-        if (packages.ValueKind != JsonValueKind.Object)
-        {
-            incomplete.Add($"Restore evidence contains an invalid {description} map.");
-            return;
+            incomplete.Add($"Resolved target {sourceKey} has no declared framework.");
+            identity = null!;
+            return false;
         }
 
-        AddDuplicatePropertyReasons(packages, description, incomplete);
-        var identities = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var package in packages.EnumerateObject())
-        {
-            if (!TrySplitPackageIdentity(package.Name, out var packageId, out var version))
-            {
-                incomplete.Add($"Restore evidence contains an invalid {description}.");
-                continue;
-            }
-
-            AddCanonicalIdentity(identities, packageId + "/" + version, package.Name, description, incomplete);
-        }
+        var canonicalKey = frameworkKey + (rid is null ? string.Empty : "/" + rid.Trim().ToLowerInvariant());
+        identity = new RestoreTargetIdentity(
+            sourceKey,
+            canonicalKey,
+            frameworkKey,
+            framework.EffectiveFramework,
+            framework.TargetAlias,
+            rid?.Trim().ToLowerInvariant());
+        return true;
     }
 
     private static void AddCanonicalIdentity(
@@ -1190,24 +1255,11 @@ public static class ResolvedGraphClassifier
         return !string.IsNullOrEmpty(identity) && !identity.Contains('/', StringComparison.Ordinal);
     }
 
-    private static bool TryGetTargetIdentity(string value, out string identity)
-    {
-        var (tfm, rid) = SplitTarget(value);
-        if (!TryGetFrameworkIdentity(tfm, out var frameworkIdentity) ||
-            rid is not null && (string.IsNullOrWhiteSpace(rid) || rid.Contains('/', StringComparison.Ordinal)))
-        {
-            identity = string.Empty;
-            return false;
-        }
-
-        identity = rid is null ? frameworkIdentity : frameworkIdentity + "/" + rid.Trim().ToLowerInvariant();
-        return true;
-    }
-
     private static void ValidateRestoreEvidence(
         JsonElement root,
         JsonElement libraries,
         JsonElement targets,
+        RestoreIdentityIndex restoreIdentities,
         IReadOnlyList<string> packageFolders,
         IReadOnlyDictionary<string, string> packageRoots,
         Dictionary<string, HashSet<string>> packageInventories,
@@ -1215,9 +1267,6 @@ public static class ResolvedGraphClassifier
         AnalysisBudget budget)
     {
         if (libraries.ValueKind != JsonValueKind.Object || targets.ValueKind != JsonValueKind.Object) return;
-        AddDuplicatePropertyReasons(libraries, "library identity", incomplete);
-        AddDuplicatePropertyReasons(targets, "target identity", incomplete);
-
         if (!root.TryGetProperty("project", out var project) || project.ValueKind != JsonValueKind.Object ||
             !project.TryGetProperty("frameworks", out var frameworks) || frameworks.ValueKind != JsonValueKind.Object)
         {
@@ -1225,9 +1274,8 @@ public static class ResolvedGraphClassifier
             return;
         }
 
-        AddDuplicatePropertyReasons(frameworks, "framework identity", incomplete);
-        var declaredFrameworks = frameworks.EnumerateObject().Select(framework => framework.Name).ToArray();
-        var targetNames = targets.EnumerateObject().Select(target => target.Name).ToArray();
+        var declaredFrameworks = restoreIdentities.Frameworks.Keys.ToArray();
+        var targetNames = restoreIdentities.Targets.Keys.ToArray();
         if (declaredFrameworks.Length == 0)
         {
             incomplete.Add("Restore evidence declares no frameworks.");
@@ -1291,13 +1339,19 @@ public static class ResolvedGraphClassifier
                 incomplete.Add($"Resolved target {target.Name} is empty despite declared framework dependencies.");
             }
 
+            if (!restoreIdentities.TryGetTarget(target.Name, out var targetIdentity))
+            {
+                continue;
+            }
+
             var packageIds = target.Value.EnumerateObject()
                 .Select(property => SplitPackageKey(property.Name).Id)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            AddDuplicatePropertyReasons(target.Value, "target package identity", incomplete);
             foreach (var package in target.Value.EnumerateObject())
             {
-                if (!TryGetPropertyIgnoreCase(libraries, package.Name, out var library))
+                if (!TrySplitPackageIdentity(package.Name, out var packageId, out var packageVersion) ||
+                    !restoreIdentities.Libraries.TryGetValue(packageId + "/" + packageVersion, out var libraryKey) ||
+                    !TryGetPropertyIgnoreCase(libraries, libraryKey, out var library))
                 {
                     incomplete.Add($"Target {target.Name} refers to missing library {package.Name}.");
                     continue;
@@ -1338,7 +1392,9 @@ public static class ResolvedGraphClassifier
                 }
             }
 
-            foreach (var framework in frameworks.EnumerateObject().Where(framework => FrameworksMatch(framework.Name, SplitTarget(target.Name).Tfm)))
+            foreach (var framework in frameworks.EnumerateObject().Where(framework =>
+                         TryGetFrameworkIdentity(framework.Name, out var frameworkIdentity) &&
+                         frameworkIdentity.Equals(targetIdentity.FrameworkKey, StringComparison.OrdinalIgnoreCase)))
             {
                 if (!framework.Value.TryGetProperty("dependencies", out var dependencies) || dependencies.ValueKind != JsonValueKind.Object) continue;
                 foreach (var dependency in dependencies.EnumerateObject())
@@ -1547,7 +1603,7 @@ public static class ResolvedGraphClassifier
     private static void ValidateGeneratedImportEvidence(
         IReadOnlyList<GeneratedImport> imports,
         JsonElement targets,
-        IReadOnlyDictionary<string, string> targetFrameworks,
+        RestoreIdentityIndex restoreIdentities,
         IReadOnlyDictionary<string, string> packageRoots,
         Dictionary<string, HashSet<string>> packageInventories,
         JsonElement libraries,
@@ -1595,13 +1651,10 @@ public static class ResolvedGraphClassifier
             }
 
             var targetGraphs = targets.EnumerateObject()
-                .Where(target => import.IsNested && import.Capability == CapabilityKind.BuildMultiTargeting
-                    ? import.Applicability.AppliesTo(SurfaceContextKind.Project, string.Empty)
-                    : import.Applicability.AppliesTo(
-                        SurfaceContextKind.Target,
-                        TryGetFrameworkValue(targetFrameworks, SplitTarget(target.Name).Tfm, out var effectiveFramework)
-                            ? effectiveFramework
-                            : SplitTarget(target.Name).Tfm))
+                .Where(target => restoreIdentities.TryGetTarget(target.Name, out var targetIdentity) &&
+                    (import.IsNested && import.Capability == CapabilityKind.BuildMultiTargeting
+                        ? import.Applicability.AppliesTo(SurfaceContextKind.Project, string.Empty)
+                        : import.Applicability.AppliesTo(SurfaceContextKind.Target, targetIdentity.TargetFramework)))
                 .ToArray();
             if (targetGraphs.Length == 0) continue;
 

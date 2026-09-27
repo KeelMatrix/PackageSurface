@@ -105,6 +105,9 @@ try {
     Invoke-GateStep 'repository history hygiene regressions' {
         & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-history-hygiene-regressions.ps1')
     }
+    Invoke-GateStep 'restore identity canonicalization' {
+        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-restore-identity-canonicalization.ps1') -RepositoryRoot $root
+    }
     Invoke-GateStep 'packability graph audit' {
         & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-packability.ps1')
     }
@@ -137,6 +140,11 @@ try {
         Remove-Item -Force
     Invoke-GateStep 'package build' {
         & dotnet pack $cliProject --configuration Release --no-restore --output $feed
+    }
+    Invoke-GateStep 'public wording hygiene' {
+        $nupkg = Get-ChildItem -LiteralPath $feed -Filter '*.nupkg' -File | Select-Object -First 1
+        if ($null -eq $nupkg) { throw 'The package archive was not found for wording validation.' }
+        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-public-wording.ps1') -RepositoryRoot $root -PackagePath $nupkg.FullName
     }
 
     $packageVersion = '0.1.0'
@@ -191,7 +199,7 @@ try {
         if ([Convert]::ToBase64String((Read-ZipEntryBytes $package 'README.md')) -ne [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/README.md')))) { throw 'Packed README does not match its configured source.' }
         $sourceIconHash = (Get-FileHash -LiteralPath (Join-Path $root 'icon.png') -Algorithm SHA256).Hash
         $packedIconHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData((Read-ZipEntryBytes $package 'icon.png')))
-        if ($sourceIconHash -ne $packedIconHash) { throw 'Packed icon does not match the founder-owned repository icon.' }
+        if ($sourceIconHash -ne $packedIconHash) { throw 'Packed icon does not match the repository icon.' }
     }
     finally { $package.Dispose() }
 

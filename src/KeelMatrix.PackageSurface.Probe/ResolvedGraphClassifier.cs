@@ -52,24 +52,123 @@ public static class ResolvedGraphClassifier
         string TargetAlias,
         string? RuntimeIdentifier);
 
+    private sealed record RestorePackageIdentity(
+        string SourceKey,
+        string CanonicalKey,
+        string Id,
+        string Version);
+
     private sealed class RestoreIdentityIndex
     {
         public Dictionary<string, RestoreFrameworkIdentity> Frameworks { get; } = new(StringComparer.OrdinalIgnoreCase);
         public Dictionary<string, RestoreTargetIdentity> Targets { get; } = new(StringComparer.OrdinalIgnoreCase);
-        public Dictionary<string, string> Libraries { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, RestorePackageIdentity> Libraries { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<string, string> PackageRoots { get; } = new(StringComparer.OrdinalIgnoreCase);
 
         public IReadOnlySet<string> FrameworkContexts => Frameworks.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+        public bool TryGetFramework(string sourceKey, out RestoreFrameworkIdentity identity)
+        {
+            identity = null!;
+            return TryGetFrameworkIdentity(sourceKey, out var canonicalKey) &&
+                Frameworks.TryGetValue(canonicalKey, out identity!);
+        }
+
         public bool TryGetTarget(string sourceKey, out RestoreTargetIdentity identity)
         {
-            if (Targets.TryGetValue(sourceKey, out identity!))
+            var (tfm, rid) = SplitTarget(sourceKey);
+            if (!TryGetFrameworkIdentity(tfm, out var frameworkKey))
+            {
+                identity = null!;
+                return false;
+            }
+
+            var canonicalKey = frameworkKey + (rid is null ? string.Empty : "/" + rid.Trim().ToLowerInvariant());
+            return Targets.TryGetValue(canonicalKey, out identity!);
+        }
+
+        public bool TryGetLibrary(JsonElement libraries, string sourceKey, out RestorePackageIdentity identity, out JsonElement library)
+        {
+            if (!TryGetPackageKey(sourceKey, out var canonicalKey) ||
+                !Libraries.TryGetValue(canonicalKey, out identity!) ||
+                !TryGetPropertyIgnoreCase(libraries, identity.SourceKey, out library))
+            {
+                identity = null!;
+                library = default;
+                return false;
+            }
+
+            return true;
+        }
+
+        public bool TryGetLibraryByCanonicalKey(JsonElement libraries, string canonicalKey, out RestorePackageIdentity identity, out JsonElement library)
+        {
+            if (!Libraries.TryGetValue(canonicalKey, out identity!) ||
+                !TryGetPropertyIgnoreCase(libraries, identity.SourceKey, out library))
+            {
+                identity = null!;
+                library = default;
+                return false;
+            }
+
+            return true;
+        }
+
+        public bool TryGetPackage(string sourceKey, out RestorePackageIdentity identity)
+        {
+            if (TryGetPackageKey(sourceKey, out var canonicalKey) && Libraries.TryGetValue(canonicalKey, out identity!))
             {
                 return true;
             }
 
-            var (tfm, rid) = SplitTarget(sourceKey);
-            var canonical = NormalizeFrameworkMoniker(tfm) + (rid is null ? string.Empty : "/" + rid.Trim().ToLowerInvariant());
-            return Targets.TryGetValue(canonical, out identity!);
+            identity = null!;
+            return false;
+        }
+
+        public bool TryGetPackageByImportSuffix(string suffix, out RestorePackageIdentity identity, out string relativePath)
+        {
+            foreach (var candidate in Libraries.Values)
+            {
+                var prefix = candidate.SourceKey + "/";
+                if (!suffix.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                identity = candidate;
+                relativePath = suffix[prefix.Length..];
+                return relativePath.Length > 0;
+            }
+
+            identity = null!;
+            relativePath = string.Empty;
+            return false;
+        }
+
+        public bool TryGetPackageByRoot(string packageRoot, out RestorePackageIdentity identity)
+        {
+            foreach (var pair in PackageRoots)
+            {
+                if (FileSystemPathsEqual(pair.Value, packageRoot) && Libraries.TryGetValue(pair.Key, out identity!))
+                {
+                    return true;
+                }
+            }
+
+            identity = null!;
+            return false;
+        }
+
+        public bool TryGetPackageKey(string sourceKey, out string canonicalKey)
+        {
+            if (TrySplitPackageIdentity(sourceKey, out var packageId, out var version))
+            {
+                canonicalKey = packageId + "/" + version;
+                return Libraries.ContainsKey(canonicalKey);
+            }
+
+            canonicalKey = string.Empty;
+            return false;
         }
     }
 
@@ -136,19 +235,29 @@ public static class ResolvedGraphClassifier
                 return new ProbeResult(Array.Empty<SurfaceEntry>(), incomplete.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray());
             }
 
-            var directAssetRules = ReadDirectPackageAssetRules(root);
+            var directAssetRules = ReadDirectPackageAssetRules(root, restoreIdentities);
             compilerApiVersion ??= ReadCompilerApiVersion(root);
             var entries = new List<SurfaceEntry>();
             var projectEntries = new Dictionary<string, List<SurfaceEntry>>(StringComparer.OrdinalIgnoreCase);
             var resolvedPackages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var accumulatedEntries = 0;
-            var packageRoots = ResolvePackageRoots(libraries, packageFolders, incomplete);
-            var packageInventories = BuildPackageInventories(packageRoots, libraries, incomplete, budget);
+            var packageRoots = ResolvePackageRoots(restoreIdentities, libraries, packageFolders, incomplete);
+            var packageInventories = BuildPackageInventories(packageRoots, restoreIdentities, libraries, incomplete, budget);
             ValidateRestoreEvidence(root, libraries, targets, restoreIdentities, packageFolders, packageRoots, packageInventories, incomplete, budget);
+            if (incomplete.Count > 0)
+            {
+                return new ProbeResult(Array.Empty<SurfaceEntry>(), incomplete.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray());
+            }
+
             var targetFrameworkContexts = restoreIdentities.FrameworkContexts;
             var expectedGeneratedImportSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var generatedImports = ReadGeneratedImports(root, assetsFile, projectRoot, selectedProjectPath, packageRoots, packageInventories, libraries, targetFrameworkContexts, incomplete, budget, expectedGeneratedImportSources);
+            var generatedImports = ReadGeneratedImports(root, assetsFile, projectRoot, selectedProjectPath, restoreIdentities, packageRoots, packageInventories, libraries, targetFrameworkContexts, incomplete, budget, expectedGeneratedImportSources);
             ValidateGeneratedImportEvidence(generatedImports, targets, restoreIdentities, packageRoots, packageInventories, libraries, incomplete, budget);
+            if (incomplete.Count > 0)
+            {
+                return new ProbeResult(Array.Empty<SurfaceEntry>(), incomplete.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray());
+            }
+
             var projectLanguage = ReadProjectLanguage(root, projectRoot, selectedProjectPath, incomplete);
             var isMultiTargetingProject = restoreIdentities.Targets.Values
                 .Select(target => target.FrameworkKey)
@@ -172,25 +281,27 @@ public static class ResolvedGraphClassifier
                 var tfm = targetIdentity.TargetFramework;
                 var rid = targetIdentity.RuntimeIdentifier;
                 var targetAlias = targetIdentity.TargetAlias;
-                var targetDirectRules = TryGetFrameworkValue(directAssetRules, targetFrameworkKey, out var rules)
+                var targetDirectRules = directAssetRules.TryGetValue(targetFrameworkKey, out var rules)
                     ? rules
                     : new Dictionary<string, PackageAssetRule>(StringComparer.OrdinalIgnoreCase);
                 var directPackages = targetDirectRules.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
-                var analyzerPackages = DetermineAnalyzerPackages(target.Value, targetDirectRules, budget);
+                var analyzerPackages = DetermineAnalyzerPackages(target.Value, targetDirectRules, restoreIdentities, budget);
                 foreach (var package in target.Value.EnumerateObject())
                 {
-                    var (packageId, version) = SplitPackageKey(package.Name);
-                    var libraryKey = packageId + "/" + version;
-                    if (!TryGetPropertyIgnoreCase(libraries, libraryKey, out var library))
+                    if (!restoreIdentities.TryGetLibrary(libraries, package.Name, out var packageIdentity, out var library))
                     {
-                        incomplete.Add($"Target {target.Name} refers to missing library {libraryKey}.");
+                        incomplete.Add($"Target {target.Name} refers to missing library {package.Name}.");
                         continue;
                     }
+
+                    var packageId = packageIdentity.Id;
+                    var version = packageIdentity.Version;
+                    var libraryKey = packageIdentity.CanonicalKey;
 
                     if (library.TryGetProperty("type", out var typeElement) && typeElement.ValueKind == JsonValueKind.String &&
                         typeElement.GetString()!.Equals("project", StringComparison.OrdinalIgnoreCase))
                     {
-                        ReadProjectDependencies(package.Value, target.Value, libraryKey, incomplete, budget);
+                        ReadProjectDependencies(package.Value, target.Value, libraryKey, restoreIdentities, incomplete, budget);
                         continue;
                     }
 
@@ -325,6 +436,7 @@ public static class ResolvedGraphClassifier
 
                 foreach (var nestedEntry in CreateNestedImportEntries(
                     generatedImports,
+                    restoreIdentities,
                     packageRoots,
                     packageInventories,
                     libraries,
@@ -379,7 +491,13 @@ public static class ResolvedGraphClassifier
         !message.Contains(Path.AltDirectorySeparatorChar) &&
         !message.Contains(":\\", StringComparison.Ordinal);
 
-    private static void ReadProjectDependencies(JsonElement projectNode, JsonElement targetAssets, string projectKey, List<string> incomplete, AnalysisBudget budget)
+    private static void ReadProjectDependencies(
+        JsonElement projectNode,
+        JsonElement targetAssets,
+        string projectKey,
+        RestoreIdentityIndex restoreIdentities,
+        List<string> incomplete,
+        AnalysisBudget budget)
     {
         if (!projectNode.TryGetProperty("dependencies", out var dependencies)) return;
         if (dependencies.ValueKind != JsonValueKind.Object)
@@ -391,18 +509,17 @@ public static class ResolvedGraphClassifier
         foreach (var dependency in dependencies.EnumerateObject())
         {
             budget.AddDependencyNode();
-            if (dependency.Value.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(dependency.Value.GetString()))
+            if (dependency.Value.ValueKind != JsonValueKind.String ||
+                !TryParsePackageVersionRange(dependency.Value.GetString(), out var requirement))
             {
                 incomplete.Add($"Project node {projectKey} has malformed dependency value {dependency.Name}.");
                 continue;
             }
 
-            var found = targetAssets.EnumerateObject().Any(candidate =>
+            if (!TryFindMatchingTargetPackage(targetAssets, restoreIdentities, dependency.Name, requirement, out _))
             {
-                var (id, _) = SplitPackageKey(candidate.Name);
-                return id.Equals(dependency.Name, StringComparison.OrdinalIgnoreCase);
-            });
-            if (!found) incomplete.Add($"Project node {projectKey} refers to missing package dependency {dependency.Name}.");
+                incomplete.Add($"Project node {projectKey} refers to an unresolved package requirement {dependency.Name}.");
+            }
         }
     }
 
@@ -449,7 +566,9 @@ public static class ResolvedGraphClassifier
         };
     }
 
-    private static Dictionary<string, Dictionary<string, PackageAssetRule>> ReadDirectPackageAssetRules(JsonElement root)
+    private static Dictionary<string, Dictionary<string, PackageAssetRule>> ReadDirectPackageAssetRules(
+        JsonElement root,
+        RestoreIdentityIndex restoreIdentities)
     {
         if (!root.TryGetProperty("project", out var project) || project.ValueKind != JsonValueKind.Object ||
             !project.TryGetProperty("frameworks", out var frameworks) || frameworks.ValueKind != JsonValueKind.Object)
@@ -475,6 +594,11 @@ public static class ResolvedGraphClassifier
                 throw new InvalidDataException($"Framework {framework.Name} has an invalid dependencies object.");
             }
 
+            if (!restoreIdentities.TryGetFramework(framework.Name, out var frameworkIdentity))
+            {
+                throw new InvalidDataException($"Framework {framework.Name} has no canonical restore identity.");
+            }
+
             var frameworkRules = new Dictionary<string, PackageAssetRule>(StringComparer.OrdinalIgnoreCase);
             foreach (var dependency in dependencies.EnumerateObject())
             {
@@ -485,7 +609,7 @@ public static class ResolvedGraphClassifier
 
                 frameworkRules[dependency.Name] = new PackageAssetRule(ReadAnalyzersIncluded(dependency.Value, dependency.Name));
             }
-            result[framework.Name] = frameworkRules;
+            result[frameworkIdentity.CanonicalKey] = frameworkRules;
         }
 
         return result;
@@ -493,6 +617,7 @@ public static class ResolvedGraphClassifier
 
     private static IEnumerable<SurfaceEntry> CreateNestedImportEntries(
         IReadOnlyList<GeneratedImport> generatedImports,
+        RestoreIdentityIndex restoreIdentities,
         IReadOnlyDictionary<string, string> packageRoots,
         Dictionary<string, HashSet<string>> packageInventories,
         JsonElement libraries,
@@ -519,14 +644,15 @@ public static class ResolvedGraphClassifier
                 continue;
             }
 
-            var package = packageRoots.FirstOrDefault(pair => FileSystemPathsEqual(pair.Value, import.PackageRoot!));
-            if (string.IsNullOrEmpty(package.Key) || !TryGetPropertyIgnoreCase(libraries, package.Key, out _))
+            if (!restoreIdentities.TryGetPackageByRoot(import.PackageRoot!, out var packageIdentity) ||
+                !restoreIdentities.TryGetLibraryByCanonicalKey(libraries, packageIdentity.CanonicalKey, out _, out _))
             {
                 incomplete.Add("Nested package import could not be mapped to a resolved package library.");
                 continue;
             }
 
-            var (packageId, version) = SplitPackageKey(package.Key);
+            var packageId = packageIdentity.Id;
+            var version = packageIdentity.Version;
             var physicalPath = Path.Combine(import.PackageRoot!, import.PackageRelativePath!.Replace('/', Path.DirectorySeparatorChar));
             if (!IsDeclaredPackageFile(import.PackageRoot!, import.PackageRelativePath, packageInventories) ||
                 !IsSafeResolvedFile(import.PackageRoot!, physicalPath) || !File.Exists(physicalPath))
@@ -543,11 +669,11 @@ public static class ResolvedGraphClassifier
             }
             catch (XmlException)
             {
-                incomplete.Add($"{package.Key}: nested package MSBuild file {import.PackageRelativePath} is malformed.");
+                incomplete.Add($"{packageIdentity.CanonicalKey}: nested package MSBuild file {import.PackageRelativePath} is malformed.");
             }
             catch (InvalidOperationException)
             {
-                incomplete.Add($"{package.Key}: nested package MSBuild file {import.PackageRelativePath} is unsupported.");
+                incomplete.Add($"{packageIdentity.CanonicalKey}: nested package MSBuild file {import.PackageRelativePath} is unsupported.");
             }
 
             var sha = strictContent && CapabilityPolicy.IsStrictContentEligible(import.Capability.Value, true, true)
@@ -580,26 +706,6 @@ public static class ResolvedGraphClassifier
         if (!TryNormalizeRelativePath(relativePath, out var normalized)) return false;
         var inventory = packageInventories.FirstOrDefault(pair => FileSystemPathsEqual(pair.Key, packageRoot));
         return inventory.Value is not null && inventory.Value.Contains(normalized);
-    }
-
-    private static bool TryGetFrameworkValue<T>(IReadOnlyDictionary<string, T> values, string candidate, out T value)
-    {
-        if (values.TryGetValue(candidate, out value!))
-        {
-            return true;
-        }
-
-        foreach (var pair in values)
-        {
-            if (FrameworksMatch(pair.Key, candidate))
-            {
-                value = pair.Value;
-                return true;
-            }
-        }
-
-        value = default!;
-        return false;
     }
 
     private static bool FrameworksMatch(string left, string right) =>
@@ -730,11 +836,18 @@ public static class ResolvedGraphClassifier
         selector?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Any(value => value.Equals(expected, StringComparison.OrdinalIgnoreCase)) == true;
 
-    private static HashSet<string> DetermineAnalyzerPackages(JsonElement targetAssets, IReadOnlyDictionary<string, PackageAssetRule> directAssetRules, AnalysisBudget budget)
+    private static HashSet<string> DetermineAnalyzerPackages(
+        JsonElement targetAssets,
+        IReadOnlyDictionary<string, PackageAssetRule> directAssetRules,
+        RestoreIdentityIndex restoreIdentities,
+        AnalysisBudget budget)
     {
         var packageProperties = targetAssets.EnumerateObject().ToArray();
         var packageKeysById = packageProperties
-            .Select(package => (Key: package.Name, Id: SplitPackageKey(package.Name).Id))
+            .Select(package => restoreIdentities.TryGetPackage(package.Name, out var identity)
+                ? (Key: package.Name, Id: identity.Id)
+                : (Key: package.Name, Id: string.Empty))
+            .Where(item => item.Id.Length > 0)
             .GroupBy(item => item.Id, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.Select(item => item.Key).ToArray(), StringComparer.OrdinalIgnoreCase);
         var excludedAnalyzerPackages = directAssetRules
@@ -782,7 +895,12 @@ public static class ResolvedGraphClassifier
                 throw new InvalidDataException($"Target package {packageKey} is not an object.");
             }
 
-            var packageId = SplitPackageKey(packageKey).Id;
+            if (!restoreIdentities.TryGetPackage(packageKey, out var packageIdentity))
+            {
+                throw new InvalidDataException($"Target package {packageKey} has no canonical restore identity.");
+            }
+
+            var packageId = packageIdentity.Id;
             if (excludedAnalyzerPackages.Contains(packageId)) continue;
             active.Add(packageId);
             if (!package.TryGetProperty("dependencies", out var dependencies)) continue;
@@ -984,7 +1102,10 @@ public static class ResolvedGraphClassifier
         var identities = new RestoreIdentityIndex();
         foreach (var pair in ReadPackageIdentityMap(libraries, "library identity", incomplete))
         {
-            identities.Libraries[pair.Key] = pair.Value;
+            if (TrySplitPackageIdentity(pair.Key, out var packageId, out var packageVersion))
+            {
+                identities.Libraries[pair.Key] = new RestorePackageIdentity(pair.Value, pair.Key, packageId, packageVersion);
+            }
         }
 
         if (!root.TryGetProperty("project", out var project) || project.ValueKind != JsonValueKind.Object)
@@ -1005,6 +1126,7 @@ public static class ResolvedGraphClassifier
             }
         }
 
+        var restoreFrameworksFound = false;
         if (project.TryGetProperty("restore", out var restore))
         {
             if (restore.ValueKind != JsonValueKind.Object)
@@ -1013,26 +1135,53 @@ public static class ResolvedGraphClassifier
             }
             else if (restore.TryGetProperty("frameworks", out var restoreFrameworks))
             {
+                restoreFrameworksFound = true;
                 var restoreIdentities = ReadFrameworkIdentityMap(restoreFrameworks, "restore framework identity", incomplete);
-                foreach (var framework in restoreIdentities)
+                foreach (var framework in identities.Frameworks)
                 {
-                    if (!identities.Frameworks.TryGetValue(framework.Key, out var projectFramework) ||
-                        !FrameworksMatch(projectFramework.EffectiveFramework, framework.Value.EffectiveFramework) ||
-                        !FrameworksMatch(projectFramework.TargetAlias, framework.Value.TargetAlias))
+                    if (!restoreIdentities.TryGetValue(framework.Key, out var restoreFramework))
+                    {
+                        incomplete.Add($"Restore evidence framework {framework.Value.SourceKey} is missing from restore metadata.");
+                    }
+                    else if (!FrameworksMatch(framework.Value.EffectiveFramework, restoreFramework.EffectiveFramework) ||
+                             !FrameworksMatch(framework.Value.TargetAlias, restoreFramework.TargetAlias))
                     {
                         incomplete.Add($"Restore evidence framework {framework.Value.SourceKey} disagrees between project and restore metadata.");
+                    }
+                }
+
+                foreach (var framework in restoreIdentities)
+                {
+                    if (!identities.Frameworks.ContainsKey(framework.Key))
+                    {
+                        incomplete.Add($"Restore evidence framework {framework.Value.SourceKey} has no declared project framework.");
                     }
                 }
             }
         }
 
+        if (!restoreFrameworksFound && root.TryGetProperty("version", out var versionElement) &&
+            versionElement.ValueKind == JsonValueKind.Number && versionElement.TryGetInt32(out var version) && version == 4)
+        {
+            incomplete.Add("Assets format 4 has no restore framework identity map.");
+        }
+
         if (root.TryGetProperty("projectFileDependencyGroups", out var dependencyGroups))
         {
-            foreach (var dependencyGroup in ReadFrameworkKeyMap(dependencyGroups, "format 4 dependency group", incomplete))
+            var dependencyGroupIdentities = ReadFrameworkKeyMap(dependencyGroups, "format 4 dependency group", incomplete);
+            foreach (var dependencyGroup in dependencyGroupIdentities)
             {
                 if (!identities.Frameworks.ContainsKey(dependencyGroup.Key))
                 {
                     incomplete.Add($"Assets format 4 dependency group {dependencyGroup.Value} has no declared framework.");
+                }
+            }
+
+            foreach (var framework in identities.Frameworks)
+            {
+                if (!dependencyGroupIdentities.ContainsKey(framework.Key))
+                {
+                    incomplete.Add($"Assets format 4 dependency groups are missing declared framework {framework.Value.SourceKey}.");
                 }
             }
         }
@@ -1288,23 +1437,29 @@ public static class ResolvedGraphClassifier
 
         foreach (var framework in declaredFrameworks)
         {
-            if (!targetNames.Any(target => FrameworksMatch(SplitTarget(target).Tfm, framework)))
+            if (!restoreIdentities.Targets.Values.Any(target => target.FrameworkKey.Equals(framework, StringComparison.OrdinalIgnoreCase)))
             {
                 incomplete.Add($"Declared framework {framework} has no resolved target graph.");
             }
         }
 
-        foreach (var target in targetNames)
+        foreach (var target in restoreIdentities.Targets.Values)
         {
-            if (!declaredFrameworks.Any(framework => FrameworksMatch(SplitTarget(target).Tfm, framework)))
+            if (!declaredFrameworks.Contains(target.FrameworkKey, StringComparer.OrdinalIgnoreCase))
             {
-                incomplete.Add($"Resolved target {target} has no declared framework.");
+                incomplete.Add($"Resolved target {target.SourceKey} has no declared framework.");
             }
         }
 
         foreach (var framework in frameworks.EnumerateObject())
         {
             if (framework.Value.ValueKind != JsonValueKind.Object) continue;
+            if (!restoreIdentities.TryGetFramework(framework.Name, out var frameworkIdentity))
+            {
+                incomplete.Add($"Declared framework {framework.Name} has no canonical restore identity.");
+                continue;
+            }
+
             if (framework.Value.TryGetProperty("dependencies", out var dependencies) && dependencies.ValueKind != JsonValueKind.Object)
             {
                 incomplete.Add($"Declared framework {framework.Name} has malformed dependency metadata.");
@@ -1317,10 +1472,21 @@ public static class ResolvedGraphClassifier
                     if (dependency.Value.ValueKind != JsonValueKind.Object)
                     {
                         incomplete.Add($"Declared framework {framework.Name} has malformed dependency value {dependency.Name}.");
+                        continue;
+                    }
+
+                    if (!dependency.Value.TryGetProperty("version", out var version) ||
+                        version.ValueKind != JsonValueKind.String ||
+                        !TryParsePackageVersionRange(version.GetString(), out var requirement) ||
+                        !TryFindMatchingPackageInFrameworkTargets(targets, restoreIdentities, frameworkIdentity.CanonicalKey, dependency.Name, requirement))
+                    {
+                        incomplete.Add($"Declared framework {framework.Name} has an unresolved package requirement {dependency.Name}.");
                     }
                 }
             }
         }
+
+        ValidateFormat4DependencyGroups(root, targets, restoreIdentities, incomplete, budget);
 
         foreach (var target in targets.EnumerateObject())
         {
@@ -1330,8 +1496,14 @@ public static class ResolvedGraphClassifier
                 continue;
             }
 
+            if (!restoreIdentities.TryGetTarget(target.Name, out var targetIdentity))
+            {
+                continue;
+            }
+
             if (!target.Value.EnumerateObject().Any() && frameworks.EnumerateObject()
-                .Where(framework => FrameworksMatch(framework.Name, SplitTarget(target.Name).Tfm))
+                .Where(framework => restoreIdentities.TryGetFramework(framework.Name, out var frameworkIdentity) &&
+                    frameworkIdentity.CanonicalKey.Equals(targetIdentity.FrameworkKey, StringComparison.OrdinalIgnoreCase))
                 .Any(framework => framework.Value.ValueKind == JsonValueKind.Object &&
                     framework.Value.TryGetProperty("dependencies", out var dependencies) &&
                     dependencies.ValueKind == JsonValueKind.Object && dependencies.EnumerateObject().Any()))
@@ -1339,19 +1511,9 @@ public static class ResolvedGraphClassifier
                 incomplete.Add($"Resolved target {target.Name} is empty despite declared framework dependencies.");
             }
 
-            if (!restoreIdentities.TryGetTarget(target.Name, out var targetIdentity))
-            {
-                continue;
-            }
-
-            var packageIds = target.Value.EnumerateObject()
-                .Select(property => SplitPackageKey(property.Name).Id)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var package in target.Value.EnumerateObject())
             {
-                if (!TrySplitPackageIdentity(package.Name, out var packageId, out var packageVersion) ||
-                    !restoreIdentities.Libraries.TryGetValue(packageId + "/" + packageVersion, out var libraryKey) ||
-                    !TryGetPropertyIgnoreCase(libraries, libraryKey, out var library))
+                if (!restoreIdentities.TryGetLibrary(libraries, package.Name, out var packageIdentity, out var library))
                 {
                     incomplete.Add($"Target {target.Name} refers to missing library {package.Name}.");
                     continue;
@@ -1372,7 +1534,17 @@ public static class ResolvedGraphClassifier
                     continue;
                 }
 
-                ValidateTargetPackageAssets(package.Value, library, package.Name, libraryType, packageRoots, packageInventories, incomplete, budget);
+                ValidateTargetPackageAssets(
+                    package.Value,
+                    library,
+                    packageIdentity.CanonicalKey,
+                    libraryType,
+                    target.Value,
+                    restoreIdentities,
+                    packageRoots,
+                    packageInventories,
+                    incomplete,
+                    budget);
                 if (TryGetPropertyIgnoreCase(package.Value, "dependencies", out var dependencies))
                 {
                     if (dependencies.ValueKind != JsonValueKind.Object)
@@ -1383,9 +1555,11 @@ public static class ResolvedGraphClassifier
                     {
                         foreach (var dependency in dependencies.EnumerateObject())
                         {
-                            if (!packageIds.Contains(dependency.Name))
+                            if (dependency.Value.ValueKind != JsonValueKind.String ||
+                                !TryParsePackageVersionRange(dependency.Value.GetString(), out var requirement) ||
+                                !TryFindMatchingTargetPackage(target.Value, restoreIdentities, dependency.Name, requirement, out _))
                             {
-                                incomplete.Add($"Target package {package.Name} refers to missing dependency {dependency.Name}.");
+                                incomplete.Add($"Target package {package.Name} has an unresolved package requirement {dependency.Name}.");
                             }
                         }
                     }
@@ -1393,16 +1567,20 @@ public static class ResolvedGraphClassifier
             }
 
             foreach (var framework in frameworks.EnumerateObject().Where(framework =>
-                         TryGetFrameworkIdentity(framework.Name, out var frameworkIdentity) &&
-                         frameworkIdentity.Equals(targetIdentity.FrameworkKey, StringComparison.OrdinalIgnoreCase)))
+                         restoreIdentities.TryGetFramework(framework.Name, out var frameworkIdentity) &&
+                         frameworkIdentity.CanonicalKey.Equals(targetIdentity.FrameworkKey, StringComparison.OrdinalIgnoreCase)))
             {
                 if (!framework.Value.TryGetProperty("dependencies", out var dependencies) || dependencies.ValueKind != JsonValueKind.Object) continue;
                 foreach (var dependency in dependencies.EnumerateObject())
                 {
                     budget.AddDependencyNode();
-                    if (!packageIds.Contains(dependency.Name))
+                    if (dependency.Value.ValueKind != JsonValueKind.Object ||
+                        !dependency.Value.TryGetProperty("version", out var version) ||
+                        version.ValueKind != JsonValueKind.String ||
+                        !TryParsePackageVersionRange(version.GetString(), out var requirement) ||
+                        !TryFindMatchingTargetPackage(target.Value, restoreIdentities, dependency.Name, requirement, out _))
                     {
-                        incomplete.Add($"Declared framework {framework.Name} refers to unresolved dependency {dependency.Name}.");
+                        incomplete.Add($"Declared framework {framework.Name} refers to an unresolved package requirement {dependency.Name}.");
                     }
                 }
             }
@@ -1414,6 +1592,8 @@ public static class ResolvedGraphClassifier
         JsonElement library,
         string packageKey,
         string? libraryType,
+        JsonElement targetAssets,
+        RestoreIdentityIndex restoreIdentities,
         IReadOnlyDictionary<string, string> packageRoots,
         Dictionary<string, HashSet<string>> packageInventories,
         List<string> incomplete,
@@ -1441,9 +1621,11 @@ public static class ResolvedGraphClassifier
                 foreach (var dependency in group.Value.EnumerateObject())
                 {
                     budget.AddDependencyNode();
-                    if (dependency.Value.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(dependency.Value.GetString()))
+                    if (dependency.Value.ValueKind != JsonValueKind.String ||
+                        !TryParsePackageVersionRange(dependency.Value.GetString(), out var requirement) ||
+                        !TryFindMatchingTargetPackage(targetAssets, restoreIdentities, dependency.Name, requirement, out _))
                     {
-                        incomplete.Add($"Target package {packageKey} has malformed dependency value {dependency.Name}.");
+                        incomplete.Add($"Target package {packageKey} has an unresolved package requirement {dependency.Name}.");
                     }
                 }
                 continue;
@@ -1517,6 +1699,321 @@ public static class ResolvedGraphClassifier
         }
     }
 
+    private static void ValidateFormat4DependencyGroups(
+        JsonElement root,
+        JsonElement targets,
+        RestoreIdentityIndex restoreIdentities,
+        List<string> incomplete,
+        AnalysisBudget budget)
+    {
+        if (!root.TryGetProperty("projectFileDependencyGroups", out var groups) || groups.ValueKind != JsonValueKind.Object)
+        {
+            return;
+        }
+
+        foreach (var group in groups.EnumerateObject())
+        {
+            if (!restoreIdentities.TryGetFramework(group.Name, out var frameworkIdentity) || group.Value.ValueKind != JsonValueKind.Array)
+            {
+                continue;
+            }
+
+            foreach (var dependency in group.Value.EnumerateArray())
+            {
+                budget.AddDependencyNode();
+                if (dependency.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(dependency.GetString()))
+                {
+                    continue;
+                }
+
+                var value = dependency.GetString()!;
+                if (IsValidProjectDependencyPath(value))
+                {
+                    continue;
+                }
+
+                if (!TryParseFormat4PackageRequirement(value, out var packageId, out var requirement) ||
+                    !TryFindMatchingPackageInFrameworkTargets(targets, restoreIdentities, frameworkIdentity.CanonicalKey, packageId, requirement))
+                {
+                    incomplete.Add($"Assets format 4 dependency group {group.Name} has an unresolved package requirement.");
+                }
+            }
+        }
+    }
+
+    private static bool TryFindMatchingPackageInFrameworkTargets(
+        JsonElement targets,
+        RestoreIdentityIndex restoreIdentities,
+        string frameworkKey,
+        string packageId,
+        PackageVersionRange requirement)
+    {
+        foreach (var target in targets.EnumerateObject())
+        {
+            if (!restoreIdentities.TryGetTarget(target.Name, out var targetIdentity) ||
+                !targetIdentity.FrameworkKey.Equals(frameworkKey, StringComparison.OrdinalIgnoreCase) ||
+                target.Value.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            if (TryFindMatchingTargetPackage(target.Value, restoreIdentities, packageId, requirement, out _))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryFindMatchingTargetPackage(
+        JsonElement targetAssets,
+        RestoreIdentityIndex restoreIdentities,
+        string packageId,
+        PackageVersionRange requirement,
+        out RestorePackageIdentity identity)
+    {
+        foreach (var package in targetAssets.EnumerateObject())
+        {
+            if (restoreIdentities.TryGetPackage(package.Name, out var candidate) &&
+                candidate.Id.Equals(packageId, StringComparison.OrdinalIgnoreCase) &&
+                requirement.Matches(candidate.Version))
+            {
+                identity = candidate;
+                return true;
+            }
+        }
+
+        identity = null!;
+        return false;
+    }
+
+    private static bool TryParseFormat4PackageRequirement(
+        string value,
+        out string packageId,
+        out PackageVersionRange requirement)
+    {
+        var separator = value.IndexOf(">=", StringComparison.Ordinal);
+        if (separator <= 0 || value.IndexOf(">=", separator + 2, StringComparison.Ordinal) >= 0)
+        {
+            packageId = string.Empty;
+            requirement = null!;
+            return false;
+        }
+
+        packageId = value[..separator].Trim();
+        var version = value[(separator + 2)..].Trim();
+        if (!IsValidPackageId(packageId) || !TryParseRestoreVersion(version, out var minimum))
+        {
+            packageId = string.Empty;
+            requirement = null!;
+            return false;
+        }
+
+        requirement = new PackageVersionRange(minimum, true, null, false);
+        return true;
+    }
+
+    private static bool IsValidProjectDependencyPath(string value)
+    {
+        var normalized = value.Trim().Replace('\\', '/');
+        var extension = Path.GetExtension(normalized);
+        return normalized.Length > 0 &&
+            normalized.Contains('/', StringComparison.Ordinal) &&
+            !normalized.StartsWith('/') &&
+            !Path.IsPathRooted(normalized) &&
+            !normalized.Contains(':', StringComparison.Ordinal) &&
+            !normalized.Contains('\0') &&
+            normalized.Split('/').All(part => part.Length > 0 && part != ".") &&
+            (extension.Equals(".csproj", StringComparison.OrdinalIgnoreCase) ||
+             extension.Equals(".fsproj", StringComparison.OrdinalIgnoreCase) ||
+             extension.Equals(".vbproj", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool TryParsePackageVersionRange(string? value, out PackageVersionRange requirement)
+    {
+        requirement = null!;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var text = value.Trim();
+        if (text[0] is not ('[' or '('))
+        {
+            return TryParseRestoreVersion(text, out var minimum) &&
+                SetMinimumRange(minimum, out requirement);
+        }
+
+        if (text.Length < 2 || text[^1] is not (']' or ')'))
+        {
+            return false;
+        }
+
+        var lowerInclusive = text[0] == '[';
+        var upperInclusive = text[^1] == ']';
+        var inner = text[1..^1];
+        var comma = inner.IndexOf(',');
+        if (comma < 0)
+        {
+            if (!lowerInclusive || !upperInclusive || !TryParseRestoreVersion(inner.Trim(), out var exact))
+            {
+                return false;
+            }
+
+            requirement = new PackageVersionRange(exact, true, exact, true);
+            return true;
+        }
+
+        if (inner.IndexOf(',', comma + 1) >= 0)
+        {
+            return false;
+        }
+
+        var lowerText = inner[..comma].Trim();
+        var upperText = inner[(comma + 1)..].Trim();
+        RestoreVersion? lower = null;
+        RestoreVersion? upper = null;
+        if (lowerText.Length > 0)
+        {
+            if (!TryParseRestoreVersion(lowerText, out var parsedLower)) return false;
+            lower = parsedLower;
+        }
+
+        if (upperText.Length > 0)
+        {
+            if (!TryParseRestoreVersion(upperText, out var parsedUpper)) return false;
+            upper = parsedUpper;
+        }
+
+        if (lower is null && upper is null)
+        {
+            return false;
+        }
+
+        requirement = new PackageVersionRange(lower, lowerInclusive, upper, upperInclusive);
+        return true;
+    }
+
+    private static bool SetMinimumRange(RestoreVersion minimum, out PackageVersionRange requirement)
+    {
+        requirement = new PackageVersionRange(minimum, true, null, false);
+        return true;
+    }
+
+    private static bool TryParseRestoreVersion(string value, out RestoreVersion version)
+    {
+        version = null!;
+        if (string.IsNullOrWhiteSpace(value) || value != value.Trim())
+        {
+            return false;
+        }
+
+        var buildSeparator = value.IndexOf('+');
+        var withoutBuild = buildSeparator >= 0 ? value[..buildSeparator] : value;
+        if (buildSeparator >= 0 && !IsValidVersionIdentifiers(value[(buildSeparator + 1)..]))
+        {
+            return false;
+        }
+
+        var prereleaseSeparator = withoutBuild.IndexOf('-');
+        var numeric = prereleaseSeparator >= 0 ? withoutBuild[..prereleaseSeparator] : withoutBuild;
+        var prerelease = prereleaseSeparator >= 0 ? withoutBuild[(prereleaseSeparator + 1)..] : null;
+        var numericParts = numeric.Split('.', StringSplitOptions.None);
+        if (numericParts.Length is < 1 or > 4 || numericParts.Any(part => part.Length == 0 || part.Any(character => !char.IsDigit(character))))
+        {
+            return false;
+        }
+
+        if (prerelease is not null && !IsValidVersionIdentifiers(prerelease))
+        {
+            return false;
+        }
+
+        version = new RestoreVersion(numericParts, prerelease?.Split('.') ?? Array.Empty<string>());
+        return true;
+    }
+
+    private static int CompareRestoreVersions(RestoreVersion left, RestoreVersion right)
+    {
+        for (var index = 0; index < Math.Max(left.NumericParts.Length, right.NumericParts.Length); index++)
+        {
+            var leftPart = index < left.NumericParts.Length ? left.NumericParts[index].TrimStart('0') : string.Empty;
+            var rightPart = index < right.NumericParts.Length ? right.NumericParts[index].TrimStart('0') : string.Empty;
+            leftPart = leftPart.Length == 0 ? "0" : leftPart;
+            rightPart = rightPart.Length == 0 ? "0" : rightPart;
+            var length = leftPart.Length.CompareTo(rightPart.Length);
+            if (length != 0) return length;
+            var numeric = string.CompareOrdinal(leftPart, rightPart);
+            if (numeric != 0) return numeric;
+        }
+
+        if (left.PrereleaseParts.Length == 0 && right.PrereleaseParts.Length == 0) return 0;
+        if (left.PrereleaseParts.Length == 0) return 1;
+        if (right.PrereleaseParts.Length == 0) return -1;
+        for (var index = 0; index < Math.Max(left.PrereleaseParts.Length, right.PrereleaseParts.Length); index++)
+        {
+            if (index >= left.PrereleaseParts.Length) return -1;
+            if (index >= right.PrereleaseParts.Length) return 1;
+            var leftPart = left.PrereleaseParts[index];
+            var rightPart = right.PrereleaseParts[index];
+            var leftNumeric = leftPart.All(char.IsDigit);
+            var rightNumeric = rightPart.All(char.IsDigit);
+            if (leftNumeric && rightNumeric)
+            {
+                var numeric = CompareNumericIdentifiers(leftPart, rightPart);
+                if (numeric != 0) return numeric;
+            }
+            else if (leftNumeric != rightNumeric)
+            {
+                return leftNumeric ? -1 : 1;
+            }
+            else
+            {
+                var text = string.Compare(leftPart, rightPart, StringComparison.OrdinalIgnoreCase);
+                if (text != 0) return text;
+            }
+        }
+
+        return 0;
+    }
+
+    private static int CompareNumericIdentifiers(string left, string right)
+    {
+        left = left.TrimStart('0');
+        right = right.TrimStart('0');
+        left = left.Length == 0 ? "0" : left;
+        right = right.Length == 0 ? "0" : right;
+        return left.Length != right.Length ? left.Length.CompareTo(right.Length) : string.CompareOrdinal(left, right);
+    }
+
+    private sealed record RestoreVersion(string[] NumericParts, string[] PrereleaseParts);
+
+    private sealed record PackageVersionRange(
+        RestoreVersion? Lower,
+        bool LowerInclusive,
+        RestoreVersion? Upper,
+        bool UpperInclusive)
+    {
+        public bool Matches(string value)
+        {
+            if (!TryParseRestoreVersion(value, out var candidate)) return false;
+            if (Lower is not null)
+            {
+                var lowerComparison = CompareRestoreVersions(candidate, Lower);
+                if (lowerComparison < 0 || lowerComparison == 0 && !LowerInclusive) return false;
+            }
+
+            if (Upper is not null)
+            {
+                var upperComparison = CompareRestoreVersions(candidate, Upper);
+                if (upperComparison > 0 || upperComparison == 0 && !UpperInclusive) return false;
+            }
+
+            return true;
+        }
+    }
+
     private static void ValidateStringArrayMetadata(JsonElement value, string propertyName, string packageKey, List<string> incomplete)
     {
         if (value.ValueKind != JsonValueKind.Array)
@@ -1554,32 +2051,36 @@ public static class ResolvedGraphClassifier
         }
     }
 
-    private static Dictionary<string, string> ResolvePackageRoots(JsonElement libraries, IReadOnlyList<string> packageFolders, List<string> incomplete)
+    private static Dictionary<string, string> ResolvePackageRoots(
+        RestoreIdentityIndex restoreIdentities,
+        JsonElement libraries,
+        IReadOnlyList<string> packageFolders,
+        List<string> incomplete)
     {
-        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var library in libraries.EnumerateObject())
+        foreach (var package in restoreIdentities.Libraries.Values)
         {
-            if (!library.Value.TryGetProperty("type", out var type) || type.ValueKind != JsonValueKind.String ||
+            if (!restoreIdentities.TryGetLibraryByCanonicalKey(libraries, package.CanonicalKey, out _, out var library) ||
+                !library.TryGetProperty("type", out var type) || type.ValueKind != JsonValueKind.String ||
                 !type.GetString()!.Equals("package", StringComparison.OrdinalIgnoreCase)) continue;
-            var (packageId, version) = SplitPackageKey(library.Name);
-            if (!library.Value.TryGetProperty("path", out var path) || path.ValueKind != JsonValueKind.String)
+            if (!library.TryGetProperty("path", out var path) || path.ValueKind != JsonValueKind.String)
             {
-                incomplete.Add($"Library {library.Name} has no valid package path.");
+                incomplete.Add($"Library {package.SourceKey} has no valid package path.");
                 continue;
             }
 
-            var packageRoot = ResolvePackageRoot(packageId, version, path.GetString()!, packageFolders.ToArray(), incomplete);
+            var packageRoot = ResolvePackageRoot(package.Id, package.Version, path.GetString()!, packageFolders.ToArray(), incomplete);
             if (packageRoot is not null)
             {
-                result[library.Name] = packageRoot;
+                restoreIdentities.PackageRoots[package.CanonicalKey] = packageRoot;
             }
         }
 
-        return result;
+        return restoreIdentities.PackageRoots;
     }
 
     private static Dictionary<string, HashSet<string>> BuildPackageInventories(
         IReadOnlyDictionary<string, string> packageRoots,
+        RestoreIdentityIndex restoreIdentities,
         JsonElement libraries,
         List<string> incomplete,
         AnalysisBudget budget)
@@ -1587,7 +2088,7 @@ public static class ResolvedGraphClassifier
         var result = new Dictionary<string, HashSet<string>>(FileSystemPathComparer);
         foreach (var package in packageRoots)
         {
-            if (!TryGetPropertyIgnoreCase(libraries, package.Key, out var library))
+            if (!restoreIdentities.TryGetLibraryByCanonicalKey(libraries, package.Key, out _, out var library))
             {
                 incomplete.Add("A resolved package root has no matching library inventory.");
                 continue;
@@ -1619,15 +2120,21 @@ public static class ResolvedGraphClassifier
             string? relative = null;
             if (TryGetNuGetPackageRootSuffix(project, out var suffix))
             {
-                match = packageRoots.Keys.FirstOrDefault(key => suffix.StartsWith(NormalizeText(key) + "/", StringComparison.OrdinalIgnoreCase));
-                if (match is not null)
+                if (restoreIdentities.TryGetPackageByImportSuffix(suffix, out var packageIdentity, out var packageRelativePath))
                 {
-                    relative = suffix[(match.Length + 1)..];
+                    match = packageIdentity.CanonicalKey;
+                    relative = packageRelativePath;
+                }
+                else
+                {
+                    match = null;
                 }
             }
             else if (import.PackageRoot is not null)
             {
-                match = packageRoots.FirstOrDefault(pair => FileSystemPathsEqual(pair.Value, import.PackageRoot)).Key;
+                match = restoreIdentities.TryGetPackageByRoot(import.PackageRoot, out var packageIdentity)
+                    ? packageIdentity.CanonicalKey
+                    : null;
             }
             else
             {
@@ -1635,7 +2142,7 @@ public static class ResolvedGraphClassifier
             }
 
             if (string.IsNullOrEmpty(match)) continue;
-            if (!TryGetPropertyIgnoreCase(libraries, match, out var library))
+            if (!restoreIdentities.TryGetLibraryByCanonicalKey(libraries, match, out _, out var library))
             {
                 incomplete.Add("Generated NuGet import evidence refers to an unrepresented package library.");
                 continue;
@@ -1731,6 +2238,7 @@ public static class ResolvedGraphClassifier
         string assetsFile,
         string projectRoot,
         string? selectedProjectPath,
+        RestoreIdentityIndex restoreIdentities,
         IReadOnlyDictionary<string, string> packageRoots,
         IReadOnlyDictionary<string, HashSet<string>> packageInventories,
         JsonElement libraries,
@@ -1833,7 +2341,7 @@ public static class ResolvedGraphClassifier
                 {
                     string? resolutionReason = null;
                     if (directImport.Applicability.IsKnown &&
-                        TryResolveStaticPackageImport(directImport.Project, file, packageRoots, out var nestedPath, out var nestedRoot, out resolutionReason))
+                        TryResolveStaticPackageImport(directImport.Project, file, restoreIdentities, packageRoots, out var nestedPath, out var nestedRoot, out resolutionReason))
                     {
                         var rootAssetPath = Path.GetRelativePath(nestedRoot, nestedPath).Replace(Path.DirectorySeparatorChar, '/');
                         if (!TryGetCapability(rootAssetPath, out var rootCapability))
@@ -1848,7 +2356,7 @@ public static class ResolvedGraphClassifier
                             continue;
                         }
 
-                        WalkNestedImports(nestedPath, nestedRoot, directImport.SourceFile, directImport.Applicability.Condition, rootCapability, rootAssetPath, packageRoots, packageInventories, libraries, targetFrameworkContexts, result, incomplete, budget, visitedImports, 0);
+                        WalkNestedImports(nestedPath, nestedRoot, directImport.SourceFile, directImport.Applicability.Condition, rootCapability, rootAssetPath, restoreIdentities, packageRoots, packageInventories, libraries, targetFrameworkContexts, result, incomplete, budget, visitedImports, 0);
                     }
                     else if (resolutionReason is not null)
                     {
@@ -1880,6 +2388,7 @@ public static class ResolvedGraphClassifier
         ConditionNode? inheritedCondition,
         CapabilityKind rootCapability,
         string rootAssetPath,
+        RestoreIdentityIndex restoreIdentities,
         IReadOnlyDictionary<string, string> packageRoots,
         IReadOnlyDictionary<string, HashSet<string>> packageInventories,
         JsonElement libraries,
@@ -1958,7 +2467,7 @@ public static class ResolvedGraphClassifier
                             }
 
                             string? resolutionReason = null;
-                            var resolved = TryResolveStaticPackageImport(project, current.File, packageRoots, out var nestedPath, out var nestedRoot, out resolutionReason);
+                            var resolved = TryResolveStaticPackageImport(project, current.File, restoreIdentities, packageRoots, out var nestedPath, out var nestedRoot, out resolutionReason);
                             var combined = applicability.IsKnown
                                 ? ImportApplicability.Known(CombineConditionNodes(current.Condition, applicability.Condition))
                                 : applicability;
@@ -2044,6 +2553,7 @@ public static class ResolvedGraphClassifier
     private static bool TryResolveStaticPackageImport(
         string importProject,
         string currentFile,
+        RestoreIdentityIndex restoreIdentities,
         IReadOnlyDictionary<string, string> packageRoots,
         out string resolvedPath,
         out string packageRoot,
@@ -2078,38 +2588,35 @@ public static class ResolvedGraphClassifier
 
         if (TryGetNuGetPackageRootSuffix(requested, out var packageSuffix))
         {
-            var suffix = packageSuffix;
-            foreach (var candidate in packageRoots)
+            if (!restoreIdentities.TryGetPackageByImportSuffix(packageSuffix, out var packageIdentity, out var relative) ||
+                !packageRoots.TryGetValue(packageIdentity.CanonicalKey, out var candidateRoot))
             {
-                var identity = NormalizeText(candidate.Key);
-                if (!suffix.StartsWith(identity + "/", StringComparison.OrdinalIgnoreCase)) continue;
-                var relative = suffix[(identity.Length + 1)..];
-                if (!TryNormalizeRelativePath(relative, out _))
-                {
-                    reason = "unsafe package import target";
-                    return false;
-                }
-
-                var candidatePath = Path.GetFullPath(Path.Combine(candidate.Value, relative.Replace('/', Path.DirectorySeparatorChar)));
-                if (!IsSafeResolvedFile(candidate.Value, candidatePath))
-                {
-                    reason = "unsafe package import target";
-                    return false;
-                }
-
-                if (!File.Exists(candidatePath))
-                {
-                    reason = "missing package import (package-root reference)";
-                    return false;
-                }
-
-                resolvedPath = candidatePath;
-                packageRoot = candidate.Value;
-                return true;
+                reason = "unresolved package import target";
+                return false;
             }
 
-            reason = "unresolved package import target";
-            return false;
+            if (!TryNormalizeRelativePath(relative, out _))
+            {
+                reason = "unsafe package import target";
+                return false;
+            }
+
+            var candidatePath = Path.GetFullPath(Path.Combine(candidateRoot, relative.Replace('/', Path.DirectorySeparatorChar)));
+            if (!IsSafeResolvedFile(candidateRoot, candidatePath))
+            {
+                reason = "unsafe package import target";
+                return false;
+            }
+
+            if (!File.Exists(candidatePath))
+            {
+                reason = "missing package import (package-root reference)";
+                return false;
+            }
+
+            resolvedPath = candidatePath;
+            packageRoot = candidateRoot;
+            return true;
         }
 
         if (Path.IsPathRooted(requested))
@@ -2634,13 +3141,6 @@ public static class ResolvedGraphClassifier
     {
         var slash = target.IndexOf('/');
         return slash < 0 ? (target, null) : (target[..slash], target[(slash + 1)..]);
-    }
-
-    private static (string Id, string Version) SplitPackageKey(string key)
-    {
-        return TrySplitPackageIdentity(key, out var id, out var version)
-            ? (id, version)
-            : (string.Empty, string.Empty);
     }
 
     private static bool TrySplitPackageIdentity(string key, out string id, out string version)

@@ -21,7 +21,9 @@ $required = @(
     'serializes activation with exactly',
     'does not request a heartbeat',
     'effective-moniker canonicalization',
-    'malformed package ID/version'
+    'malformed package ID/version',
+    'both directions',
+    'selected package version'
 )
 foreach ($document in $documents) {
     $text = Get-Content -Raw $document
@@ -29,7 +31,7 @@ foreach ($document in $documents) {
         if (-not $text.Contains($requiredText, [StringComparison]::Ordinal)) { throw "CLI documentation '$document' is missing '$requiredText'." }
     }
 }
-foreach ($requiredText in @('package-surface scan <path>', '--format text|json|sarif', '--strict-content', '--project <path>', '--telemetry on|off', '--no-telemetry', 'Exit codes:', 'effective-moniker canonicalization', 'malformed package ID/version')) {
+foreach ($requiredText in @('package-surface scan <path>', '--format text|json|sarif', '--strict-content', '--project <path>', '--telemetry on|off', '--no-telemetry', 'Exit codes:', 'effective-moniker canonicalization', 'malformed package', 'ID/version', 'both directions', 'package versions')) {
     if (-not $cliSource.Contains($requiredText, [StringComparison]::Ordinal)) { throw "CLI help is missing '$requiredText'." }
 }
 Write-Output 'CLI_DOCUMENTATION=PASS README, package README, and --help retain the same command/options/exit contract.'

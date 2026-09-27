@@ -314,7 +314,7 @@ $matrix = [System.Collections.Generic.List[string]]::new()
 $matrix.Add('# Phase 0 corpus matrix')
 $matrix.Add('')
 $matrix.Add('Each supported capability has direct and transitive active/inactive evidence. `ToolOrScriptPresent` is intentionally informational and inactive in every row. `BuildMultiTargeting` is project-level: the generated outer-target import is direct-only under this NuGet convention, so its transitive fixture is explicitly present/inactive.')
-$matrix.Add('Restore evidence coverage: coherent SDK-style `project.assets.json` formats 1 through 4 are supported. One canonical restore-identity index reconciles framework keys, effective frameworks, target aliases, target/RID keys, dependency groups, and package identities before active filtering; incoherent, malformed, or duplicate identities remain PS007 evidence. Format 4 additionally requires matching key/effective/target-alias metadata across the project and restore framework maps, plus array-valued project dependency groups.')
+$matrix.Add('Restore evidence coverage: coherent SDK-style `project.assets.json` formats 1 through 4 are supported. One canonical restore-identity index reconciles framework keys, effective frameworks, target aliases, target/RID keys, dependency groups, and package identities before active filtering; both-direction set differences, incoherent, malformed, or duplicate identities remain PS007 evidence. Project, target-package, and format-4 dependency values use SDK-shaped restore grammar and selected-version matching. Format 4 additionally requires matching key/effective/target-alias metadata across the project and restore framework maps, plus complete array-valued project dependency groups.')
 $matrix.Add('')
 $matrix.Add('| Capability | Relationship | State | Context | TFM/RID | Fixture |')
 $matrix.Add('|---|---|---|---|---|---|')
@@ -340,6 +340,8 @@ foreach ($line in @(
     '', 'Supported restore evidence formats: coherent SDK-style assets formats 1 through 4. One canonical restore-identity index reconciles framework keys, effective frameworks, target aliases, target/RID, dependency-group, and package identities before active filtering; incoherent, malformed, or duplicate identities remain `PS007` evidence. Format 4 framework aliases are mapped to their effective framework for surface entries, while mismatched or incomplete v4 metadata remains `PS007` evidence.',
     '', '## Per-category comparison', '')) { $report.Add([string]$line) }
 $report.AddRange($rows)
+$report.Add('')
+$report.Add('Restore completeness requires both-direction project/restore and format-4 dependency-group sets, canonical target/RID membership, and SDK-shaped dependency values that match selected package versions.')
 foreach ($line in @(
     '', '## Missing classifier entries', '', $missingText,
     '', '## Unexpected classifier entries', '', $unexpectedText,

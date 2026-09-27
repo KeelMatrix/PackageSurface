@@ -1066,7 +1066,7 @@ static void RunProjectAggregationRegression(string scratch)
             ["restore"] = new JsonObject { ["projectPath"] = projectFile },
             ["frameworks"] = new JsonObject
             {
-                ["net8.0"] = new JsonObject { ["dependencies"] = new JsonObject { [packageId] = new JsonObject() } },
+                ["net8.0"] = new JsonObject { ["dependencies"] = new JsonObject { [packageId] = PackageDependency() } },
                 ["net9.0"] = new JsonObject { ["dependencies"] = new JsonObject() }
             }
         }
@@ -1773,7 +1773,7 @@ static void RunFrameworkMonikerRegression(string assets, string scratch)
             [declared] = new JsonObject
             {
                 ["targetAlias"] = declared,
-                ["dependencies"] = new JsonObject { ["XmlPackage"] = new JsonObject() }
+                ["dependencies"] = new JsonObject { ["XmlPackage"] = PackageDependency() }
             }
         };
         File.WriteAllText(path, root.ToJsonString());
@@ -1798,7 +1798,7 @@ static void RunFrameworkMonikerRegression(string assets, string scratch)
         {
             ["framework"] = ".NETCoreApp,Version=v8.0",
             ["targetAlias"] = "net8.0",
-            ["dependencies"] = new JsonObject { ["XmlPackage"] = new JsonObject() }
+            ["dependencies"] = new JsonObject { ["XmlPackage"] = PackageDependency() }
         }
     };
     format4["project"]!["restore"]!["frameworks"] = new JsonObject
@@ -1860,7 +1860,7 @@ static void RunRestoreIdentityCanonicalizationRegression(string assets, string s
         {
             ["framework"] = "net8.0",
             ["targetAlias"] = "net8.0",
-            ["dependencies"] = new JsonObject { ["XmlPackage"] = new JsonObject() }
+            ["dependencies"] = new JsonObject { ["XmlPackage"] = PackageDependency() }
         }
     };
     baseDocument["project"]!["restore"]!["frameworks"] = new JsonObject
@@ -1877,6 +1877,9 @@ static void RunRestoreIdentityCanonicalizationRegression(string assets, string s
             $"The valid dependency-group paths fixture was rejected: {string.Join(" | ", valid.IncompleteReasons)}");
         Require(CaptureCommand("baseline", format4Path, "--output", baselinePath, "--no-telemetry").ExitCode == 0,
             "The valid restore-identity fixture could not create its baseline.");
+
+        RunRestoreIdentitySetCompletenessRegression(format4Path, scratch, baselinePath);
+        RunDependencyRequirementRegression(format4Path, scratch, baselinePath);
 
         foreach (var (name, mutate) in new (string Name, Action<JsonObject> Mutate)[]
         {
@@ -2063,7 +2066,7 @@ static void RunRestoreIdentityCanonicalizationRegression(string assets, string s
                 {
                     ["framework"] = "net9.0",
                     ["targetAlias"] = "net9.0",
-                    ["dependencies"] = new JsonObject { ["XmlPackage"] = new JsonObject() }
+                    ["dependencies"] = new JsonObject { ["XmlPackage"] = PackageDependency() }
                 };
             }
 
@@ -2090,6 +2093,159 @@ static void RunRestoreIdentityCanonicalizationRegression(string assets, string s
     {
         if (File.Exists(format4Path)) File.Delete(format4Path);
         if (File.Exists(baselinePath)) File.Delete(baselinePath);
+    }
+}
+
+static void RunRestoreIdentitySetCompletenessRegression(string format4Path, string scratch, string baselinePath)
+{
+    var cases = new (string Name, Action<JsonObject> Mutate)[]
+    {
+        ("project-framework-missing-from-restore", document =>
+        {
+            var projectFrameworks = document["project"]!["frameworks"]!.AsObject();
+            projectFrameworks["net9.0"] = new JsonObject
+            {
+                ["framework"] = "net9.0",
+                ["targetAlias"] = "net9.0",
+                ["dependencies"] = new JsonObject { ["XmlPackage"] = PackageDependency() }
+            };
+            document["targets"]!.AsObject()["net9.0"] = document["targets"]!["net8.0"]!.DeepClone();
+            document["projectFileDependencyGroups"]!.AsObject()["net9.0"] = new JsonArray("XmlPackage >= 1.0.0");
+        }),
+        ("restore-framework-missing-from-project", document =>
+        {
+            document["project"]!["restore"]!["frameworks"]!.AsObject()["net9.0"] = new JsonObject
+            {
+                ["framework"] = "net9.0",
+                ["targetAlias"] = "net9.0"
+            };
+        }),
+        ("dependency-group-missing-from-project", document =>
+            document["projectFileDependencyGroups"]!.AsObject().Remove("net8.0")),
+        ("dependency-group-extra-framework", document =>
+            document["projectFileDependencyGroups"]!.AsObject()["net9.0"] = new JsonArray()),
+        ("rid-framework-missing-from-restore", document =>
+            document["targets"]!.AsObject()["net9.0/win-x64"] = document["targets"]!["net8.0"]!.DeepClone()),
+        ("case-folded-project-framework-set-difference", document =>
+        {
+            var projectFrameworks = document["project"]!["frameworks"]!.AsObject();
+            projectFrameworks["NET9.0"] = new JsonObject
+            {
+                ["framework"] = "NET9.0",
+                ["targetAlias"] = "NET9.0",
+                ["dependencies"] = new JsonObject { ["XmlPackage"] = PackageDependency() }
+            };
+            document["targets"]!.AsObject()["NET9.0"] = document["targets"]!["net8.0"]!.DeepClone();
+            document["projectFileDependencyGroups"]!.AsObject()["NET9.0"] = new JsonArray("XmlPackage >= 1.0.0");
+        }),
+        ("equivalent-moniker-framework-set-difference", document =>
+        {
+            document["project"]!["frameworks"]!.AsObject()[".NETCoreApp,Version=v9.0"] = new JsonObject
+            {
+                ["framework"] = "net9.0",
+                ["targetAlias"] = ".NETCoreApp,Version=v9.0",
+                ["dependencies"] = new JsonObject { ["XmlPackage"] = PackageDependency() }
+            };
+            document["targets"]!.AsObject()[".NETCoreApp,Version=v9.0"] = document["targets"]!["net8.0"]!.DeepClone();
+            document["projectFileDependencyGroups"]!.AsObject()[".NETCoreApp,Version=v9.0"] = new JsonArray("XmlPackage >= 1.0.0");
+        })
+    };
+
+    foreach (var (name, mutate) in cases)
+    {
+        var path = Path.Combine(Path.GetDirectoryName(format4Path)!, "restore-set-" + name + ".assets.json");
+        var document = JsonNode.Parse(File.ReadAllText(format4Path))!.AsObject();
+        mutate(document);
+        File.WriteAllText(path, document.ToJsonString());
+        try
+        {
+            AssertRestoreIdentityFailure(path, scratch, baselinePath, name);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+}
+
+static void RunDependencyRequirementRegression(string format4Path, string scratch, string baselinePath)
+{
+    var cases = new (string Name, Action<JsonObject> Mutate)[]
+    {
+        ("project-dependency-invalid-range", document =>
+            document["project"]!["frameworks"]!["net8.0"]!["dependencies"]!["XmlPackage"]!["version"] = "not-a-version-range"),
+        ("project-dependency-empty-range", document =>
+            document["project"]!["frameworks"]!["net8.0"]!["dependencies"]!["XmlPackage"]!["version"] = "  "),
+        ("project-dependency-unsupported-version", document =>
+            document["project"]!["frameworks"]!["net8.0"]!["dependencies"]!["XmlPackage"]!["version"] = "6.*"),
+        ("project-dependency-version-mismatch", document =>
+            document["project"]!["frameworks"]!["net8.0"]!["dependencies"]!["XmlPackage"]!["version"] = "[2.0.0, )"),
+        ("target-dependency-invalid-range", document =>
+            document["targets"]!["net8.0"]!["XmlPackage/1.0.0"]!["dependencies"] = new JsonObject { ["XmlPackage"] = "not-a-version-range" }),
+        ("target-dependency-invalid-operator", document =>
+            document["targets"]!["net8.0"]!["XmlPackage/1.0.0"]!["dependencies"] = new JsonObject { ["XmlPackage"] = ">= 1.0.0" }),
+        ("target-dependency-version-mismatch", document =>
+            document["targets"]!["net8.0"]!["XmlPackage/1.0.0"]!["dependencies"] = new JsonObject { ["XmlPackage"] = "[2.0.0, )" }),
+        ("format4-package-invalid-operator", document =>
+            document["projectFileDependencyGroups"]!["net8.0"] = new JsonArray("XmlPackage => 1.0.0")),
+        ("format4-package-invalid-version", document =>
+            document["projectFileDependencyGroups"]!["net8.0"] = new JsonArray("XmlPackage >= not-a-version")),
+        ("format4-package-version-mismatch", document =>
+            document["projectFileDependencyGroups"]!["net8.0"] = new JsonArray("XmlPackage >= 2.0.0")),
+        ("format4-package-empty-value", document =>
+            document["projectFileDependencyGroups"]!["net8.0"] = new JsonArray("  ")),
+        ("format4-absolute-project-path", document =>
+            document["projectFileDependencyGroups"]!["net8.0"] = new JsonArray("C:/Referenced/Referenced.csproj")),
+        ("format4-unsupported-project-extension", document =>
+            document["projectFileDependencyGroups"]!["net8.0"] = new JsonArray("../Referenced/Referenced.txt")),
+        ("format4-ambiguous-project-path", document =>
+            document["projectFileDependencyGroups"]!["net8.0"] = new JsonArray("../Referenced/Referenced.csproj extra"))
+    };
+
+    foreach (var (name, mutate) in cases)
+    {
+        var path = Path.Combine(Path.GetDirectoryName(format4Path)!, "dependency-requirement-" + name + ".assets.json");
+        var document = JsonNode.Parse(File.ReadAllText(format4Path))!.AsObject();
+        mutate(document);
+        File.WriteAllText(path, document.ToJsonString());
+        try
+        {
+            AssertRestoreIdentityFailure(path, scratch, baselinePath, name);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    var multiTargetPath = Path.Combine(Path.GetDirectoryName(format4Path)!, "dependency-requirement-multi-rid.assets.json");
+    var multiTarget = JsonNode.Parse(File.ReadAllText(format4Path))!.AsObject();
+    var projectFrameworks = multiTarget["project"]!["frameworks"]!.AsObject();
+    projectFrameworks["net9.0"] = new JsonObject
+    {
+        ["framework"] = "net9.0",
+        ["targetAlias"] = "net9.0",
+        ["dependencies"] = new JsonObject { ["XmlPackage"] = PackageDependency() }
+    };
+    multiTarget["project"]!["restore"]!["frameworks"]!.AsObject()["net9.0"] = new JsonObject
+    {
+        ["framework"] = "net9.0",
+        ["targetAlias"] = "net9.0"
+    };
+    var targets = multiTarget["targets"]!.AsObject();
+    targets["net8.0/win-x64"] = targets["net8.0"]!.DeepClone();
+    targets["net9.0"] = targets["net8.0"]!.DeepClone();
+    var groups = multiTarget["projectFileDependencyGroups"]!.AsObject();
+    groups["net9.0"] = new JsonArray("XmlPackage >= 1.0.0");
+    targets["net8.0/win-x64"]!["XmlPackage/1.0.0"]!["dependencies"] = new JsonObject { ["XmlPackage"] = "not-a-version-range" };
+    File.WriteAllText(multiTargetPath, multiTarget.ToJsonString());
+    try
+    {
+        AssertRestoreIdentityFailure(multiTargetPath, scratch, baselinePath, "multi-target-rid dependency requirement");
+    }
+    finally
+    {
+        File.Delete(multiTargetPath);
     }
 }
 
@@ -2212,6 +2368,12 @@ static void WriteAssets(string path, string cache, string packageId, IReadOnlyLi
     WriteGeneratedImportEvidence(path, projectFileName);
 }
 
+static JsonObject PackageDependency(string version = "[1.0.0, )") => new()
+{
+    ["version"] = version,
+    ["target"] = "Package"
+};
+
 static void WriteAnalyzerAssets(
     string path,
     string cache,
@@ -2260,7 +2422,8 @@ static void WriteAnalyzerAssets(
         File.Copy(typeof(ResolvedGraphClassifier).Assembly.Location, Path.Combine(packageRoot, Path.GetFileName(analyzerPath)), overwrite: true);
     }
     Directory.CreateDirectory(Path.Combine(cache, rootId, version));
-    var dependency = new JsonObject { ["include"] = includeAnalyzers ? "analyzers" : "Runtime, Compile, Build, Native, ContentFiles, BuildTransitive" };
+    var dependency = PackageDependency();
+    dependency["include"] = includeAnalyzers ? "analyzers" : "Runtime, Compile, Build, Native, ContentFiles, BuildTransitive";
     var frameworks = new JsonObject
     {
         ["net8.0"] = new JsonObject { ["dependencies"] = new JsonObject { [directPackageId] = dependency } }

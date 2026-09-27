@@ -324,8 +324,10 @@ public sealed record Options(
         emits no surface entries and never replaces a baseline. Framework, target, dependency-
         group, target/RID, and library identities use one canonical key/effective-framework/
         target-alias relation with case/effective-moniker canonicalization before reachability
-        and capability filtering; incoherent metadata,
-        duplicate aliases, or malformed package ID/version keys are PS007. It does not
+        and capability filtering; project/restore and dependency-group sets must be complete in
+        both directions, dependency values must use supported restore grammar and match selected
+        package versions, and incoherent metadata, duplicate aliases, or malformed package
+        ID/version keys are PS007. It does not
         evaluate MSBuild conditions, execute package code, or crawl the global package cache.
         """;
 

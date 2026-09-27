@@ -671,6 +671,22 @@ static void RunReparsePointRegression(string scratch)
     catch (UnauthorizedAccessException) { Console.WriteLine("SKIP: package-root reparse-point regression is unavailable on this filesystem."); }
     catch (IOException) { Console.WriteLine("SKIP: package-root reparse-point regression is unavailable on this filesystem."); }
     catch (PlatformNotSupportedException) { Console.WriteLine("SKIP: package-root reparse-point regression is unavailable on this platform."); }
+
+    var ancestorTarget = Path.Combine(scratch, "ancestor-target");
+    var ancestorLink = Path.Combine(scratch, "ancestor-link");
+    try
+    {
+        Directory.CreateDirectory(ancestorTarget);
+        Directory.CreateSymbolicLink(ancestorLink, ancestorTarget);
+        var ancestorCache = Path.Combine(ancestorLink, "cache");
+        var ancestorAssets = Path.Combine(ancestorLink, "obj", "project.assets.json");
+        WriteAssets(ancestorAssets, ancestorCache, "AncestorLink.Package", new List<string> { "build/inside.targets" }, createFiles: true);
+        var ancestorResult = ResolvedGraphClassifier.Analyze(ancestorAssets, ancestorLink, strictContent: false);
+        Require(ancestorResult.IsComplete, "A reparse point outside the resolved package root was treated as an unsafe package path.");
+    }
+    catch (UnauthorizedAccessException) { Console.WriteLine("SKIP: ancestor reparse-point regression is unavailable on this filesystem."); }
+    catch (IOException) { Console.WriteLine("SKIP: ancestor reparse-point regression is unavailable on this filesystem."); }
+    catch (PlatformNotSupportedException) { Console.WriteLine("SKIP: ancestor reparse-point regression is unavailable on this platform."); }
 }
 
 static void RenameJsonProperty(JsonObject parent, string oldName, string newName)

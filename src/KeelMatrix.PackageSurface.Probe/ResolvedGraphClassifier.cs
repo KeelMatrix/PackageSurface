@@ -2756,6 +2756,7 @@ public static class ResolvedGraphClassifier
 
     private static bool HasReparsePoint(string root, string path, bool includeLeaf)
     {
+        var fullRoot = Path.GetFullPath(root);
         var fullPath = Path.GetFullPath(path);
         if (includeLeaf && File.Exists(fullPath))
         {
@@ -2772,6 +2773,11 @@ public static class ResolvedGraphClassifier
             if ((current.Attributes & FileAttributes.ReparsePoint) != 0 || current.LinkTarget is not null)
             {
                 return true;
+            }
+
+            if (FileSystemPathsEqual(current.FullName, fullRoot))
+            {
+                break;
             }
 
             current = current.Parent;

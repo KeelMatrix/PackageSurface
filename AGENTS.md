@@ -39,4 +39,4 @@ Run the focused console tests after classifier or CLI changes, then run `scripts
 
 ## Change boundaries
 
-Keep changes limited to the classifier, CLI/schema/report structures, fixture corpus, tests, release validation, package-content enforcement, local gate, or documentation required by the approved product scope. This repository has no hosted CI workflow; use the local gate for repeatable validation. Do not publish packages, create tags/releases, or trigger deployments from local engineering work.
+Keep changes limited to the classifier, CLI/schema/report structures, fixture corpus, tests, release validation, package-content enforcement, local gate, or documentation required by the approved product scope. This public repository has hosted GitHub Actions CI; use the local gate as the authoritative pre-handoff validation and hosted CI for Windows, Linux, and macOS evidence. Do not publish packages, create tags/releases, or trigger deployments from local engineering work.

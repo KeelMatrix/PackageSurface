@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Security;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Xml.Linq;
 using KeelMatrix.PackageSurface.Probe;
 
@@ -76,6 +78,7 @@ if (result.Entries.Any(entry => entry.Capability == CapabilityKind.ToolOrScriptP
 RunGeneratedImportConditionRegression(assets);
 RunGeneratedImportFileIdentityRegression(assets);
 RunGeneratedImportPhaseCrossWireRegression(assets);
+RunRestoreIdentityCoherenceRegression(assets);
 
 var malformed = Path.Combine(Path.GetTempPath(), "packagesurface-malformed-assets.json");
 try
@@ -372,6 +375,59 @@ static void RunGeneratedImportPhaseCrossWireRegression(string baselineAssets)
 
             Console.WriteLine($"generated-import cross-wire {label}: inactive/{(tfmSpecific ? "unreachable-variant" : "incomplete")}");
         }
+    }
+    finally
+    {
+        if (Directory.Exists(scratch))
+        {
+            Directory.Delete(scratch, recursive: true);
+        }
+    }
+}
+
+static void RunRestoreIdentityCoherenceRegression(string baselineAssets)
+{
+    var root = JsonNode.Parse(File.ReadAllText(baselineAssets))!.AsObject();
+    var project = root["project"]!.AsObject();
+    var projectFramework = project["frameworks"]!["net8.0"]!.AsObject();
+    projectFramework["framework"] = "net8.0";
+    projectFramework["targetAlias"] = "net9.0";
+    var restore = project["restore"]!.AsObject();
+    var restoreFramework = restore["frameworks"]!.AsObject()["net8.0"]!.AsObject();
+    restoreFramework["framework"] = "net8.0";
+    restoreFramework["targetAlias"] = "net9.0";
+
+    var scratch = Path.Combine(Path.GetTempPath(), "packagesurface-restore-identity-coherence-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(Path.Combine(scratch, "obj"));
+    try
+    {
+        var packageFolder = root["packageFolders"]!.AsObject().First().Key;
+        var package = root["libraries"]!["KeelMatrix.Phase0.BuildTargets/1.0.0"]!.AsObject();
+        var packageRoot = Path.Combine(packageFolder, package["path"]!.GetValue<string>()!.Replace('/', Path.DirectorySeparatorChar));
+        var assetPath = Path.Combine(packageRoot, "build", "KeelMatrix.Phase0.BuildTargets.targets");
+        var assetsPath = Path.Combine(scratch, "obj", "project.assets.json");
+        File.WriteAllText(assetsPath, root.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+
+        var projectFileName = Path.GetFileNameWithoutExtension(project["restore"]!["projectPath"]!.GetValue<string>()!);
+        File.Copy(
+            Path.Combine(Path.GetDirectoryName(baselineAssets)!, projectFileName + ".csproj.nuget.g.props"),
+            Path.Combine(scratch, "obj", projectFileName + ".csproj.nuget.g.props"));
+        var generatedTargetsPath = Path.Combine(scratch, "obj", projectFileName + ".csproj.nuget.g.targets");
+        var generatedTargets = XDocument.Parse(File.ReadAllText(
+            Path.Combine(Path.GetDirectoryName(baselineAssets)!, projectFileName + ".csproj.nuget.g.targets")));
+        generatedTargets.Root!.Add(new XElement(
+            "Import",
+            new XAttribute("Project", SecurityElement.Escape(assetPath) ?? assetPath),
+            new XAttribute("Condition", "'$(TargetFramework)' == 'net9.0'")));
+        generatedTargets.Save(generatedTargetsPath);
+
+        var analyzed = ResolvedGraphClassifier.Analyze(assetsPath, scratch, strictContent: false);
+        if (analyzed.IsComplete || analyzed.Entries.Count != 0)
+        {
+            throw new InvalidOperationException($"Incoherent restore framework metadata was classified as usable: complete={analyzed.IsComplete}, entries={analyzed.Entries.Count}, reasons={string.Join("; ", analyzed.IncompleteReasons)}");
+        }
+
+        Console.WriteLine("restore-identity coherence: incomplete with no surface entries");
     }
     finally
     {

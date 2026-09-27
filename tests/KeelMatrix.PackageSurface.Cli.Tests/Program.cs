@@ -1878,6 +1878,74 @@ static void RunRestoreIdentityCanonicalizationRegression(string assets, string s
         Require(CaptureCommand("baseline", format4Path, "--output", baselinePath, "--no-telemetry").ExitCode == 0,
             "The valid restore-identity fixture could not create its baseline.");
 
+        foreach (var (name, mutate) in new (string Name, Action<JsonObject> Mutate)[]
+        {
+            ("project-effective-framework", value => value["project"]!["frameworks"]!["net8.0"]!["framework"] = "net9.0"),
+            ("project-target-alias", value => value["project"]!["frameworks"]!["net8.0"]!["targetAlias"] = "net9.0"),
+            ("restore-effective-framework", value => value["project"]!["restore"]!["frameworks"]!["net8.0"]!["framework"] = "net9.0"),
+            ("restore-target-alias", value => value["project"]!["restore"]!["frameworks"]!["net8.0"]!["targetAlias"] = "net9.0"),
+            ("restore-cross-map-framework", value =>
+            {
+                value["project"]!["restore"]!["frameworks"]!["net9.0"] = new JsonObject
+                {
+                    ["framework"] = "net9.0",
+                    ["targetAlias"] = "net9.0"
+                };
+            }),
+            ("target-framework-key", value =>
+            {
+                var targets = value["targets"]!.AsObject();
+                var target = targets["net8.0"]!.DeepClone();
+                targets.Remove("net8.0");
+                targets["net9.0"] = target;
+            }),
+            ("rid-framework-key", value =>
+            {
+                var targets = value["targets"]!.AsObject();
+                var target = targets["net8.0"]!.DeepClone();
+                targets.Remove("net8.0");
+                targets["net9.0/win-x64"] = target;
+            }),
+            ("dependency-group-key", value =>
+            {
+                var groups = value["projectFileDependencyGroups"]!.AsObject();
+                var group = groups["net8.0"]!.DeepClone();
+                groups.Remove("net8.0");
+                groups["net9.0"] = group;
+            })
+        })
+        {
+            var path = Path.Combine(Path.GetDirectoryName(assets)!, "restore-identity-coherence-" + name + ".assets.json");
+            var document = JsonNode.Parse(File.ReadAllText(format4Path))!.AsObject();
+            mutate(document);
+            File.WriteAllText(path, document.ToJsonString());
+            try
+            {
+                AssertRestoreIdentityFailure(path, scratch, baselinePath, name);
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        }
+
+        var duplicateMetadataPath = Path.Combine(Path.GetDirectoryName(assets)!, "restore-identity-conflicting-metadata.assets.json");
+        var validJson = File.ReadAllText(format4Path);
+        const string metadataToken = "\"targetAlias\":\"net8.0\"";
+        var metadataIndex = validJson.IndexOf(metadataToken, StringComparison.Ordinal);
+        Require(metadataIndex >= 0, "The valid restore-identity fixture has no target-alias metadata token.");
+        File.WriteAllText(
+            duplicateMetadataPath,
+            validJson[..metadataIndex] + metadataToken + ",\"targetAlias\":\"net9.0\"" + validJson[(metadataIndex + metadataToken.Length)..]);
+        try
+        {
+            AssertRestoreIdentityFailure(duplicateMetadataPath, scratch, baselinePath, "conflicting duplicate metadata");
+        }
+        finally
+        {
+            File.Delete(duplicateMetadataPath);
+        }
+
         var duplicateMaps = new[]
         {
             (Name: "project-frameworks", MapPath: "project.frameworks", Alias: ".NETCoreApp,Version=v8.0"),

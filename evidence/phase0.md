@@ -6,7 +6,7 @@
 
 The probe reads only reachable entries from `project.assets.json`; it does not restore, evaluate MSBuild, load dependency assemblies, start analysis processes, or query a feed.
 
-Supported restore evidence formats: coherent SDK-style assets formats 1 through 4. Restore identities are canonicalized before active filtering; malformed or duplicate framework, target, dependency-group, and package identities remain `PS007` evidence. Format 4 framework aliases are mapped to their effective framework for surface entries, while mismatched or incomplete v4 metadata remains `PS007` evidence.
+Supported restore evidence formats: coherent SDK-style assets formats 1 through 4. One canonical restore-identity index reconciles framework keys, effective frameworks, target aliases, target/RID, dependency-group, and package identities before active filtering; incoherent, malformed, or duplicate identities remain `PS007` evidence. Format 4 framework aliases are mapped to their effective framework for surface entries, while mismatched or incomplete v4 metadata remains `PS007` evidence.
 
 ## Per-category comparison
 

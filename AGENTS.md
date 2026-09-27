@@ -28,7 +28,7 @@ The local gate is the authoritative validation entrypoint. It uses a controlled 
 - Analysis starts at an existing `project.assets.json` and inspects only reachable package versions.
 - The classifier never loads package assemblies, evaluates MSBuild, starts processes, or accesses a network API.
 - Present and active are separate facts; unsupported or malformed material is incomplete.
-- Restore framework/target/dependency-group identities are canonicalized and must be unique before capability filtering; library and target package keys must be valid `ID/version` identities.
+- One canonical restore-identity index reconciles framework keys, effective frameworks, target aliases, target/RID keys, dependency groups, and package `ID/version` identities before reachability and capability filtering; incoherent or duplicate identities are incomplete.
 - Package-relative paths are used in evidence; machine cache roots never enter reports or baseline files.
 - Direct/transitive rules and analyzer applicability are evaluated per target framework and consuming language.
 - Fixture packages are test inputs, not shipping dependencies.

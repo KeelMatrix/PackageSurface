@@ -99,6 +99,12 @@ try {
     Invoke-GateStep 'format verification' {
         & dotnet format $solution --verify-no-changes --no-restore
     }
+    Invoke-GateStep 'repository history hygiene' {
+        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-history-hygiene.ps1') -RepositoryRoot $root
+    }
+    Invoke-GateStep 'repository history hygiene regressions' {
+        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-history-hygiene-regressions.ps1')
+    }
     Invoke-GateStep 'packability graph audit' {
         & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-packability.ps1')
     }

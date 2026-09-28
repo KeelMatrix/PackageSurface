@@ -26,6 +26,8 @@ public static class ResolvedGraphClassifier
     private const long MaxMetadataFileBytes = 16 * 1024 * 1024;
     private const long MaxXmlCharacters = 8 * 1024 * 1024;
     private const int MaxXmlDepth = 64;
+    private const string JsonExtensionPrefix = "x-";
+    private const string XmlExtensionNamespace = "urn:keelmatrix:packagesurface:extension";
 
     private static readonly Regex PropertyComparison = new(
         "^\\s*['\\\"]?\\$\\(\\s*(?<property>[A-Za-z_][A-Za-z0-9_.-]*)\\s*\\)['\\\"]?\\s*(?<operator>==|!=)\\s*['\\\"](?<value>[^'\\\"]*)['\\\"]\\s*$",
@@ -60,11 +62,46 @@ public static class ResolvedGraphClassifier
         "libraries",
         "packageFolders",
         "project",
-        "projectFileDependencyGroups"
+        "projectFileDependencyGroups",
+        "runtimes"
     };
-    private static readonly string[] ProjectPropertyNames = { "restore", "frameworks" };
-    private static readonly string[] RestorePropertyNames = { "projectPath", "compilerApiVersion", "frameworks" };
-    private static readonly string[] FrameworkPropertyNames = { "framework", "targetAlias", "dependencies" };
+    private static readonly string[] ProjectPropertyNames = { "version", "restore", "frameworks", "runtimes" };
+    private static readonly string[] RestorePropertyNames =
+    {
+        "centralPackageVersionsManagementEnabled",
+        "configFilePaths",
+        "crossTargeting",
+        "frameworks",
+        "originalTargetFrameworks",
+        "outputPath",
+        "packagesPath",
+        "projectName",
+        "projectPath",
+        "projectStyle",
+        "projectUniqueName",
+        "restoreAuditProperties",
+        "sources",
+        "warningProperties",
+        "compilerApiVersion"
+    };
+    private static readonly string[] ProjectFrameworkPropertyNames =
+    {
+        "framework",
+        "targetAlias",
+        "dependencies",
+        "assetTargetFallback",
+        "centralPackageVersions",
+        "frameworkReferences",
+        "imports",
+        "runtimeIdentifierGraphPath",
+        "warn"
+    };
+    private static readonly string[] RestoreFrameworkPropertyNames =
+    {
+        "framework",
+        "targetAlias",
+        "projectReferences"
+    };
     private static readonly string[] DirectDependencyPropertyNames =
     {
         "version",
@@ -77,13 +114,33 @@ public static class ResolvedGraphClassifier
         "generatePathProperty",
         "versionCentrallyManaged",
         "autoReferenced",
+        "suppressParent",
         "project",
         "library"
     };
-    private static readonly string[] LibraryPropertyNames = { "type", "path", "files" };
-    private static readonly string[] ContentFilePropertyNames = { "buildAction", "codeLanguage" };
+    private static readonly string[] LibraryPropertyNames = { "sha512", "type", "path", "msbuildProject", "files", "hasTools" };
+    private static readonly string[] ContentFilePropertyNames = { "related", "buildAction", "copyToOutput", "codeLanguage" };
+    private static readonly string[] RuntimeTargetPropertyNames = { "rid", "assetType" };
     private static readonly string[] GeneratedImportElementNames = { "Import" };
     private static readonly string[] PackageMsBuildElementNames = { "UsingTask", "Exec", "Import", "Code" };
+    private static readonly string[] GeneratedImportAttributeNames = { "Condition", "Include", "Project", "ToolsVersion" };
+    private static readonly string[] PackageMsBuildAttributeNames =
+    {
+        "AfterTargets",
+        "AssemblyFile",
+        "BeforeTargets",
+        "Command",
+        "Condition",
+        "DependsOnTargets",
+        "Include",
+        "Language",
+        "Name",
+        "Project",
+        "TaskFactory",
+        "TaskName",
+        "ToolsVersion",
+        "Type"
+    };
 
     // Containment compares canonical identities. Production uses Path.GetFullPath;
     // the test harness injects a deterministic canonicalization function through this
@@ -1254,7 +1311,7 @@ public static class ResolvedGraphClassifier
             ValidateConsumedPropertySpellings(project, "project metadata", ProjectPropertyNames, incomplete);
             if (TryGetExactObject(project, "frameworks", out var projectFrameworks))
             {
-                ValidateFrameworkMap(projectFrameworks, "project framework", incomplete);
+                ValidateFrameworkMap(projectFrameworks, "project framework", ProjectFrameworkPropertyNames, incomplete);
             }
 
             if (TryGetExactObject(project, "restore", out var restore))
@@ -1262,7 +1319,7 @@ public static class ResolvedGraphClassifier
                 ValidateConsumedPropertySpellings(restore, "restore metadata", RestorePropertyNames, incomplete);
                 if (TryGetExactObject(restore, "frameworks", out var restoreFrameworks))
                 {
-                    ValidateFrameworkMap(restoreFrameworks, "restore framework", incomplete);
+                    ValidateFrameworkMap(restoreFrameworks, "restore framework", RestoreFrameworkPropertyNames, incomplete);
                 }
             }
         }
@@ -1303,12 +1360,16 @@ public static class ResolvedGraphClassifier
         }
     }
 
-    private static void ValidateFrameworkMap(JsonElement frameworks, string description, List<string> incomplete)
+    private static void ValidateFrameworkMap(
+        JsonElement frameworks,
+        string description,
+        IReadOnlyCollection<string> propertyNames,
+        List<string> incomplete)
     {
         foreach (var framework in frameworks.EnumerateObject())
         {
             if (framework.Value.ValueKind != JsonValueKind.Object) continue;
-            ValidateConsumedPropertySpellings(framework.Value, description + " metadata", FrameworkPropertyNames, incomplete);
+            ValidateConsumedPropertySpellings(framework.Value, description + " metadata", propertyNames, incomplete);
             if (!TryGetExactObject(framework.Value, "dependencies", out var dependencies)) continue;
             foreach (var dependency in dependencies.EnumerateObject())
             {
@@ -1333,6 +1394,17 @@ public static class ResolvedGraphClassifier
                 }
             }
         }
+
+        if (TryGetExactObject(package, "runtimeTargets", out var runtimeTargets))
+        {
+            foreach (var runtimeTarget in runtimeTargets.EnumerateObject())
+            {
+                if (runtimeTarget.Value.ValueKind == JsonValueKind.Object)
+                {
+                    ValidateConsumedPropertySpellings(runtimeTarget.Value, "runtime-target metadata", RuntimeTargetPropertyNames, incomplete);
+                }
+            }
+        }
     }
 
     private static void ValidateConsumedPropertySpellings(
@@ -1341,7 +1413,7 @@ public static class ResolvedGraphClassifier
         IReadOnlyCollection<string> consumedNames,
         List<string> incomplete)
     {
-        if (value.ValueKind != JsonValueKind.Object || consumedNames.Count == 0) return;
+        if (value.ValueKind != JsonValueKind.Object) return;
         foreach (var property in value.EnumerateObject())
         {
             var canonical = consumedNames.FirstOrDefault(name => property.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
@@ -1349,8 +1421,14 @@ public static class ResolvedGraphClassifier
             {
                 incomplete.Add($"Restore evidence contains a non-canonical spelling of consumed {description} field '{property.Name}'; expected '{canonical}'.");
             }
+            else if (canonical is null && !IsJsonExtensionProperty(property.Name))
+            {
+                incomplete.Add($"Restore evidence contains an unknown {description} field '{property.Name}'.");
+            }
         }
     }
+
+    private static bool IsJsonExtensionProperty(string name) => name.StartsWith(JsonExtensionPrefix, StringComparison.Ordinal);
 
     private static bool TryGetExactObject(JsonElement parent, string propertyName, out JsonElement value)
     {
@@ -2192,7 +2270,11 @@ public static class ResolvedGraphClassifier
         {
             if (!TargetPackagePropertyNames.Contains(group.Name))
             {
-                incomplete.Add($"Target package {packageKey} has an unsupported asset group or metadata property '{group.Name}'.");
+                if (!IsJsonExtensionProperty(group.Name))
+                {
+                    incomplete.Add($"Target package {packageKey} has an unsupported asset group or metadata property '{group.Name}'.");
+                }
+
                 continue;
             }
 
@@ -2772,11 +2854,9 @@ public static class ResolvedGraphClassifier
                             incomplete);
                         ValidateConsumedXmlAttributeSpellings(
                             reader,
-                            importProjectConsumed: elementName.Equals("Import", StringComparison.Ordinal),
-                            conditionConsumed: true,
-                            taskFactoryConsumed: false,
-                            description: $"generated import file {Path.GetFileName(file)}",
-                            incomplete: incomplete);
+                            GeneratedImportAttributeNames,
+                            $"generated import file {Path.GetFileName(file)}",
+                            incomplete);
                         var condition = reader.GetAttribute("Condition");
                         if (elementName.Equals("Import", StringComparison.Ordinal) && reader.GetAttribute("Project") is string project)
                         {
@@ -2932,16 +3012,14 @@ public static class ResolvedGraphClassifier
 
                         ValidateConsumedXmlElementSpelling(
                             reader,
-                            GeneratedImportElementNames,
+                            PackageMsBuildElementNames,
                             "nested package import",
                             incomplete);
                         ValidateConsumedXmlAttributeSpellings(
                             reader,
-                            importProjectConsumed: reader.LocalName.Equals("Import", StringComparison.Ordinal),
-                            conditionConsumed: true,
-                            taskFactoryConsumed: false,
-                            description: "nested package import",
-                            incomplete: incomplete);
+                            PackageMsBuildAttributeNames,
+                            "nested package import",
+                            incomplete);
                         var condition = reader.GetAttribute("Condition");
                         if (reader.LocalName.Equals("Import", StringComparison.Ordinal) && reader.GetAttribute("Project") is string project)
                         {
@@ -4121,7 +4199,18 @@ public static class ResolvedGraphClassifier
         List<string>? incomplete)
     {
         var canonical = consumedNames.FirstOrDefault(name => reader.LocalName.Equals(name, StringComparison.OrdinalIgnoreCase));
-        if (canonical is null || reader.LocalName.Equals(canonical, StringComparison.Ordinal)) return;
+        if (canonical is null)
+        {
+            canonical = consumedNames.FirstOrDefault(name => IsNearSpelling(reader.LocalName, name));
+            if (canonical is null) return;
+
+            var unknownMessage = $"{description} contains an unknown XML element '{reader.LocalName}' near consumed member '{canonical}'.";
+            if (incomplete is null) throw new InvalidOperationException(unknownMessage);
+            incomplete.Add(unknownMessage);
+            return;
+        }
+
+        if (reader.LocalName.Equals(canonical, StringComparison.Ordinal)) return;
 
         var message = $"{description} contains a non-canonical spelling of consumed XML element '{reader.LocalName}'; expected '{canonical}'.";
         if (incomplete is null)
@@ -4132,11 +4221,31 @@ public static class ResolvedGraphClassifier
         incomplete.Add(message);
     }
 
+    private static bool IsNearSpelling(string candidate, string canonical)
+    {
+        if (candidate.Length == 0 || Math.Abs(candidate.Length - canonical.Length) > 2) return false;
+        var previous = Enumerable.Range(0, canonical.Length + 1).ToArray();
+        for (var row = 1; row <= candidate.Length; row++)
+        {
+            var current = new int[canonical.Length + 1];
+            current[0] = row;
+            for (var column = 1; column <= canonical.Length; column++)
+            {
+                var cost = char.ToUpperInvariant(candidate[row - 1]) == char.ToUpperInvariant(canonical[column - 1]) ? 0 : 1;
+                current[column] = Math.Min(
+                    Math.Min(current[column - 1] + 1, previous[column] + 1),
+                    previous[column - 1] + cost);
+            }
+
+            previous = current;
+        }
+
+        return previous[canonical.Length] <= 2;
+    }
+
     private static void ValidateConsumedXmlAttributeSpellings(
         XmlReader reader,
-        bool importProjectConsumed,
-        bool conditionConsumed,
-        bool taskFactoryConsumed,
+        IReadOnlyCollection<string> allowedNames,
         string description,
         List<string>? incomplete)
     {
@@ -4144,16 +4253,17 @@ public static class ResolvedGraphClassifier
         for (var index = 0; index < reader.AttributeCount; index++)
         {
             reader.MoveToAttribute(index);
-            var canonical = conditionConsumed && reader.Name.Equals("Condition", StringComparison.OrdinalIgnoreCase)
-                ? "Condition"
-                : importProjectConsumed && reader.Name.Equals("Project", StringComparison.OrdinalIgnoreCase)
-                    ? "Project"
-                    : taskFactoryConsumed && reader.Name.Equals("TaskFactory", StringComparison.OrdinalIgnoreCase)
-                        ? "TaskFactory"
-                        : null;
-            if (canonical is not null && !reader.Name.Equals(canonical, StringComparison.Ordinal))
+            if (IsXmlNamespaceDeclaration(reader) || reader.NamespaceURI.Equals(XmlExtensionNamespace, StringComparison.Ordinal))
             {
-                var message = $"{description} contains a non-canonical spelling of consumed XML attribute '{reader.Name}'; expected '{canonical}'.";
+                continue;
+            }
+
+            var canonical = allowedNames.FirstOrDefault(name => reader.LocalName.Equals(name, StringComparison.OrdinalIgnoreCase));
+            var message = canonical is null
+                ? $"{description} contains an unknown XML attribute '{reader.Name}'."
+                : $"{description} contains a non-canonical spelling of consumed XML attribute '{reader.Name}'; expected '{canonical}'.";
+            if (canonical is null || !reader.LocalName.Equals(canonical, StringComparison.Ordinal))
+            {
                 if (incomplete is null)
                 {
                     reader.MoveToElement();
@@ -4166,6 +4276,9 @@ public static class ResolvedGraphClassifier
 
         reader.MoveToElement();
     }
+
+    private static bool IsXmlNamespaceDeclaration(XmlReader reader) =>
+        reader.Prefix.Equals("xmlns", StringComparison.Ordinal) || reader.Name.Equals("xmlns", StringComparison.Ordinal);
 
     private static string[] InspectMsBuildXml(string path)
     {
@@ -4200,11 +4313,9 @@ public static class ResolvedGraphClassifier
             ValidateConsumedXmlElementSpelling(reader, PackageMsBuildElementNames, "package MSBuild XML", null);
             ValidateConsumedXmlAttributeSpellings(
                 reader,
-                importProjectConsumed: false,
-                conditionConsumed: false,
-                taskFactoryConsumed: reader.LocalName.Equals("UsingTask", StringComparison.Ordinal),
-                description: "package MSBuild XML",
-                incomplete: null);
+                PackageMsBuildAttributeNames,
+                "package MSBuild XML",
+                null);
             switch (reader.LocalName)
             {
                 case "UsingTask":

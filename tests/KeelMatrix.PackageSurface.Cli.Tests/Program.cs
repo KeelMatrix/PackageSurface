@@ -429,6 +429,23 @@ static void RunBaselineTransactionRegression(string parent)
         }
     }
 
+    var symlinkOutput = Path.Combine(root, "symlink-output.json");
+    try
+    {
+        File.CreateSymbolicLink(symlinkOutput, assets);
+        var symlinkInputBefore = File.ReadAllBytes(assets);
+        Require(CaptureCommand("baseline", assets, "--output", symlinkOutput, "--no-telemetry").ExitCode == 2,
+            "A symlink alias to project.assets.json was accepted.");
+        Require(symlinkInputBefore.SequenceEqual(File.ReadAllBytes(assets)), "A symlink alias rejection changed project.assets.json.");
+    }
+    catch (UnauthorizedAccessException) { Console.WriteLine("UNVERIFIED: baseline symlink-alias regression is unavailable on this filesystem."); }
+    catch (IOException) { Console.WriteLine("UNVERIFIED: baseline symlink-alias regression is unavailable on this filesystem."); }
+    catch (PlatformNotSupportedException) { Console.WriteLine("UNVERIFIED: baseline symlink-alias regression is unavailable on this platform."); }
+    finally
+    {
+        if (File.Exists(symlinkOutput)) File.Delete(symlinkOutput);
+    }
+
     var aliasedGenerated = Path.Combine(obj, "Test.csproj.nuget.g.targets");
     var generatedBefore = File.ReadAllBytes(aliasedGenerated);
     Require(CaptureCommand("baseline", assets, "--output", Path.Combine(obj, ".", "Test.csproj.nuget.g.targets"), "--no-telemetry").ExitCode == 2,

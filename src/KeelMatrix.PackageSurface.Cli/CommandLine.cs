@@ -562,8 +562,13 @@ public sealed record Options(
         package versions, and incoherent metadata, duplicate aliases, or malformed package
         ID/version keys are PS007. Target-package asset groups use NuGet's exact canonical
         property names; unknown or case-variant groups, malformed packageFolders entries, and
-        baseline output aliases including hardlinks to restore, generated-import, or reachable
-        package inputs are PS007 before any write. The current
+        baseline output aliases are checked before any write. An explicit baseline --output path
+        is preflighted against every reachable package-inventory file resolved from packageFolders,
+        including global and fallback roots, direct and transitive packages, every TFM/RID, nested
+        static imports, and all inventory categories. Lexical . and .. aliases, single and multiple
+        hardlinks, and direct, interior, and ancestor reparse/symlink aliases are rejected with
+        PS007 and controlled exit code 2 before any mutation. A rejection preserves existing output
+        and input bytes; genuinely distinct outputs are accepted. The current
         candidate supports Windows, Linux, and macOS
         for SDK-style PackageReference restore outputs; hosted CI validates the command contract
         on all three platforms. On macOS, only the standard root-level /var to /private/var

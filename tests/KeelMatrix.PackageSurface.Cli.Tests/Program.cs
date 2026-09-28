@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using KeelMatrix.PackageSurface;
 using KeelMatrix.PackageSurface.Probe;
 using KeelMatrix.Telemetry;
@@ -38,12 +39,32 @@ if (incomplete.Diagnostics.Count != 1 || incomplete.Diagnostics[0].Id != "PS007"
     return 1;
 }
 
-if (!Options.HelpText.Contains("Activation fields: event, tool, tool_version, telemetry_version, schema_version", StringComparison.Ordinal) ||
-    !Options.HelpText.Contains("https://github.com/KeelMatrix/Telemetry/blob/main/PRIVACY.md", StringComparison.Ordinal) ||
-    !Options.HelpText.Contains("Generated top-level and nested imports", StringComparison.Ordinal) ||
-    !Options.HelpText.Contains("never replaces a baseline", StringComparison.Ordinal))
+var requiredHelpClauses = new[]
 {
-    Console.Error.WriteLine("CLI telemetry privacy contract is missing from --help.");
+    "Activation fields: event, tool, tool_version, telemetry_version, schema_version",
+    "https://github.com/KeelMatrix/Telemetry/blob/main/PRIVACY.md",
+    "Generated top-level and nested imports",
+    "never replaces a baseline",
+    "every reachable package-inventory file resolved from packageFolders",
+    "global and fallback roots",
+    "direct and transitive packages",
+    "every TFM/RID",
+    "nested static imports",
+    "all inventory categories",
+    "Lexical . and .. aliases",
+    "single and multiple hardlinks",
+    "direct, interior, and ancestor reparse/symlink aliases",
+    "PS007 and controlled exit code 2 before any mutation",
+    "preserves existing output and input bytes",
+    "genuinely distinct outputs are accepted"
+};
+var normalizedHelpText = Regex.Replace(Options.HelpText, @"\s+", " ");
+var missingHelpClauses = requiredHelpClauses
+    .Where(clause => !normalizedHelpText.Contains(clause, StringComparison.Ordinal))
+    .ToArray();
+if (missingHelpClauses.Length > 0)
+{
+    Console.Error.WriteLine("CLI help contract is missing: " + string.Join("; ", missingHelpClauses));
     return 1;
 }
 

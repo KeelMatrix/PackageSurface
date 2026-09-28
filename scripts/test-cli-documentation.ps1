@@ -1,6 +1,7 @@
 param(
     [string] $RepositoryRoot,
-    [string] $BuiltHelpPath
+    [string] $BuiltHelpPath,
+    [string] $BuiltHelpTextPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -17,7 +18,8 @@ $cliDocuments = @(
     (Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/README.md')
 )
 $parityDocuments = @(
-    $cliDocuments,
+    $cliDocuments[0],
+    $cliDocuments[1],
     (Join-Path $root 'docs/DEV.md'),
     (Join-Path $root 'CHANGELOG.md'),
     (Join-Path $root 'SECURITY.md')
@@ -49,42 +51,62 @@ foreach ($document in $cliDocuments) {
     }
 }
 
-$baselineAliasContract = 'An explicit `baseline --output` path is preflighted against the selected restore/project/generated-import inputs and every reachable package-inventory file resolved from `packageFolders` by lexical path and real file identity, including single and multiple hardlinks, before any file is written. Lexical aliases, hardlinks, and reparse/symlink aliases are rejected with controlled exit code `2` and preserve the existing output/input bytes; genuinely distinct outputs are accepted.'
-$normalizedContract = [regex]::Replace($baselineAliasContract, '\s+', ' ').Trim()
-foreach ($document in $parityDocuments) {
-    $normalizedDocument = [regex]::Replace((Get-Content -Raw $document), '\s+', ' ')
-    if (-not $normalizedDocument.Contains($normalizedContract, [StringComparison]::Ordinal)) {
-        throw "Documentation '$document' does not state the complete baseline --output alias scope and preservation behavior."
+$baselineAliasClauses = [ordered]@{
+    'preflight' = 'baseline --output path is preflighted against'
+    'reachable package inventory' = 'every reachable package-inventory file resolved from packageFolders'
+    'global and fallback roots' = 'global and fallback roots'
+    'direct and transitive packages' = 'direct and transitive packages'
+    'TFM and RID coverage' = 'every TFM/RID'
+    'nested static imports' = 'nested static imports'
+    'inventory categories' = 'all inventory categories'
+    'lexical aliases' = 'Lexical . and .. aliases'
+    'single and multiple hardlinks' = 'single and multiple hardlinks'
+    'reparse and symlink aliases' = 'direct, interior, and ancestor reparse/symlink aliases'
+    'controlled rejection' = 'PS007 and controlled exit code 2 before any mutation'
+    'byte preservation' = 'preserves existing output and input bytes'
+    'distinct output acceptance' = 'genuinely distinct outputs are accepted'
+}
+
+function Normalize-ContractText([string] $Text) {
+    return ([regex]::Replace($Text, '\s+', ' ').Trim()).Replace('`', '')
+}
+
+function Assert-BaselineAliasClauses([string] $Surface, [string] $Text) {
+    $normalized = Normalize-ContractText $Text
+    foreach ($clause in $baselineAliasClauses.GetEnumerator()) {
+        if (-not $normalized.Contains($clause.Value, [StringComparison]::Ordinal)) {
+            throw "Documentation surface '$Surface' is missing baseline --output clause '$($clause.Key)': '$($clause.Value)'."
+        }
     }
 }
 
-if ([string]::IsNullOrWhiteSpace($BuiltHelpPath)) {
-    $defaultBuiltHelpPath = Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/bin/Release/net8.0/KeelMatrix.PackageSurface.dll'
-    if (Test-Path -LiteralPath $defaultBuiltHelpPath -PathType Leaf) {
-        $builtHelp = @(& dotnet $defaultBuiltHelpPath --help 2>&1)
+foreach ($document in $parityDocuments) {
+    Assert-BaselineAliasClauses $document (Get-Content -Raw $document)
+}
+
+if (-not [string]::IsNullOrWhiteSpace($BuiltHelpTextPath)) {
+    if (-not [string]::IsNullOrWhiteSpace($BuiltHelpPath)) {
+        throw 'Specify either BuiltHelpPath or BuiltHelpTextPath, not both.'
     }
-    else {
-        $cliProject = Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/KeelMatrix.PackageSurface.Cli.csproj'
-        $builtHelp = @(& dotnet run --project $cliProject --configuration Release --no-restore -- --help 2>&1)
-    }
+    $builtHelp = @(Get-Content -Raw (Resolve-Path -LiteralPath $BuiltHelpTextPath))
+    $builtHelpExitCode = 0
 }
 else {
-    $resolvedBuiltHelpPath = (Resolve-Path -LiteralPath $BuiltHelpPath).Path
+    $defaultBuiltHelpPath = Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/bin/Release/net8.0/KeelMatrix.PackageSurface.dll'
+    if ([string]::IsNullOrWhiteSpace($BuiltHelpPath)) {
+        $BuiltHelpPath = $defaultBuiltHelpPath
+    }
+    $resolvedBuiltHelpPath = (Resolve-Path -LiteralPath $BuiltHelpPath -ErrorAction Stop).Path
+    if (-not (Test-Path -LiteralPath $resolvedBuiltHelpPath -PathType Leaf)) {
+        throw "Built CLI help assembly '$resolvedBuiltHelpPath' was not found. Build the Release CLI before running this validator."
+    }
     $builtHelp = @(& dotnet $resolvedBuiltHelpPath --help 2>&1)
+    $builtHelpExitCode = $LASTEXITCODE
 }
-$builtHelpExitCode = $LASTEXITCODE
 if ($builtHelpExitCode -ne 0) {
     throw "Built CLI --help invocation failed with exit code $builtHelpExitCode."
 }
-$normalizedHelp = [regex]::Replace(($builtHelp -join [Environment]::NewLine), '\s+', ' ').Trim()
-foreach ($requiredText in @(
-    'malformed packageFolders entries',
-    'baseline output aliases including hardlinks to restore, generated-import, or reachable package inputs are PS007 before any write'
-)) {
-    if (-not $normalizedHelp.Contains($requiredText, [StringComparison]::Ordinal)) {
-        throw "Built CLI --help is missing the baseline-alias contract text '$requiredText'."
-    }
-}
+Assert-BaselineAliasClauses 'built --help' ($builtHelp -join [Environment]::NewLine)
 
 foreach ($requiredText in @('package-surface scan <path>', '--format text|json|sarif', '--strict-content', '--project <path>', '--telemetry on|off', '--no-telemetry', 'Exit codes:', 'effective-moniker canonicalization', 'malformed package', 'ID/version', 'both directions', 'package versions')) {
     if (-not $cliSource.Contains($requiredText, [StringComparison]::Ordinal)) { throw "CLI help is missing '$requiredText'." }

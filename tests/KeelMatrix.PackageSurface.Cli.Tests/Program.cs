@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -110,7 +111,9 @@ static void RunClassifierHardeningTests()
         File.WriteAllText(Path.Combine(scratch, "Test.csproj"), "<Project />");
         RunAnalyzerExclusionRegression(scratch, cache, obj);
         RunMalformedAssetsShapeRegression(assets, scratch);
+        RunPackageFoldersValidationRegression(assets, scratch);
         RunAssetsFormatRegression(assets, scratch);
+        RunCapabilityGroupValidationRegression(scratch);
         RunFrameworkMonikerRegression(assets, scratch);
         RunRestoreIdentityCanonicalizationRegression(assets, scratch);
         RunDiagnosticPathLeakRegression(scratch);
@@ -401,6 +404,31 @@ static void RunBaselineTransactionRegression(string parent)
     Require(CaptureCommand("baseline", assets, "--output", assets, "--no-telemetry").ExitCode == 2,
         "A baseline output equal to project.assets.json was accepted.");
     Require(aliasedAssets.SequenceEqual(File.ReadAllBytes(assets)), "An aliased baseline attempt changed project.assets.json.");
+
+    var hardlinkOutputs = new[]
+    {
+        Path.Combine(root, "hardlink-output.json"),
+        Path.Combine(root, "hardlink-output-second.json")
+    };
+    Require(TryCreateHardLink(assets, hardlinkOutputs[0]), "The hardlink alias regression could not create a hardlink.");
+    Require(TryCreateHardLink(assets, hardlinkOutputs[1]), "The multiple-hardlink alias regression could not create a second hardlink.");
+    try
+    {
+        foreach (var hardlinkOutput in hardlinkOutputs)
+        {
+            Require(CaptureCommand("baseline", assets, "--output", hardlinkOutput, "--no-telemetry").ExitCode == 2,
+                "A hardlink alias to project.assets.json was accepted.");
+            Require(aliasedAssets.SequenceEqual(File.ReadAllBytes(assets)), "A hardlink alias rejection changed project.assets.json.");
+        }
+    }
+    finally
+    {
+        foreach (var hardlinkOutput in hardlinkOutputs)
+        {
+            if (File.Exists(hardlinkOutput)) File.Delete(hardlinkOutput);
+        }
+    }
+
     var aliasedGenerated = Path.Combine(obj, "Test.csproj.nuget.g.targets");
     var generatedBefore = File.ReadAllBytes(aliasedGenerated);
     Require(CaptureCommand("baseline", assets, "--output", Path.Combine(obj, ".", "Test.csproj.nuget.g.targets"), "--no-telemetry").ExitCode == 2,
@@ -1881,8 +1909,9 @@ static void RunAssetsFormatRegression(string assets, string scratch)
                     var validBaseline = Path.Combine(Path.GetDirectoryName(assets)!, "format4-case-baseline.json");
                     try
                     {
-                        Require(CaptureCommand("baseline", v4Path, "--output", validBaseline, "--no-telemetry").ExitCode == 0,
-                            "The coherent format 4 dependency-group fixture could not create its baseline.");
+                        var coherentBaseline = CaptureCommand("baseline", v4Path, "--output", validBaseline, "--no-telemetry");
+                        Require(coherentBaseline.ExitCode == 0,
+                            $"The coherent format 4 dependency-group fixture could not create its baseline: exit={coherentBaseline.ExitCode}; output={coherentBaseline.Output}");
                         AssertFormat4DependencyGroupFailure(path, validBaseline);
                     }
                     finally
@@ -1900,6 +1929,56 @@ static void RunAssetsFormatRegression(string assets, string scratch)
     finally
     {
         File.Delete(v4Path);
+    }
+}
+
+static void RunPackageFoldersValidationRegression(string assets, string scratch)
+{
+    var cache = Path.Combine(scratch, "cache");
+    var malformed = new (string Name, Func<JsonObject, JsonObject> Mutate)[]
+    {
+        ("empty", _ => new JsonObject()),
+        ("relative", _ => new JsonObject { ["relative-cache"] = new JsonObject() }),
+        ("whitespace", _ => new JsonObject { ["   "] = new JsonObject() }),
+        ("null-value", _ => new JsonObject { [cache] = null }),
+        ("array-value", _ => new JsonObject { [cache] = new JsonArray() })
+    };
+
+    foreach (var (name, mutate) in malformed)
+    {
+        var path = Path.Combine(Path.GetDirectoryName(assets)!, "package-folders-" + name + ".assets.json");
+        var document = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
+        document["packageFolders"] = mutate(document);
+        File.WriteAllText(path, document.ToJsonString());
+        try
+        {
+            var result = ResolvedGraphClassifier.Analyze(path, scratch, strictContent: false);
+            Require(!result.IsComplete && result.Entries.Count == 0 && result.IncompleteReasons.Count > 0,
+                $"Malformed packageFolders shape '{name}' was accepted.");
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    var fallbackPath = Path.Combine(Path.GetDirectoryName(assets)!, "package-folders-fallback.assets.json");
+    var fallback = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
+    fallback["packageFolders"] = new JsonObject
+    {
+        [Path.Combine(scratch, "fallback-cache")] = new JsonObject(),
+        [Path.GetFullPath(cache).Replace(Path.DirectorySeparatorChar, '/')] = new JsonObject()
+    };
+    File.WriteAllText(fallbackPath, fallback.ToJsonString());
+    try
+    {
+        var result = ResolvedGraphClassifier.Analyze(fallbackPath, scratch, strictContent: false);
+        Require(result.IsComplete && result.ResolvedPackageCount == 1,
+            $"Valid absolute fallback package folders were rejected: {string.Join(" | ", result.IncompleteReasons)}");
+    }
+    finally
+    {
+        File.Delete(fallbackPath);
     }
 }
 
@@ -1924,6 +2003,92 @@ static void AssertFormat4DependencyGroupFailure(string assets, string baseline)
                 !check.Output.Contains("PS003", StringComparison.Ordinal),
             $"Format 4 casing-equivalent dependency groups emitted a clean {format} check.");
     }
+}
+
+static void RunCapabilityGroupValidationRegression(string scratch)
+{
+    var cases = new (string Name, string Group, bool Empty)[]
+    {
+        ("case-variant-build", "Build", false),
+        ("case-variant-build-transitive", "BUILDTRANSITIVE", false),
+        ("case-variant-build-multi-targeting", "BUILDMULTITARGETING", false),
+        ("unknown-capability-group", "unknownCapabilityGroup", false),
+        ("unknown-empty-group", "unknownEmptyGroup", true),
+        ("null-capability-group", "unknownNullGroup", true)
+    };
+
+    foreach (var (name, group, empty) in cases)
+    {
+        var root = Path.Combine(scratch, "capability-group-" + name);
+        var obj = Path.Combine(root, "obj");
+        var cache = Path.Combine(root, "cache");
+        Directory.CreateDirectory(obj);
+        var assets = Path.Combine(obj, "project.assets.json");
+        const string assetPath = "build/Case.targets";
+        WriteAssets(assets, cache, "CaseGroup.Package", new[] { assetPath }, createFiles: true);
+        var document = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
+        var targetPackage = document["targets"]!["net8.0"]!["CaseGroup.Package/1.0.0"]!.AsObject();
+        targetPackage[group] = empty && group != "unknownNullGroup"
+            ? new JsonObject()
+            : empty
+                ? null
+                : new JsonObject { [assetPath] = new JsonObject() };
+        document["targets"]!.AsObject()["net8.0/win-x64"] = document["targets"]!["net8.0"]!.DeepClone();
+        File.WriteAllText(assets, document.ToJsonString());
+
+        var result = ResolvedGraphClassifier.Analyze(assets, root, strictContent: false);
+        Require(!result.IsComplete && result.Entries.Count == 0 && result.IncompleteReasons.Count > 0,
+            $"Unsupported target asset group '{group}' was accepted as a clean or partial result.");
+    }
+
+    var mixedRoot = Path.Combine(scratch, "capability-group-mixed-known-unknown");
+    var mixedObj = Path.Combine(mixedRoot, "obj");
+    var mixedCache = Path.Combine(mixedRoot, "cache");
+    Directory.CreateDirectory(mixedObj);
+    var mixedAssets = Path.Combine(mixedObj, "project.assets.json");
+    WriteAssets(mixedAssets, mixedCache, "MixedGroup.Package", new List<string> { "build/Mixed.targets" }, createFiles: true);
+    var mixedDocument = JsonNode.Parse(File.ReadAllText(mixedAssets))!.AsObject();
+    var mixedPackage = mixedDocument["targets"]!["net8.0"]!["MixedGroup.Package/1.0.0"]!.AsObject();
+    mixedPackage["build"] = new JsonObject { ["build/Mixed.targets"] = new JsonObject() };
+    mixedPackage["Build"] = new JsonObject { ["build/Mixed.targets"] = new JsonObject() };
+    File.WriteAllText(mixedAssets, mixedDocument.ToJsonString());
+    var mixedResult = ResolvedGraphClassifier.Analyze(mixedAssets, mixedRoot, strictContent: false);
+    Require(!mixedResult.IsComplete && mixedResult.Entries.Count == 0 && mixedResult.IncompleteReasons.Count > 0,
+        "A mixed canonical and unsupported target asset-group set was accepted as a clean or partial result.");
+
+    var transitiveRoot = Path.Combine(scratch, "capability-group-transitive");
+    var transitiveObj = Path.Combine(transitiveRoot, "obj");
+    var transitiveCache = Path.Combine(transitiveRoot, "cache");
+    Directory.CreateDirectory(transitiveObj);
+    var transitiveAssets = Path.Combine(transitiveObj, "project.assets.json");
+    WriteAssets(transitiveAssets, transitiveCache, "RootGroup.Package", Array.Empty<string>(), createFiles: true);
+    Directory.CreateDirectory(Path.Combine(transitiveCache, "TransitiveGroup.Package", "1.0.0", "build"));
+    File.WriteAllText(Path.Combine(transitiveCache, "TransitiveGroup.Package", "1.0.0", "build", "Case.targets"), "fixture");
+    var transitiveDocument = JsonNode.Parse(File.ReadAllText(transitiveAssets))!.AsObject();
+    transitiveDocument["project"]!["frameworks"]!["net8.0"]!["dependencies"] = new JsonObject
+    {
+        ["RootGroup.Package"] = new JsonObject { ["version"] = "[1.0.0, )", ["target"] = "Package" }
+    };
+    transitiveDocument["targets"]!["net8.0"]!["RootGroup.Package/1.0.0"]!["dependencies"] = new JsonObject
+    {
+        ["TransitiveGroup.Package"] = "[1.0.0, )"
+    };
+    transitiveDocument["targets"]!["net8.0"]!["TransitiveGroup.Package/1.0.0"] = new JsonObject
+    {
+        ["type"] = "package",
+        ["Build"] = new JsonObject { ["build/Case.targets"] = new JsonObject() }
+    };
+    transitiveDocument["libraries"]!["TransitiveGroup.Package/1.0.0"] = new JsonObject
+    {
+        ["type"] = "package",
+        ["path"] = "TransitiveGroup.Package/1.0.0",
+        ["files"] = new JsonArray("build/Case.targets")
+    };
+    transitiveDocument["targets"]!.AsObject()["net8.0/win-x64"] = transitiveDocument["targets"]!["net8.0"]!.DeepClone();
+    File.WriteAllText(transitiveAssets, transitiveDocument.ToJsonString());
+    var transitiveResult = ResolvedGraphClassifier.Analyze(transitiveAssets, transitiveRoot, strictContent: false);
+    Require(!transitiveResult.IsComplete && transitiveResult.Entries.Count == 0 && transitiveResult.IncompleteReasons.Count > 0,
+        "An unsupported target asset group on a transitive RID package was accepted as a clean or partial result.");
 }
 
 static void RunFrameworkMonikerRegression(string assets, string scratch)
@@ -2682,6 +2847,27 @@ static void Require(bool condition, string message)
         throw new InvalidOperationException(message);
     }
 }
+
+static bool TryCreateHardLink(string existingPath, string linkPath) =>
+    OperatingSystem.IsWindows()
+        ? NativeMethods.CreateHardLink(linkPath, existingPath, IntPtr.Zero)
+        : NativeMethods.Link(existingPath, linkPath) == 0;
+
+#pragma warning disable CA2101
+static class NativeMethods
+{
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern bool CreateHardLink(
+        [MarshalAs(UnmanagedType.LPWStr)] string fileName,
+        [MarshalAs(UnmanagedType.LPWStr)] string existingFileName,
+        IntPtr securityAttributes);
+
+    [DllImport("libc", EntryPoint = "link", CharSet = CharSet.Ansi, SetLastError = true)]
+    public static extern int Link(
+        [MarshalAs(UnmanagedType.LPStr)] string existingPath,
+        [MarshalAs(UnmanagedType.LPStr)] string linkPath);
+}
+#pragma warning restore CA2101
 
 sealed class AncestorLinkCanonicalizer
 {

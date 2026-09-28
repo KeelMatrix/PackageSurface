@@ -473,9 +473,9 @@ public sealed class BaselineFileTransaction
 
         while (current is not null)
         {
-            // macOS commonly exposes temporary directories through the system-owned
-            // /var -> /private/var alias. Root-level Unix aliases are outside the
-            // caller-controlled path; links below that boundary remain rejected.
+            // macOS commonly exposes temporary directories through standard
+            // system-owned aliases such as /var -> /private/var. Links below
+            // that platform boundary remain rejected.
             if (!IsSystemRootAlias(current, pathRoot) &&
                 ((current.Attributes & FileAttributes.ReparsePoint) != 0 || current.LinkTarget is not null)) return true;
             current = current.Parent;
@@ -484,11 +484,16 @@ public sealed class BaselineFileTransaction
         return false;
     }
 
-    private static bool IsSystemRootAlias(DirectoryInfo directory, string? pathRoot) =>
-        !OperatingSystem.IsWindows() &&
-        pathRoot is not null &&
-        directory.Parent is not null &&
-        string.Equals(directory.Parent.FullName, pathRoot, StringComparison.Ordinal);
+    private static bool IsSystemRootAlias(DirectoryInfo directory, string? pathRoot)
+    {
+        if (!OperatingSystem.IsMacOS() || pathRoot is null || directory.Parent is null ||
+            !string.Equals(directory.Parent.FullName, pathRoot, StringComparison.Ordinal)) return false;
+
+        var target = directory.LinkTarget;
+        if (string.IsNullOrWhiteSpace(target)) return false;
+        var targetPath = Path.IsPathRooted(target) ? target : Path.Combine(directory.Parent.FullName, target);
+        return string.Equals(Path.GetFullPath(targetPath), Path.Combine(pathRoot, "private", directory.Name), StringComparison.Ordinal);
+    }
 }
 
 public enum CommandKind { Scan, Baseline, Check }

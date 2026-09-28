@@ -6,7 +6,7 @@
 
 The probe reads only reachable entries from `project.assets.json`; it does not restore, evaluate MSBuild, load dependency assemblies, start analysis processes, or query a feed.
 
-Supported restore evidence formats: coherent SDK-style assets formats 1 through 4. One canonical restore-identity index reconciles framework keys, effective frameworks, target aliases, target/RID, dependency-group, and package identities before active filtering; both-direction set differences, incoherent, malformed, or duplicate identities remain `PS007` evidence. Project, target-package, and format-4 dependency values use SDK-shaped restore grammar and selected-version matching. Format 4 framework aliases are mapped to their effective framework for surface entries, while mismatched or incomplete v4 metadata remains `PS007` evidence.
+Supported restore evidence formats: coherent SDK-style assets formats 3 and 4, verified by the shipping fixture and gate. One canonical restore-identity index and one direct/project-reference rooted package closure per applicable target graph reconcile framework keys, effective frameworks, target aliases, target/RID, dependency-group, and package identities before active filtering; disconnected packages, duplicate/case-variant properties, incoherent, malformed, or duplicate identities remain `PS007` evidence. Format 4 framework aliases are mapped to their effective framework for surface entries, while mismatched or incomplete v4 metadata remains `PS007` evidence.
 
 ## Per-category comparison
 
@@ -121,6 +121,8 @@ Supported restore evidence formats: coherent SDK-style assets formats 1 through 
 | ManagedRuntime | KeelMatrix.Phase0.ManagedRuntime | direct | Target | net8.0/- | absent | not applicable | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | assets, package |  |
 | ManagedRuntime | KeelMatrix.Phase0.ManagedRuntime | direct | Target | net8.0/- | absent | not applicable | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | assets, package |  |
 | OrdinaryLibrary | KeelMatrix.Phase0.OrdinaryLibrary | direct | Target | net8.0/- | absent | not applicable | proven (reachable package/version and file in graph) | not applicable | not applicable | proven (present; raw binary hash intentionally not recorded in Phase 0 evidence) | assets, package |  |
+
+Restore completeness requires both-direction project/restore and format-4 dependency-group sets, canonical target/RID membership, and SDK-shaped dependency values that match selected package versions.
 
 ## Missing classifier entries
 

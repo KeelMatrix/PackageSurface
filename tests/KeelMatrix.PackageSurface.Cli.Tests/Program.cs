@@ -138,6 +138,9 @@ static void RunClassifierHardeningTests()
         RunCapabilityGroupValidationRegression(scratch);
         RunFrameworkMonikerRegression(assets, scratch);
         RunRestoreIdentityCanonicalizationRegression(assets, scratch);
+        RunRestoreJsonStructuralDuplicateRegression(assets, scratch);
+        RunReachabilityClosureRegression(scratch);
+        RunVersionEquivalenceRegression(scratch);
         RunDiagnosticPathLeakRegression(scratch);
         RunApplicabilityHardeningRegressions(scratch);
         RunNestedImportRegression(scratch);
@@ -1244,6 +1247,9 @@ static void WriteTargetGraphAssets(string assets, string cache, string projectPa
         File.WriteAllText(Path.Combine(packageRoot, "fixture.ps1"), "fixture");
     }
 
+    var frameworkDependencies = includeToolAsset
+        ? new JsonObject { ["TargetGraph.Package"] = PackageDependency() }
+        : new JsonObject();
     var root = new JsonObject
     {
         ["version"] = 3,
@@ -1253,7 +1259,7 @@ static void WriteTargetGraphAssets(string assets, string cache, string projectPa
         ["project"] = new JsonObject
         {
             ["restore"] = new JsonObject { ["projectPath"] = projectPath },
-            ["frameworks"] = new JsonObject { ["net8.0"] = new JsonObject { ["dependencies"] = new JsonObject() } }
+            ["frameworks"] = new JsonObject { ["net8.0"] = new JsonObject { ["dependencies"] = frameworkDependencies } }
         }
     };
     Directory.CreateDirectory(cache);
@@ -1310,7 +1316,7 @@ static void RunProjectAggregationRegression(string scratch)
             ["frameworks"] = new JsonObject
             {
                 ["net8.0"] = new JsonObject { ["dependencies"] = new JsonObject { [packageId] = PackageDependency() } },
-                ["net9.0"] = new JsonObject { ["dependencies"] = new JsonObject() }
+                ["net9.0"] = new JsonObject { ["dependencies"] = new JsonObject { [packageId] = PackageDependency() } }
             }
         }
     };
@@ -2426,7 +2432,7 @@ static void RunFrameworkMonikerRegression(string assets, string scratch)
     var negative = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
     negative["project"]!["frameworks"] = new JsonObject
     {
-        ["net8.0"] = new JsonObject { ["dependencies"] = new JsonObject() },
+        ["net8.0"] = new JsonObject { ["dependencies"] = new JsonObject { ["XmlPackage"] = PackageDependency() } },
         ["netstandard2.0"] = new JsonObject { ["dependencies"] = new JsonObject() }
     };
     File.WriteAllText(negativePath, negative.ToJsonString());
@@ -2694,6 +2700,205 @@ static void RunRestoreIdentityCanonicalizationRegression(string assets, string s
     }
 }
 
+static void RunRestoreJsonStructuralDuplicateRegression(string assets, string scratch)
+{
+    var baseline = Path.Combine(Path.GetDirectoryName(assets)!, "restore-structure-baseline.json");
+    Require(CaptureCommand("baseline", assets, "--output", baseline, "--no-telemetry").ExitCode == 0,
+        "The structural-duplicate baseline could not be created.");
+
+    var source = File.ReadAllText(assets);
+    var root = JsonNode.Parse(source)!.AsObject();
+    var cases = new List<(string Name, string Json)>
+    {
+        ("root-version-exact", InsertExactPropertyDuplicate(source, "version", "3")),
+        ("root-version-case", InsertCaseVariantPropertyDuplicate(source, "version", "3")),
+        ("root-targets-exact", InsertRootPropertyDuplicate(source, root, "targets")),
+        ("root-libraries-case", InsertCaseVariantRootPropertyDuplicate(source, root, "libraries")),
+        ("root-package-folders-exact", InsertRootPropertyDuplicate(source, root, "packageFolders")),
+        ("project-exact", InsertRootPropertyDuplicate(source, root, "project")),
+        ("project-restore-case", InsertCaseVariantPropertyDuplicate(source, "restore", root["project"]!["restore"]!.ToJsonString())),
+        ("project-path-exact", InsertExactPropertyDuplicate(source, "projectPath", JsonSerializer.Serialize(root["project"]!["restore"]!["projectPath"]!.GetValue<string>()))),
+        ("framework-map-case", InsertCaseVariantPropertyDuplicate(source, "frameworks", root["project"]!["frameworks"]!.ToJsonString())),
+        ("library-type-case", InsertCaseVariantPropertyDuplicate(source, "type", JsonSerializer.Serialize("package"))),
+        ("library-path-exact", InsertExactPropertyDuplicate(source, "path", JsonSerializer.Serialize("XmlPackage/1.0.0"))),
+        ("library-files-case", InsertCaseVariantPropertyDuplicate(source, "files", root["libraries"]!["XmlPackage/1.0.0"]!["files"]!.ToJsonString()))
+    };
+
+    var dependency = root["project"]!["frameworks"]!["net8.0"]!["dependencies"]!["XmlPackage"]!.AsObject();
+    var dependencyVersion = dependency["version"]!.GetValue<string>();
+    cases.Add(("direct-dependency-version-exact", InsertExactPropertyDuplicate(source, "version", JsonSerializer.Serialize(dependencyVersion), source.IndexOf("\"XmlPackage\":{", StringComparison.Ordinal))));
+
+    var targetWithBuild = root.DeepClone()!.AsObject();
+    targetWithBuild["targets"]!["net8.0"]!["XmlPackage/1.0.0"]!["build"] = new JsonObject
+    {
+        ["build/structure.targets"] = new JsonObject()
+    };
+    var targetJson = targetWithBuild.ToJsonString();
+    cases.Add(("target-package-build-case", InsertCaseVariantPropertyDuplicate(targetJson, "build", "{\"build/structure.targets\":{}}")));
+
+    foreach (var (name, json) in cases)
+    {
+        var path = Path.Combine(Path.GetDirectoryName(assets)!, "restore-structure-" + name + ".assets.json");
+        File.WriteAllText(path, json);
+        try
+        {
+            AssertRestoreIdentityFailure(path, scratch, baseline, name);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    File.Delete(baseline);
+}
+
+static void RunReachabilityClosureRegression(string scratch)
+{
+    var orphanRoot = Path.Combine(scratch, "reachability-orphan");
+    var orphanObj = Path.Combine(orphanRoot, "obj");
+    var orphanCache = Path.Combine(orphanRoot, "cache");
+    Directory.CreateDirectory(orphanObj);
+    var orphanAssets = Path.Combine(orphanObj, "project.assets.json");
+    WriteAssets(orphanAssets, orphanCache, "Direct.Root", Array.Empty<string>());
+    var orphanDocument = JsonNode.Parse(File.ReadAllText(orphanAssets))!.AsObject();
+    var orphanFiles = new[]
+    {
+        "build/orphan.targets",
+        "analyzers/dotnet/cs/orphan.dll",
+        "contentFiles/cs/any/orphan.cs",
+        "runtimes/win-x64/native/orphan.dll",
+        "tools/orphan.ps1"
+    };
+    AddPackageToAssets(orphanDocument, orphanCache, "Orphan.Package", orphanFiles, new JsonObject
+    {
+        ["build"] = new JsonObject { ["build/orphan.targets"] = new JsonObject() },
+        ["analyzers"] = new JsonObject { ["analyzers/dotnet/cs/orphan.dll"] = new JsonObject() },
+        ["contentFiles"] = new JsonObject
+        {
+            ["contentFiles/cs/any/orphan.cs"] = new JsonObject { ["buildAction"] = "Compile", ["codeLanguage"] = "C#" }
+        },
+        ["native"] = new JsonObject { ["runtimes/win-x64/native/orphan.dll"] = new JsonObject() },
+        ["tools"] = new JsonObject { ["tools/orphan.ps1"] = new JsonObject() }
+    });
+    var orphanAnalyzer = Path.Combine(orphanCache, "Orphan.Package", "1.0.0", "analyzers", "dotnet", "cs", "orphan.dll");
+    File.Copy(typeof(ResolvedGraphClassifier).Assembly.Location, orphanAnalyzer, overwrite: true);
+    File.WriteAllText(Path.Combine(orphanCache, "Orphan.Package", "1.0.0", "build", "orphan.targets"), "<Project />");
+    File.WriteAllText(orphanAssets, orphanDocument.ToJsonString());
+    File.WriteAllText(Path.Combine(orphanObj, "Test.csproj.nuget.g.props"), "<Project><Import Project=\"$(NuGetPackageRoot)/Orphan.Package/1.0.0/build/orphan.targets\" /></Project>");
+    var orphanResult = ResolvedGraphClassifier.Analyze(orphanAssets, orphanRoot, strictContent: false);
+    Require(!orphanResult.IsComplete && orphanResult.Entries.Count == 0 && orphanResult.ResolvedPackageCount == 0,
+        "An orphan package with build, analyzer, content, native, and tool assets was classified as reachable.");
+
+    var islandRoot = Path.Combine(scratch, "reachability-island");
+    var islandObj = Path.Combine(islandRoot, "obj");
+    var islandCache = Path.Combine(islandRoot, "cache");
+    Directory.CreateDirectory(islandObj);
+    var islandAssets = Path.Combine(islandObj, "project.assets.json");
+    WriteAssets(islandAssets, islandCache, "Direct.Root", Array.Empty<string>());
+    var islandDocument = JsonNode.Parse(File.ReadAllText(islandAssets))!.AsObject();
+    AddPackageToAssets(islandDocument, islandCache, "Island.Root", Array.Empty<string>(), new JsonObject
+    {
+        ["dependencies"] = new JsonObject { ["Island.Leaf"] = "1.0.0" }
+    });
+    AddPackageToAssets(islandDocument, islandCache, "Island.Leaf", Array.Empty<string>());
+    File.WriteAllText(islandAssets, islandDocument.ToJsonString());
+    var islandResult = ResolvedGraphClassifier.Analyze(islandAssets, islandRoot, strictContent: false);
+    Require(!islandResult.IsComplete && islandResult.Entries.Count == 0,
+        "A disconnected multi-package dependency island was classified as reachable.");
+
+    var rootedRoot = Path.Combine(scratch, "reachability-rooted-graphs");
+    var rootedObj = Path.Combine(rootedRoot, "obj");
+    var rootedCache = Path.Combine(rootedRoot, "cache");
+    Directory.CreateDirectory(rootedObj);
+    var rootedAssets = Path.Combine(rootedObj, "project.assets.json");
+    WriteAssets(rootedAssets, rootedCache, "Direct.Root", new List<string> { "tools/direct.ps1" }, createFiles: true);
+    var rootedDocument = JsonNode.Parse(File.ReadAllText(rootedAssets))!.AsObject();
+    rootedDocument["targets"]!["net8.0"]!["Direct.Root/1.0.0"]!["dependencies"] = new JsonObject
+    {
+        ["Chain.Leaf"] = "1.0.0",
+        ["Cycle.A"] = "1.0.0"
+    };
+    AddPackageToAssets(rootedDocument, rootedCache, "Chain.Leaf", new List<string> { "tools/chain.ps1" }, new JsonObject { ["tools"] = new JsonObject { ["tools/chain.ps1"] = new JsonObject() } });
+    AddPackageToAssets(rootedDocument, rootedCache, "Cycle.A", Array.Empty<string>(), new JsonObject { ["dependencies"] = new JsonObject { ["Cycle.B"] = "1.0.0" } });
+    AddPackageToAssets(rootedDocument, rootedCache, "Cycle.B", Array.Empty<string>(), new JsonObject { ["dependencies"] = new JsonObject { ["Cycle.A"] = "1.0.0" } });
+    var projectReferenceKey = "Referenced.Project/1.0.0";
+    rootedDocument["targets"]!["net8.0"]![projectReferenceKey] = new JsonObject { ["dependencies"] = new JsonObject { ["Project.Root"] = "1.0.0" } };
+    rootedDocument["libraries"]![projectReferenceKey] = new JsonObject { ["type"] = "project", ["path"] = "../Referenced.Project", ["msbuildProject"] = "../Referenced.Project/Referenced.Project.csproj" };
+    AddPackageToAssets(rootedDocument, rootedCache, "Project.Root", new List<string> { "tools/project-root.ps1" }, new JsonObject { ["tools"] = new JsonObject { ["tools/project-root.ps1"] = new JsonObject() } });
+    File.WriteAllText(rootedAssets, rootedDocument.ToJsonString());
+    var rootedResult = ResolvedGraphClassifier.Analyze(rootedAssets, rootedRoot, strictContent: false);
+    Require(rootedResult.IsComplete && rootedResult.ResolvedPackageCount == 5,
+        "Direct, transitive, cyclic, and project-reference roots did not share one complete closure: " + string.Join(" | ", rootedResult.IncompleteReasons));
+    Require(rootedResult.Entries.Any(entry => entry.PackageId == "Chain.Leaf" && entry.Relationship == "transitive") &&
+            rootedResult.Entries.Any(entry => entry.PackageId == "Project.Root" && entry.Relationship == "transitive"),
+        "Reachable transitive and project-reference packages were not classified with the expected relationship.");
+
+    var ridRoot = Path.Combine(scratch, "reachability-rid");
+    var ridObj = Path.Combine(ridRoot, "obj");
+    var ridCache = Path.Combine(ridRoot, "cache");
+    Directory.CreateDirectory(ridObj);
+    var ridAssets = Path.Combine(ridObj, "project.assets.json");
+    WriteAssets(ridAssets, ridCache, "Direct.Root", Array.Empty<string>());
+    var ridDocument = JsonNode.Parse(File.ReadAllText(ridAssets))!.AsObject();
+    AddPackageToAssets(ridDocument, ridCache, "Rid.Only", new List<string> { "runtimes/win-x64/native/rid-only.dll" }, new JsonObject
+    {
+        ["native"] = new JsonObject { ["runtimes/win-x64/native/rid-only.dll"] = new JsonObject() }
+    });
+    ridDocument["targets"]!["net8.0"]!.AsObject().Remove("Rid.Only/1.0.0");
+    var ridTarget = ridDocument["targets"]!["net8.0"]!.DeepClone()!.AsObject();
+    ridTarget["Direct.Root/1.0.0"]!["dependencies"] = new JsonObject { ["Rid.Only"] = "1.0.0" };
+    ridTarget["Rid.Only/1.0.0"] = new JsonObject { ["native"] = new JsonObject { ["runtimes/win-x64/native/rid-only.dll"] = new JsonObject() } };
+    ridDocument["targets"]!.AsObject()["net8.0/win-x64"] = ridTarget;
+    File.WriteAllText(ridAssets, ridDocument.ToJsonString());
+    var ridResult = ResolvedGraphClassifier.Analyze(ridAssets, ridRoot, strictContent: false);
+    Require(ridResult.IsComplete && ridResult.Entries.Count(entry => entry.PackageId == "Rid.Only") == 1 &&
+            ridResult.Entries.Single(entry => entry.PackageId == "Rid.Only").RuntimeIdentifier == "win-x64",
+        "A package reachable only from the RID-specific target graph was not confined to that graph: " + string.Join(" | ", ridResult.IncompleteReasons));
+}
+
+static void RunVersionEquivalenceRegression(string scratch)
+{
+    var equivalent = new[] { "1", "1.0", "1.0.0", "1.0.0.0", "01.000.000.000" };
+    var identities = equivalent.Select(value =>
+    {
+        Require(PackageIdentity.TryCreate("Version.Package", value, out var identity), $"NuGet-compatible version '{value}' was rejected.");
+        return identity;
+    }).ToArray();
+    Require(identities.All(identity => identity.Equals(identities[0])), "Equivalent numeric package versions did not share one identity.");
+    Require(PackageIdentity.TryCreate("Version.Package", "1.2.3.4", out var nonZeroFourth) &&
+            !PackageIdentity.TryCreate("Version.Package", "1.2.3.4.5", out _),
+        "The four-component version boundary was not enforced.");
+    Require(PackageIdentity.TryCreate("Version.Package", "1.0.0-Alpha.01+Build.1", out var prerelease) &&
+            PackageIdentity.TryCreate("version.package", "1.0.0-alpha.1+Other.2", out var equivalentPrerelease) &&
+            prerelease.Equals(equivalentPrerelease),
+        "Prerelease casing/components or build metadata did not use the canonical identity grammar.");
+    foreach (var invalid in new[] { "1..0", "1.0-", "1.0+", " 1.0.0", "1.0.0/child" })
+    {
+        Require(!PackageIdentity.TryCreate("Version.Package", invalid, out _), $"Malformed version '{invalid}' was accepted.");
+    }
+
+    var root = Path.Combine(scratch, "version-ranges");
+    var obj = Path.Combine(root, "obj");
+    var cache = Path.Combine(root, "cache");
+    Directory.CreateDirectory(obj);
+    var assets = Path.Combine(obj, "project.assets.json");
+    WriteAssets(assets, cache, "Range.Package", Array.Empty<string>());
+    var source = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
+    foreach (var range in new[] { "[1, 1]", "[1.0, 1.0]", "[1.0.0, 1.0.0]", "[1.0.0.0, 1.0.0.0]", "1.0.0.0" })
+    {
+        source["project"]!["frameworks"]!["net8.0"]!["dependencies"]!["Range.Package"]!["version"] = range;
+        File.WriteAllText(assets, source.ToJsonString());
+        var result = ResolvedGraphClassifier.Analyze(assets, root, strictContent: false);
+        Require(result.IsComplete, $"Dependency range '{range}' disagreed with the canonical package identity: {string.Join(" | ", result.IncompleteReasons)}");
+    }
+
+    source["project"]!["frameworks"]!["net8.0"]!["dependencies"]!["Range.Package"]!["version"] = "[1.0.0.0.0, )";
+    File.WriteAllText(assets, source.ToJsonString());
+    var invalidRange = ResolvedGraphClassifier.Analyze(assets, root, strictContent: false);
+    Require(!invalidRange.IsComplete && invalidRange.Entries.Count == 0, "A five-component dependency range was accepted.");
+}
+
 static void RunRestoreIdentitySetCompletenessRegression(string format4Path, string scratch, string baselinePath)
 {
     var cases = new (string Name, Action<JsonObject> Mutate)[]
@@ -2859,12 +3064,59 @@ static JsonObject GetIdentityMap(JsonObject document, string path)
     return current.AsObject();
 }
 
-static string InsertExactPropertyDuplicate(string json, string propertyName, string value)
+static string InsertExactPropertyDuplicate(string json, string propertyName, string value, int searchStart = 0)
+{
+    var token = JsonSerializer.Serialize(propertyName) + ":" + value;
+    var first = json.IndexOf(token, searchStart, StringComparison.Ordinal);
+    Require(first >= 0, $"Could not locate exact property token for '{propertyName}'.");
+    return json[..first] + token + "," + token + json[(first + token.Length)..];
+}
+
+static string InsertCaseVariantPropertyDuplicate(string json, string propertyName, string value)
 {
     var token = JsonSerializer.Serialize(propertyName) + ":" + value;
     var first = json.IndexOf(token, StringComparison.Ordinal);
-    Require(first >= 0, $"Could not locate exact property token for '{propertyName}'.");
-    return json[..first] + token + "," + token + json[(first + token.Length)..];
+    Require(first >= 0, $"Could not locate case-variant property token for '{propertyName}'.");
+    var variant = propertyName.Length == 0
+        ? propertyName
+        : char.IsUpper(propertyName[0])
+            ? char.ToLowerInvariant(propertyName[0]) + propertyName[1..]
+            : char.ToUpperInvariant(propertyName[0]) + propertyName[1..];
+    var duplicate = JsonSerializer.Serialize(variant) + ":" + value;
+    return json[..first] + token + "," + duplicate + json[(first + token.Length)..];
+}
+
+static string InsertRootPropertyDuplicate(string json, JsonObject root, string propertyName) =>
+    InsertExactPropertyDuplicate(json, propertyName, root[propertyName]!.ToJsonString());
+
+static string InsertCaseVariantRootPropertyDuplicate(string json, JsonObject root, string propertyName) =>
+    InsertCaseVariantPropertyDuplicate(json, propertyName, root[propertyName]!.ToJsonString());
+
+static void AddPackageToAssets(JsonObject document, string cache, string packageId, IReadOnlyList<string> files, JsonObject? targetMetadata = null, string libraryType = "package")
+{
+    var packageKey = packageId + "/1.0.0";
+    var target = targetMetadata?.DeepClone()?.AsObject() ?? new JsonObject();
+    document["targets"]!["net8.0"]!.AsObject()[packageKey] = target;
+    var filesNode = new JsonArray();
+    foreach (var file in files)
+    {
+        filesNode.Add(file);
+    }
+
+    document["libraries"]!.AsObject()[packageKey] = new JsonObject
+    {
+        ["type"] = libraryType,
+        ["path"] = packageKey,
+        ["files"] = filesNode
+    };
+    var packageRoot = Path.Combine(cache, packageId, "1.0.0");
+    Directory.CreateDirectory(packageRoot);
+    foreach (var file in files)
+    {
+        var physical = Path.Combine(packageRoot, file.Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(Path.GetDirectoryName(physical)!);
+        File.WriteAllText(physical, "fixture");
+    }
 }
 
 static void AssertRestoreIdentityFailure(string assets, string projectRoot, string baseline, string label)
@@ -2953,7 +3205,13 @@ static void WriteAssets(string path, string cache, string packageId, IReadOnlyLi
         }
     };
     var packageFolders = new JsonObject { [cache] = new JsonObject() };
-    var frameworks = new JsonObject { ["net8.0"] = new JsonObject { ["dependencies"] = new JsonObject() } };
+    var frameworks = new JsonObject
+    {
+        ["net8.0"] = new JsonObject
+        {
+            ["dependencies"] = new JsonObject { [packageId] = PackageDependency() }
+        }
+    };
     var root = new JsonObject
     {
         ["version"] = 3,
@@ -3080,13 +3338,29 @@ static void WriteLargeAssets(string path, string cache, int packageCount)
         };
     }
 
+    var frameworkDependencies = new JsonObject();
+    for (var index = 0; index < packageCount; index++)
+    {
+        frameworkDependencies[$"Reachable.Package.{index.ToString("D4", CultureInfo.InvariantCulture)}"] = PackageDependency();
+    }
+
     var root = new JsonObject
     {
         ["version"] = 3,
         ["targets"] = new JsonObject { ["net8.0"] = target },
         ["libraries"] = libraries,
         ["packageFolders"] = new JsonObject { [cache] = new JsonObject() },
-        ["project"] = new JsonObject { ["restore"] = new JsonObject { ["projectPath"] = Path.Combine(Directory.GetParent(Path.GetDirectoryName(path)!)!.FullName, "Test.csproj") }, ["frameworks"] = new JsonObject { ["net8.0"] = new JsonObject { ["dependencies"] = new JsonObject() } } }
+        ["project"] = new JsonObject
+        {
+            ["restore"] = new JsonObject { ["projectPath"] = Path.Combine(Directory.GetParent(Path.GetDirectoryName(path)!)!.FullName, "Test.csproj") },
+            ["frameworks"] = new JsonObject
+            {
+                ["net8.0"] = new JsonObject
+                {
+                    ["dependencies"] = frameworkDependencies
+                }
+            }
+        }
     };
     File.WriteAllText(path, root.ToJsonString());
     WriteGeneratedImportEvidence(path);

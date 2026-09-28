@@ -42,7 +42,9 @@ $required = @(
     'effective-moniker canonicalization',
     'malformed package ID/version',
     'both directions',
-    'selected package version'
+    'selected package version',
+    'direct/project-reference rooted',
+    'duplicate or case-variant restore JSON properties'
 )
 foreach ($document in $cliDocuments) {
     $text = Get-Content -Raw $document
@@ -108,7 +110,7 @@ if ($builtHelpExitCode -ne 0) {
 }
 Assert-BaselineAliasClauses 'built --help' ($builtHelp -join [Environment]::NewLine)
 
-foreach ($requiredText in @('package-surface scan <path>', '--format text|json|sarif', '--strict-content', '--project <path>', '--telemetry on|off', '--no-telemetry', 'Exit codes:', 'effective-moniker canonicalization', 'malformed package', 'ID/version', 'both directions', 'package versions')) {
+foreach ($requiredText in @('package-surface scan <path>', '--format text|json|sarif', '--strict-content', '--project <path>', '--telemetry on|off', '--no-telemetry', 'Exit codes:', 'effective-moniker canonicalization', 'malformed package', 'ID/version', 'both directions', 'package versions', 'direct/project-reference rooted', 'disconnected package nodes', 'duplicate or case-variant')) {
     if (-not $cliSource.Contains($requiredText, [StringComparison]::Ordinal)) { throw "CLI help is missing '$requiredText'." }
 }
 Write-Output 'CLI_DOCUMENTATION=PASS root/package/developer/release/security docs and built --help retain the same baseline-alias and command contract.'

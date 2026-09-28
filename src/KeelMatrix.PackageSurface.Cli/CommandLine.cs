@@ -567,7 +567,11 @@ public sealed record Options(
         Package XML validates the consumed Import, UsingTask, Exec, and Code contract and tolerates standard unconsumed MSBuild elements and attributes;
         exact, case-variant, near-spelled, or duplicate consumed members remain PS007. JSON extensions are tolerated only with the explicit x- prefix;
         XML extensions require the explicit urn:keelmatrix:packagesurface:extension namespace. One NuGet.Versioning 7.9.0 parser/comparer governs package identities,
-        and SDK-emitted restore metadata accepts fallbackFolders only as an array of strings and SdkAnalysisLevel only as a string.
+        and every admitted restore metadata member is validated against its native SDK shape before graph closure: strings,
+        booleans, string arrays, string- or object-valued maps, nullable suppressed-advisory values, and download-dependency
+        objects are accepted only in those shapes; wrong primitives, nulls, array elements, map values, and malformed nested
+        metadata are PS007 while absent members remain valid. This contract is exercised against SDK 8.0.425, 9.0.121,
+        and 10.0.401 assets in formats 3 and 4; compilerApiVersion is rejected when it is not a string rather than treated as absent.
         dependency ranges, package roots, imports, baseline provenance, and format-4 requirements. Target-package asset groups use NuGet's exact canonical
         property names; unknown or case-variant groups, malformed packageFolders entries, and
         baseline output aliases are checked before any write. An explicit baseline --output path

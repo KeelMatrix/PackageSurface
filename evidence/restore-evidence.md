@@ -22,6 +22,10 @@ Synthetic coverage also passes for `.NETCoreApp,Version=v8.0` ↔ `net8.0`, `.NE
 
 ## Native assets format evidence
 
+The `compilerApiVersion` restore member is required to be a string when present; a wrong primitive is `PS007`, never an absent-value fallback.
+
+The admitted restore-metadata contract is validated before graph closure. Native SDK evidence covers `project.restore`, `project.frameworks`, and `project.restore.frameworks` strings, booleans, string arrays, string-valued maps, object-valued maps, nullable `suppressedAdvisories` values, and `{name,version}` download-dependency objects; dependency values accept both native string and expanded-object forms. Wrong primitives, nulls where non-null, wrong array elements, map values, and malformed nested metadata produce `PS007`, while absent members remain valid. The deterministic regression matrix runs scan, baseline, and check for formats 3 and 4 and exercises SDKs 8.0.425, 9.0.121, and 10.0.401.
+
 The repository's pinned SDK and several installed SDKs were tested with a zero-dependency `net8.0` project using the format-evidence command:
 
 ```powershell

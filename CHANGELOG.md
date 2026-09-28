@@ -20,6 +20,8 @@ PackageSurface release history.
 
 ### Changed
 
+- Restore metadata is now validated against the native shapes emitted by supported SDKs before graph closure. The admitted restore members reject wrong primitives, nulls, array elements, map values, and malformed nested metadata with `PS007` while preserving absent-member semantics and both native dependency-value forms; the regression matrix covers SDK 8.0.425, 9.0.121, and 10.0.401 formats 3 and 4.
+
 - Restore validation now fails closed for malformed typed metadata and shares structural, import-edge, and dependency-traversal budgets across the complete invocation.
 - Restore JSON/XML evidence has one schema-aware boundary that rejects exact or case-variant duplicates, unknown members of consumed JSON objects, and non-canonical spellings of every consumed member; package XML tolerates standard unconsumed MSBuild elements and attributes while keeping the consumed `Import`/`UsingTask`/`Exec`/`Code` contract strict. Explicit `x-` JSON extensions and `urn:keelmatrix:packagesurface:extension` XML attributes remain available for unrelated metadata. Every applicable target graph uses one direct/project-reference rooted package closure for classification, activation, resolved counts, generated imports, and package-input preflight.
 - Same-ID multi-version target graphs are now treated as incoherent restore evidence; direct and transitive edges use their declared version ranges and require exactly one selected package version before classification or package-input preflight.

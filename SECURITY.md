@@ -14,4 +14,8 @@ Analysis fails closed on incomplete evidence. A `PS007` caused by a cumulative b
 
 ## Telemetry boundary
 
+The `compilerApiVersion` restore member is required to be a string when present; a wrong primitive is `PS007`, never an absent-value fallback.
+
+The restore-evidence boundary validates every admitted `project.restore`, `project.frameworks`, and `project.restore.frameworks` member against the native SDK shape before graph closure. Wrong primitives, nulls where non-null, wrong array elements, wrong map values, and malformed nested metadata fail with `PS007`; absent members remain valid. Both string and expanded-object dependency values are accepted, and the shape contract is exercised against SDK 8.0.425, 9.0.121, and 10.0.401 assets in formats 3 and 4.
+
 Optional activation telemetry uses [`KeelMatrix.Telemetry`](https://github.com/KeelMatrix/Telemetry). Activation serializes exactly `event`, `tool`, `tool_version`, `telemetry_version`, `schema_version`, `project_hash`, `installation_hash`, `runtime`, `os`, `ci`, and `timestamp`; the shared heartbeat shape contains the common fields plus `runtime`, `os`, `ci`, and `week`. PackageSurface requests activation only and adds no scanned package, asset, path, TFM, RID, baseline, or diagnostic data. The shared client emits only its established anonymous pseudonymous identifiers and fields described in the [shared privacy policy](https://github.com/KeelMatrix/Telemetry/blob/main/PRIVACY.md); the product-specific boundary is maintained in [PRIVACY.md](PRIVACY.md). Telemetry failures never affect analysis results.

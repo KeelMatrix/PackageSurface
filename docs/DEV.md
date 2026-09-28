@@ -51,6 +51,10 @@ Versioned analyzer applicability is fail-closed unless the consuming compiler AP
 
 ## Restore framework compatibility evidence
 
+The `compilerApiVersion` restore member is required to be a string when present; a wrong primitive is `PS007`, never an absent-value fallback.
+
+The restore schema boundary validates every admitted `project.restore`, `project.frameworks`, and `project.restore.frameworks` member against native SDK output before graph closure. It accepts the observed string, boolean, string-array, string-map, object-map, nullable `suppressedAdvisories`, and `{name,version}` download-dependency shapes; both string and expanded-object dependency values are valid. Wrong primitives, nulls where non-null, array elements, map values, and malformed nested metadata fail as `PS007`, while absent members remain valid. The matrix exercises SDK 8.0.425, 9.0.121, and 10.0.401 format-3/format-4 assets.
+
 Framework reconciliation uses the restore metadata's effective framework and target alias, so equivalent short and long monikers such as `netstandard2.0` and `.NETStandard,Version=v2.0` match case-insensitively. RID-qualified target names are split before matching. The installed-tool regression covers a real `net8.0;netstandard2.0` PackageReference restore through `scan`, `baseline`, and `check`.
 
 To record the native assets format emitted by a locally installed SDK for a zero-dependency `net8.0` project, run:

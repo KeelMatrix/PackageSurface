@@ -27,6 +27,7 @@ function Write-Utf8([string] $Path, [string] $Text) {
 function Invoke-ExpectedValidatorFailure([string] $Name, [string] $TestRoot, [string] $HelpTextPath) {
     $output = @(Invoke-NestedPwsh -NoLogo -NoProfile -File $validator -RepositoryRoot $TestRoot -BuiltHelpTextPath $HelpTextPath 2>&1)
     $exitCode = $LASTEXITCODE
+    $script:LastValidatorFailureOutput = $output -join [Environment]::NewLine
     Write-Output "NEGATIVE_CONTROL=$Name"
     Write-Output 'RAW_RESULT_BEGIN'
     Write-Output "COMMAND_EXIT_CODE=$exitCode"
@@ -35,7 +36,6 @@ function Invoke-ExpectedValidatorFailure([string] $Name, [string] $TestRoot, [st
     if ($exitCode -eq 0) {
         throw "Documentation validator unexpectedly accepted negative control '$Name'."
     }
-    return ($output -join [Environment]::NewLine)
 }
 
 try {
@@ -49,8 +49,8 @@ try {
     $brokenHelpText = $goodHelpText.Replace('every TFM/RID, ', '')
     if ($brokenHelpText -eq $goodHelpText) { throw 'The built-help negative control did not remove its required clause.' }
     Write-Utf8 $brokenHelpPath $brokenHelpText
-    $helpFailure = Invoke-ExpectedValidatorFailure 'built-help-missing-clause' $root $brokenHelpPath
-    if ($helpFailure -notmatch 'TFM and RID coverage') { throw 'The built-help negative control did not report the missing clause class.' }
+    Invoke-ExpectedValidatorFailure 'built-help-missing-clause' $root $brokenHelpPath
+    if ($script:LastValidatorFailureOutput -notmatch 'TFM and RID coverage') { throw 'The built-help negative control did not report the missing clause class.' }
 
     $markdownRoot = Join-Path $scratch 'markdown-missing-clause'
     $relativeFiles = @(
@@ -70,8 +70,8 @@ try {
     $developerText = (Get-Content -Raw $developerDocs).Replace('every TFM/RID, ', '')
     if ($developerText -eq (Get-Content -Raw $developerDocs)) { throw 'The Markdown negative control did not remove its required clause.' }
     Write-Utf8 $developerDocs $developerText
-    $markdownFailure = Invoke-ExpectedValidatorFailure 'markdown-missing-clause' $markdownRoot $goodHelpPath
-    if ($markdownFailure -notmatch 'TFM and RID coverage') { throw 'The Markdown negative control did not report the missing clause class.' }
+    Invoke-ExpectedValidatorFailure 'markdown-missing-clause' $markdownRoot $goodHelpPath
+    if ($script:LastValidatorFailureOutput -notmatch 'TFM and RID coverage') { throw 'The Markdown negative control did not report the missing clause class.' }
 
     Write-Output 'CLI_DOCUMENTATION_REGRESSIONS=PASS built-help and Markdown omissions are rejected.'
 }

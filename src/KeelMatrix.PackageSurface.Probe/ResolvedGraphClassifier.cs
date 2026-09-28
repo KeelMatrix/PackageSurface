@@ -94,6 +94,7 @@ public static class ResolvedGraphClassifier
         "frameworkReferences",
         "imports",
         "runtimeIdentifierGraphPath",
+        "downloadDependencies",
         "warn"
     };
     private static readonly string[] RestoreFrameworkPropertyNames =

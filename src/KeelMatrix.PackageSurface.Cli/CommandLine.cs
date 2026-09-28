@@ -51,9 +51,6 @@ public static class CommandLine
         try
         {
             var baselinePath = options.Command == CommandKind.Baseline ? Path.GetFullPath(options.OutputPath!) : null;
-            var priorBaselineExists = baselinePath is not null && File.Exists(baselinePath);
-            var priorBaseline = priorBaselineExists ? File.ReadAllBytes(baselinePath!) : null;
-            var baselinePersisted = false;
             BaselineDocument? baseline = null;
             var strictContent = options.StrictContent;
             if (options.Command == CommandKind.Check)
@@ -63,6 +60,9 @@ public static class CommandLine
             }
 
             var selection = ProjectSelection.Resolve(options.InputPath!, options.ProjectPath);
+            var baselineTransaction = baselinePath is null
+                ? null
+                : BaselineFileTransaction.Prepare(baselinePath, options.InputPath!, selection);
             var current = AnalyzeSelection(selection, strictContent, options.CompilerApiVersion);
             var diagnostics = current.IncompleteReasons
                 .Select(reason => Diagnostic.Create("PS007", reason))
@@ -91,11 +91,12 @@ public static class CommandLine
                     try
                     {
                         report.EnsureOutputWithinLimit(MaxOutputBytes);
+                        baselineTransaction!.Begin();
                         BaselineDocument.Write(options.OutputPath!, current);
-                        baselinePersisted = true;
                     }
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException or JsonException or NotSupportedException)
                     {
+                        baselineTransaction!.Rollback();
                         diagnostics.Add(Diagnostic.Create("PS007", "The baseline could not be persisted after validating the analyzed surface."));
                         incomplete = true;
                         report = ReportDocument.Create(options.Command, current, diagnostics);
@@ -103,10 +104,11 @@ public static class CommandLine
                 }
 
                 WriteOutput(report, options.Format);
+                baselineTransaction?.Commit();
             }
-            catch when (baselinePersisted)
+            catch when (baselineTransaction is not null)
             {
-                RestoreBaseline(baselinePath!, priorBaselineExists, priorBaseline);
+                baselineTransaction.Rollback();
                 throw;
             }
 
@@ -254,16 +256,144 @@ public static class CommandLine
         }
     }
 
-    private static void RestoreBaseline(string path, bool existed, byte[]? content)
+}
+
+public sealed class BaselineFileTransaction
+{
+    private const long MaxBaselineBytes = 16 * 1024 * 1024;
+    private readonly string path;
+    private readonly string backupPath;
+    private readonly bool existed;
+    private bool began;
+
+    private BaselineFileTransaction(string path, bool existed)
     {
+        this.path = path;
+        this.existed = existed;
+        backupPath = path + ".rollback-" + Guid.NewGuid().ToString("N");
+    }
+
+    public static BaselineFileTransaction Prepare(string path, string inputPath, ProjectSelection selection)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var candidates = new List<string> { Path.GetFullPath(inputPath) };
+        foreach (var project in selection.Projects)
+        {
+            candidates.Add(project.ProjectPath);
+            candidates.Add(project.AssetsPath);
+            var generatedDirectory = Path.GetDirectoryName(project.AssetsPath)!;
+            var projectName = Path.GetFileName(project.ProjectPath);
+            candidates.Add(Path.Combine(generatedDirectory, projectName + ".nuget.g.props"));
+            candidates.Add(Path.Combine(generatedDirectory, projectName + ".nuget.g.targets"));
+        }
+
+        var candidateComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        foreach (var candidate in candidates.Distinct(candidateComparer))
+        {
+            if (PathsReferToSameFile(fullPath, candidate))
+            {
+                throw new InvalidDataException("The baseline output must not alias the selected solution, project, restore, or generated-import input.");
+            }
+        }
+
+        var existed = File.Exists(fullPath);
+        if (Directory.Exists(fullPath)) throw new InvalidDataException("The baseline output path is a directory.");
         if (existed)
         {
-            File.WriteAllBytes(path, content!);
+            var info = new FileInfo(fullPath);
+            if (info.Length > MaxBaselineBytes) throw new InvalidDataException("The existing baseline output exceeds the supported size limit.");
+            if (info.IsReadOnly || (OperatingSystem.IsWindows() ? false : (File.GetUnixFileMode(fullPath) & (UnixFileMode.UserWrite | UnixFileMode.GroupWrite | UnixFileMode.OtherWrite)) == 0))
+            {
+                throw new UnauthorizedAccessException("The existing baseline output is read-only.");
+            }
         }
-        else if (File.Exists(path))
+
+        return new BaselineFileTransaction(fullPath, existed);
+    }
+
+    public void Begin()
+    {
+        if (began) return;
+        if (existed) File.Move(path, backupPath);
+        began = true;
+    }
+
+    public void Commit()
+    {
+        if (began && existed && File.Exists(backupPath)) File.Delete(backupPath);
+        began = false;
+    }
+
+    public void Rollback()
+    {
+        if (!began) return;
+        var restored = false;
+        try
         {
-            File.Delete(path);
+            if (File.Exists(path)) File.Delete(path);
+            if (!existed)
+            {
+                restored = true;
+            }
+            else
+            {
+                File.Move(backupPath, path);
+                restored = true;
+            }
         }
+        finally
+        {
+            if (restored)
+            {
+                if (File.Exists(backupPath)) File.Delete(backupPath);
+                began = false;
+            }
+        }
+    }
+
+    private static bool PathsReferToSameFile(string left, string right)
+    {
+        if (string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)) return true;
+        if (HasReparsePoint(left) || HasReparsePoint(right)) throw new InvalidDataException("The baseline output or an analysis input uses a symlink or reparse-point path.");
+        return false;
+    }
+
+    private static bool HasReparsePoint(string path)
+    {
+        var full = Path.GetFullPath(path);
+        try
+        {
+            if ((File.GetAttributes(full) & FileAttributes.ReparsePoint) != 0) return true;
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+
+        var currentPath = full;
+        while (!File.Exists(currentPath) && !Directory.Exists(currentPath))
+        {
+            var parentPath = Path.GetDirectoryName(currentPath);
+            if (string.IsNullOrWhiteSpace(parentPath) || parentPath == currentPath) break;
+            currentPath = parentPath;
+        }
+
+        var current = new DirectoryInfo(File.Exists(full) ? Path.GetDirectoryName(full)! : currentPath);
+        if (File.Exists(full))
+        {
+            var file = new FileInfo(full);
+            if ((file.Attributes & FileAttributes.ReparsePoint) != 0 || file.LinkTarget is not null) return true;
+        }
+
+        while (current is not null)
+        {
+            if ((current.Attributes & FileAttributes.ReparsePoint) != 0 || current.LinkTarget is not null) return true;
+            current = current.Parent;
+        }
+
+        return false;
     }
 }
 
@@ -327,7 +457,10 @@ public sealed record Options(
         and capability filtering; project/restore and dependency-group sets must be complete in
         both directions, dependency values must use supported restore grammar and match selected
         package versions, and incoherent metadata, duplicate aliases, or malformed package
-        ID/version keys are PS007. It does not
+        ID/version keys are PS007. The current candidate supports Windows, Linux, and macOS
+        for SDK-style PackageReference restore outputs; hosted CI validates the command contract
+        on all three platforms. Baseline JSON uses exact camelCase property names, named string
+        enums, and rejects duplicate or unknown members. It does not
         evaluate MSBuild conditions, execute package code, or crawl the global package cache.
         """;
 
@@ -654,6 +787,12 @@ public sealed record BaselineDocument(
     private const int MaxBaselineEntries = 50_000;
     private const int MaxBaselineIncompleteReasons = 1_024;
     private const int MaxBaselineTextLength = 4_096;
+    private static readonly string[] RootRequiredProperties = { "schemaVersion", "toolVersion", "strictContent", "entries", "incompleteReasons" };
+    private static readonly string[] EntryRequiredProperties = { "project", "context", "packageId", "version", "relationship", "capability", "packageRelativePath", "present", "active", "incomplete" };
+    private static readonly string[] EntryOptionalProperties = { "targetFramework", "runtimeIdentifier", "sha256", "incompleteReason", "observedPrimitives" };
+    private static readonly string[] EntryStringProperties = { "project", "context", "packageId", "version", "relationship", "capability", "packageRelativePath" };
+    private static readonly string[] EntryBooleanProperties = { "present", "active", "incomplete" };
+    private static readonly string[] EntryNullableTextProperties = { "targetFramework", "runtimeIdentifier", "sha256", "incompleteReason" };
 
     public static BaselineDocument Read(string path)
     {
@@ -731,7 +870,7 @@ public sealed record BaselineDocument(
 
         foreach (var reason in document.IncompleteReasons) RequireText(reason, "incompleteReason");
         if (document.IncompleteReasons.Count > 0) throw new InvalidDataException("An incomplete analysis cannot be used as an approved baseline.");
-        var identities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var identities = new HashSet<SurfaceIdentity>(SurfaceIdentityComparer.Instance);
         foreach (var entry in document.Entries)
         {
             if (entry is null) throw new InvalidDataException("Baseline contains a null entry.");
@@ -764,9 +903,15 @@ public sealed record BaselineDocument(
     private static void ValidateJsonShape(JsonElement root)
     {
         if (root.ValueKind != JsonValueKind.Object) throw new InvalidDataException("Baseline root must be an object.");
-        foreach (var property in new[] { "schemaVersion", "toolVersion", "strictContent", "entries", "incompleteReasons" })
+        ValidateObjectProperties(root, RootRequiredProperties, Array.Empty<string>(), "baseline");
+
+        if (root.GetProperty("schemaVersion").ValueKind != JsonValueKind.Number || !root.GetProperty("schemaVersion").TryGetInt32(out _)) throw new InvalidDataException("Baseline schemaVersion must be an integer.");
+        if (root.GetProperty("toolVersion").ValueKind != JsonValueKind.String) throw new InvalidDataException("Baseline toolVersion must be a string.");
+        if (root.GetProperty("strictContent").ValueKind != JsonValueKind.True && root.GetProperty("strictContent").ValueKind != JsonValueKind.False) throw new InvalidDataException("Baseline strictContent must be a boolean.");
+        if (root.GetProperty("incompleteReasons").ValueKind != JsonValueKind.Array) throw new InvalidDataException("Baseline incompleteReasons must be an array.");
+        foreach (var reason in root.GetProperty("incompleteReasons").EnumerateArray())
         {
-            if (!root.TryGetProperty(property, out _)) throw new InvalidDataException($"Baseline is missing required field '{property}'.");
+            if (reason.ValueKind != JsonValueKind.String) throw new InvalidDataException("Baseline incompleteReasons must contain only strings.");
         }
 
         var entries = root.GetProperty("entries");
@@ -775,10 +920,51 @@ public sealed record BaselineDocument(
         foreach (var entry in entries.EnumerateArray())
         {
             if (entry.ValueKind != JsonValueKind.Object) throw new InvalidDataException("Baseline contains a non-object entry.");
-            foreach (var property in new[] { "context", "packageId", "version", "relationship", "capability", "packageRelativePath", "present", "active", "incomplete" })
+            ValidateObjectProperties(entry, EntryRequiredProperties, EntryOptionalProperties, "baseline entry");
+            foreach (var property in EntryStringProperties)
             {
-                if (!entry.TryGetProperty(property, out _)) throw new InvalidDataException($"Baseline entry is missing required field '{property}'.");
+                if (entry.GetProperty(property).ValueKind != JsonValueKind.String) throw new InvalidDataException($"Baseline entry field '{property}' must be a string.");
             }
+            if (!IsCanonicalEnumName(entry.GetProperty("context"), typeof(SurfaceContextKind)) ||
+                !IsCanonicalEnumName(entry.GetProperty("capability"), typeof(CapabilityKind)))
+            {
+                throw new InvalidDataException("Baseline entry enum values must use canonical named strings.");
+            }
+            foreach (var property in EntryBooleanProperties)
+            {
+                if (entry.GetProperty(property).ValueKind is not (JsonValueKind.True or JsonValueKind.False)) throw new InvalidDataException($"Baseline entry field '{property}' must be a boolean.");
+            }
+
+            foreach (var property in EntryNullableTextProperties)
+            {
+                if (entry.TryGetProperty(property, out var value) && value.ValueKind is not (JsonValueKind.String or JsonValueKind.Null)) throw new InvalidDataException($"Baseline entry field '{property}' must be a string or null.");
+            }
+
+            if (entry.TryGetProperty("observedPrimitives", out var primitives))
+            {
+                if (primitives.ValueKind is not (JsonValueKind.Array or JsonValueKind.Null)) throw new InvalidDataException("Baseline entry observedPrimitives must be an array or null.");
+                if (primitives.ValueKind == JsonValueKind.Array && primitives.EnumerateArray().Any(value => value.ValueKind != JsonValueKind.String)) throw new InvalidDataException("Baseline entry observedPrimitives must contain only strings.");
+            }
+        }
+    }
+
+    private static bool IsCanonicalEnumName(JsonElement value, Type enumType) =>
+        value.ValueKind == JsonValueKind.String && Enum.GetNames(enumType).Contains(value.GetString(), StringComparer.Ordinal);
+
+    private static void ValidateObjectProperties(JsonElement value, IReadOnlyCollection<string> required, IReadOnlyCollection<string> optional, string description)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var property in value.EnumerateObject())
+        {
+            if (!seen.Add(property.Name)) throw new InvalidDataException($"{description} contains duplicate property '{property.Name}'.");
+            var canonical = required.Concat(optional).FirstOrDefault(candidate => candidate.Equals(property.Name, StringComparison.OrdinalIgnoreCase));
+            if (canonical is null) throw new InvalidDataException($"{description} contains unknown property '{property.Name}'.");
+            if (!canonical.Equals(property.Name, StringComparison.Ordinal)) throw new InvalidDataException($"{description} contains a non-canonical property '{property.Name}'.");
+        }
+
+        foreach (var property in required)
+        {
+            if (!seen.Contains(property)) throw new InvalidDataException($"{description} is missing required field '{property}'.");
         }
     }
 
@@ -830,16 +1016,16 @@ public sealed record BaselineEntry(
 {
     public static BaselineEntry From(SurfaceEntry entry) => new(entry.Project, entry.Context, entry.TargetFramework, entry.RuntimeIdentifier, entry.PackageId, entry.Version, entry.Relationship, entry.Capability, entry.PackageRelativePath, entry.Present, entry.Active, CapabilityPolicy.IsStrictContentEligible(entry) ? entry.Sha256 : null, entry.Incomplete, entry.IncompleteReason, entry.ObservedPrimitives);
 
-    public string SurfaceIdentity => SurfaceIdentityKey.Create(this);
+    [JsonIgnore]
+    public SurfaceIdentity SurfaceIdentity => SurfaceIdentityKey.Create(this);
 }
 
 public static class SurfaceIdentityKey
 {
-    public static string Create(BaselineEntry entry) => Create(entry.Project, entry.Context, entry.TargetFramework, entry.RuntimeIdentifier, entry.PackageId, entry.Relationship, entry.Capability, entry.PackageRelativePath);
-    public static string Create(SurfaceEntry entry) => Create(entry.Project, entry.Context, entry.TargetFramework, entry.RuntimeIdentifier, entry.PackageId, entry.Relationship, entry.Capability, entry.PackageRelativePath);
-
-    private static string Create(string? project, SurfaceContextKind context, string? targetFramework, string? runtimeIdentifier, string packageId, string relationship, CapabilityKind capability, string path) =>
-        string.Join("|", project, context, targetFramework, runtimeIdentifier, packageId, relationship, capability, path);
+    public static SurfaceIdentity Create(BaselineEntry entry) => SurfaceIdentity.Create(entry.Project, entry.Context, entry.TargetFramework, entry.RuntimeIdentifier, entry.PackageId, entry.Version, entry.Relationship, entry.Capability, entry.PackageRelativePath);
+    public static SurfaceIdentity Create(SurfaceEntry entry) => SurfaceIdentity.From(entry);
+    public static SurfaceIdentity CreateCategory(BaselineEntry entry) => SurfaceIdentity.Create(entry.Project, entry.Context, entry.TargetFramework, entry.RuntimeIdentifier, entry.PackageId, entry.Version, string.Empty, entry.Capability, null);
+    public static SurfaceIdentity CreateCategory(SurfaceEntry entry) => SurfaceIdentity.Create(entry.Project, entry.Context, entry.TargetFramework, entry.RuntimeIdentifier, entry.PackageId, entry.Version, string.Empty, entry.Capability, null);
 }
 
 public sealed record Diagnostic(
@@ -871,13 +1057,13 @@ public static class DiffEngine
 {
     public static IReadOnlyList<Diagnostic> Compare(IReadOnlyList<BaselineEntry> baseline, IReadOnlyList<SurfaceEntry> current, bool strictContent)
     {
-        var approved = baseline.Where(entry => entry.Active).ToDictionary(SurfaceIdentityKey.Create, StringComparer.OrdinalIgnoreCase);
-        var observed = current.Where(entry => entry.Active).ToDictionary(SurfaceIdentityKey.Create, StringComparer.OrdinalIgnoreCase);
+        var approved = baseline.Where(entry => entry.Active).ToDictionary(SurfaceIdentityKey.Create, SurfaceIdentityComparer.Instance);
+        var observed = current.Where(entry => entry.Active).ToDictionary(SurfaceIdentityKey.Create, SurfaceIdentityComparer.Instance);
         var diagnostics = new List<Diagnostic>();
         foreach (var added in observed.Where(pair => !approved.ContainsKey(pair.Key)).Select(pair => pair.Value))
         {
             var id = SpecificId(added.Capability);
-            if (!baseline.Any(entry => entry.Active && CategoryScope(entry) == CategoryScope(added))) diagnostics.Add(Diagnostic.ForEntry("PS001", FormatEntryMessage("New capability category", added), added));
+            if (!baseline.Any(entry => entry.Active && SurfaceIdentityComparer.Instance.Equals(SurfaceIdentityKey.CreateCategory(entry), SurfaceIdentityKey.CreateCategory(added)))) diagnostics.Add(Diagnostic.ForEntry("PS001", FormatEntryMessage("New capability category", added), added));
             diagnostics.Add(Diagnostic.ForEntry("PS002", FormatEntryMessage("New active capability asset", added), added));
             diagnostics.Add(Diagnostic.ForEntry(id, FormatEntryMessage("Capability surface changed", added), added));
         }
@@ -889,8 +1075,8 @@ public static class DiffEngine
 
         if (strictContent)
         {
-            var approvedContent = baseline.Where(entry => CapabilityPolicy.IsStrictContentEligible(entry.Capability, entry.Present, entry.Active)).ToDictionary(SurfaceIdentityKey.Create, StringComparer.OrdinalIgnoreCase);
-            var observedContent = current.Where(CapabilityPolicy.IsStrictContentEligible).ToDictionary(SurfaceIdentityKey.Create, StringComparer.OrdinalIgnoreCase);
+            var approvedContent = baseline.Where(entry => CapabilityPolicy.IsStrictContentEligible(entry.Capability, entry.Present, entry.Active)).ToDictionary(SurfaceIdentityKey.Create, SurfaceIdentityComparer.Instance);
+            var observedContent = current.Where(CapabilityPolicy.IsStrictContentEligible).ToDictionary(SurfaceIdentityKey.Create, SurfaceIdentityComparer.Instance);
             foreach (var pair in observedContent)
             {
                 if (!approvedContent.TryGetValue(pair.Key, out var prior) || string.Equals(prior.Sha256, pair.Value.Sha256, StringComparison.OrdinalIgnoreCase)) continue;
@@ -901,8 +1087,6 @@ public static class DiffEngine
         return diagnostics;
     }
 
-    private static string CategoryScope(BaselineEntry entry) => string.Join("|", entry.Project, entry.Context, entry.TargetFramework, entry.RuntimeIdentifier, entry.PackageId, entry.Capability);
-    private static string CategoryScope(SurfaceEntry entry) => string.Join("|", entry.Project, entry.Context, entry.TargetFramework, entry.RuntimeIdentifier, entry.PackageId, entry.Capability);
     private static string FormatEntryMessage(string prefix, BaselineEntry entry) => $"{prefix}: package {entry.PackageId} version {entry.Version} ({entry.Relationship}), {entry.Capability} {entry.Context} {entry.TargetFramework ?? "project"}{(entry.RuntimeIdentifier is null ? string.Empty : "/" + entry.RuntimeIdentifier)} at {entry.PackageRelativePath}.";
     private static string FormatEntryMessage(string prefix, SurfaceEntry entry) => $"{prefix}: package {entry.PackageId} version {entry.Version} ({entry.Relationship}), {entry.Capability} {entry.Context} {entry.TargetFramework ?? "project"}{(entry.RuntimeIdentifier is null ? string.Empty : "/" + entry.RuntimeIdentifier)} at {entry.PackageRelativePath}.";
     private static string SpecificId(CapabilityKind kind) => kind switch { CapabilityKind.BuildProps or CapabilityKind.BuildTargets or CapabilityKind.BuildTransitive or CapabilityKind.BuildMultiTargeting => "PS003", CapabilityKind.CompilerExtension or CapabilityKind.CompileSourceInjection => "PS004", CapabilityKind.NativeRuntime => "PS006", _ => "PS002" };
@@ -1025,6 +1209,6 @@ public sealed record SarifMessage(string Text);
 
 public static class JsonOptions
 {
-    public static readonly JsonSerializerOptions Default = new() { PropertyNameCaseInsensitive = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase, Converters = { new JsonStringEnumConverter() } };
+    public static readonly JsonSerializerOptions Default = new() { PropertyNameCaseInsensitive = false, PropertyNamingPolicy = JsonNamingPolicy.CamelCase, Converters = { new JsonStringEnumConverter(namingPolicy: null, allowIntegerValues: false) } };
     public static readonly JsonSerializerOptions Indented = new(Default) { WriteIndented = true, DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
 }

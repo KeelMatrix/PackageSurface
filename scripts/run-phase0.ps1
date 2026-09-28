@@ -1,4 +1,5 @@
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '../build/Invoke-NestedPwsh.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Set-Location $root
 $env:NUGET_PACKAGES = Join-Path $root '.phase0/packages'
@@ -83,7 +84,7 @@ foreach ($consumer in $exclusionConsumers) {
 }
 
 $languageConventionScript = Join-Path $root 'scripts/test-language-conventions.ps1'
-Invoke-Recorded "pwsh -NoProfile -File $languageConventionScript" { pwsh -NoProfile -File $languageConventionScript }
+Invoke-Recorded "pwsh -NoProfile -File $languageConventionScript" { Invoke-NestedPwsh -NoProfile -File $languageConventionScript }
 
 $testProject = Join-Path $root 'tests/KeelMatrix.PackageSurface.Probe.Tests/KeelMatrix.PackageSurface.Probe.Tests.csproj'
 Invoke-Recorded "dotnet build $testProject --configuration Release" { dotnet build $testProject --configuration Release }
@@ -112,11 +113,11 @@ foreach ($consumer in $exclusionConsumers) {
 }
 
 $proofScript = Join-Path $root 'scripts/verify-no-execution.ps1'
-Invoke-Recorded "pwsh -NoProfile -File $proofScript" { pwsh -NoProfile -File $proofScript }
+Invoke-Recorded "pwsh -NoProfile -File $proofScript" { Invoke-NestedPwsh -NoProfile -File $proofScript }
 $historyRegressionScript = Join-Path $root 'scripts/test-history-hygiene-regressions.ps1'
-Invoke-Recorded "pwsh -NoProfile -File $historyRegressionScript" { pwsh -NoProfile -File $historyRegressionScript }
+Invoke-Recorded "pwsh -NoProfile -File $historyRegressionScript" { Invoke-NestedPwsh -NoProfile -File $historyRegressionScript }
 $historyScript = Join-Path $root 'scripts/test-history-hygiene.ps1'
-$historyResult = Invoke-Recorded "pwsh -NoProfile -File $historyScript" { pwsh -NoProfile -File $historyScript } -AllowFailure
+$historyResult = Invoke-Recorded "pwsh -NoProfile -File $historyScript" { Invoke-NestedPwsh -NoProfile -File $historyScript } -AllowFailure
 
 $expected = @(Get-Content (Join-Path $root 'fixtures/expected.json') -Raw | ConvertFrom-Json)
 $classified = @{}

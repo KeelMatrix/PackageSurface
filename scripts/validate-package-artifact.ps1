@@ -68,7 +68,7 @@ try {
     $pdbText = [Text.Encoding]::UTF8.GetString($pdbBytes)
     if ($pdbText -notmatch 'https://raw\.githubusercontent\.com/KeelMatrix/PackageSurface/') { throw 'Shipping PDB has no SourceLink metadata.' }
     $privatePathMarker = -join (@(112,97,112,101,114,99,108,105,112) | ForEach-Object { [char]$_ })
-    if ($pdbText -match "(?i)([A-Za-z]:\\|/Users/|/home/|$privatePathMarker|AppData|obj\\|bin\\)") { throw 'Shipping PDB contains a local filesystem path.' }
+    if ($pdbText -match "(?i)((?<![A-Za-z])[A-Za-z]:[\\/]|/(?:Users|home)/|$privatePathMarker|AppData|(?:^|[\\/])(?:obj|bin)[\\/])") { throw 'Shipping PDB contains a local filesystem path.' }
 }
 finally { $package.Dispose() }
 

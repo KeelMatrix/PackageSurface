@@ -567,7 +567,8 @@ public sealed record Options(
         baseline output aliases are checked before any write. An explicit baseline --output path
         is preflighted against every reachable package-inventory file resolved from packageFolders,
         including global and fallback roots, direct and transitive packages, every TFM/RID, nested
-        static imports, and all inventory categories. Lexical . and .. aliases, single and multiple
+        static imports, and all inventory categories. Baseline inventory coverage includes every
+        TFM/RID and all inventory categories. Lexical . and .. aliases, single and multiple
         hardlinks, and direct, interior, and ancestor reparse/symlink aliases are rejected with
         PS007 and controlled exit code 2 before any mutation. A rejection preserves existing output
         and input bytes; genuinely distinct outputs are accepted. The current

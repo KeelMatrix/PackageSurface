@@ -563,9 +563,11 @@ public sealed record Options(
         and capability filtering; project/restore and dependency-group sets must be complete in
         both directions, dependency values must use supported restore grammar; package versions must
         match exactly one selected package version, and incoherent metadata, duplicate aliases, duplicate or case-variant
-        restore JSON properties, unknown members, non-canonical spellings of consumed JSON/XML members, or malformed package ID/version keys are PS007.
-        JSON extensions are tolerated only with the explicit x- prefix; consumed XML attributes only with the explicit
-        urn:keelmatrix:packagesurface:extension namespace. One NuGet.Versioning 7.9.0 parser/comparer governs package identities,
+        restore JSON properties, unknown members of consumed JSON objects, non-canonical spellings of consumed JSON/XML members, or malformed package ID/version keys are PS007.
+        Package XML validates the consumed Import, UsingTask, Exec, and Code contract and tolerates standard unconsumed MSBuild elements and attributes;
+        exact, case-variant, near-spelled, or duplicate consumed members remain PS007. JSON extensions are tolerated only with the explicit x- prefix;
+        XML extensions require the explicit urn:keelmatrix:packagesurface:extension namespace. One NuGet.Versioning 7.9.0 parser/comparer governs package identities,
+        and SDK-emitted restore metadata accepts fallbackFolders only as an array of strings and SdkAnalysisLevel only as a string.
         dependency ranges, package roots, imports, baseline provenance, and format-4 requirements. Target-package asset groups use NuGet's exact canonical
         property names; unknown or case-variant groups, malformed packageFolders entries, and
         baseline output aliases are checked before any write. An explicit baseline --output path

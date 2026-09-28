@@ -18,6 +18,215 @@ public enum SurfaceContextKind
     Project
 }
 
+/// <summary>
+/// The identity NuGet assigns to a resolved package. Package IDs and versions
+/// compare using NuGet's case-insensitive, normalized-version rules; the
+/// original spelling is retained for developer-facing output.
+/// </summary>
+public sealed class PackageIdentity : IEquatable<PackageIdentity>
+{
+    private PackageIdentity(string id, string version, string normalizedVersion)
+    {
+        Id = id;
+        Version = version;
+        NormalizedVersion = normalizedVersion;
+    }
+
+    public string Id { get; }
+    public string Version { get; }
+    public string NormalizedVersion { get; }
+    public string CanonicalKey => Id + "/" + NormalizedVersion;
+
+    public static bool TryCreate(string id, string version, out PackageIdentity identity)
+    {
+        identity = null!;
+        if (!IsValidId(id) || !TryNormalizeVersion(version, out var normalizedVersion)) return false;
+        identity = new PackageIdentity(id, version, normalizedVersion);
+        return true;
+    }
+
+    public bool Equals(PackageIdentity? other) => other is not null &&
+        string.Equals(Id, other.Id, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(NormalizedVersion, other.NormalizedVersion, StringComparison.OrdinalIgnoreCase);
+
+    public override bool Equals(object? obj) => Equals(obj as PackageIdentity);
+
+    public override int GetHashCode() => HashCode.Combine(
+        StringComparer.OrdinalIgnoreCase.GetHashCode(Id),
+        StringComparer.OrdinalIgnoreCase.GetHashCode(NormalizedVersion));
+
+    private static bool IsValidId(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value is "." or "..") return false;
+        foreach (var character in value)
+        {
+            if (!char.IsLetterOrDigit(character) && character is not ('.' or '-' or '_')) return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryNormalizeVersion(string value, out string normalized)
+    {
+        normalized = string.Empty;
+        if (string.IsNullOrWhiteSpace(value) || value.Contains('/', StringComparison.Ordinal) || value.Contains('\\', StringComparison.Ordinal)) return false;
+
+        var buildSeparator = value.IndexOf('+');
+        var withoutBuild = buildSeparator < 0 ? value : value[..buildSeparator];
+        if (buildSeparator >= 0 && !IsValidIdentifiers(value[(buildSeparator + 1)..])) return false;
+
+        var prereleaseSeparator = withoutBuild.IndexOf('-');
+        var numeric = prereleaseSeparator < 0 ? withoutBuild : withoutBuild[..prereleaseSeparator];
+        var prerelease = prereleaseSeparator < 0 ? null : withoutBuild[(prereleaseSeparator + 1)..];
+        if (numeric.Length == 0 || (prerelease is not null && !IsValidIdentifiers(prerelease))) return false;
+
+        var numericParts = numeric.Split('.');
+        if (numericParts.Any(part => part.Length == 0 || part.Any(character => !char.IsDigit(character)))) return false;
+        var normalizedParts = numericParts
+            .Select(part => part.TrimStart('0') is { Length: > 0 } trimmed ? trimmed : "0")
+            .ToList();
+        while (normalizedParts.Count < 3) normalizedParts.Add("0");
+        while (normalizedParts.Count > 3 && normalizedParts[^1] == "0") normalizedParts.RemoveAt(normalizedParts.Count - 1);
+
+        normalized = string.Join('.', normalizedParts);
+        if (!string.IsNullOrEmpty(prerelease))
+        {
+            normalized += "-" + string.Join('.', prerelease.Split('.').Select(NormalizeVersionIdentifier));
+        }
+        return true;
+    }
+
+    private static string NormalizeVersionIdentifier(string value) =>
+        value.All(char.IsDigit)
+            ? value.TrimStart('0') is { Length: > 0 } trimmed ? trimmed : "0"
+            : value.ToLowerInvariant();
+
+    private static bool IsValidIdentifiers(string value) =>
+        value.Length > 0 && value.Split('.').All(part => part.Length > 0 && part.All(character => char.IsLetterOrDigit(character) || character == '-'));
+}
+
+/// <summary>
+/// The stable surface identity used by classification, deduplication,
+/// baselines, diffs, and reports. Package version remains provenance, but is
+/// intentionally not part of equality so a version-only update is checked as
+/// the same reviewed asset and can be detected by strict-content hashing.
+/// </summary>
+public sealed class SurfaceIdentity
+{
+    private SurfaceIdentity(
+        string? project,
+        SurfaceContextKind context,
+        string? targetFramework,
+        string? runtimeIdentifier,
+        PackageIdentity package,
+        string relationship,
+        CapabilityKind capability,
+        string? packageRelativePath)
+    {
+        Project = project;
+        Context = context;
+        TargetFramework = targetFramework;
+        RuntimeIdentifier = runtimeIdentifier;
+        Package = package;
+        Relationship = relationship;
+        Capability = capability;
+        PackageRelativePath = packageRelativePath;
+    }
+
+    public string? Project { get; }
+    public SurfaceContextKind Context { get; }
+    public string? TargetFramework { get; }
+    public string? RuntimeIdentifier { get; }
+    public PackageIdentity Package { get; }
+    public string Relationship { get; }
+    public CapabilityKind Capability { get; }
+    public string? PackageRelativePath { get; }
+
+    public static SurfaceIdentity Create(
+        string? project,
+        SurfaceContextKind context,
+        string? targetFramework,
+        string? runtimeIdentifier,
+        string packageId,
+        string version,
+        string relationship,
+        CapabilityKind capability,
+        string? packageRelativePath)
+    {
+        if (!PackageIdentity.TryCreate(packageId, version, out var package))
+        {
+            throw new InvalidDataException("The package identity is not valid.");
+        }
+
+        return new SurfaceIdentity(NormalizePath(project), context, targetFramework, runtimeIdentifier, package, relationship, capability, NormalizePath(packageRelativePath));
+    }
+
+    public static SurfaceIdentity From(SurfaceEntry entry) => Create(
+        entry.Project,
+        entry.Context,
+        entry.TargetFramework,
+        entry.RuntimeIdentifier,
+        entry.PackageId,
+        entry.Version,
+        entry.Relationship,
+        entry.Capability,
+        entry.PackageRelativePath);
+
+    public static SurfaceIdentity ForProjectAggregation(SurfaceEntry entry) => Create(
+        entry.Project,
+        entry.Context,
+        entry.TargetFramework,
+        entry.RuntimeIdentifier,
+        entry.PackageId,
+        entry.Version,
+        string.Empty,
+        entry.Capability,
+        entry.PackageRelativePath);
+
+    private static string? NormalizePath(string? value) => value?.Replace('\\', '/');
+}
+
+public sealed class SurfaceIdentityComparer : IEqualityComparer<SurfaceIdentity>
+{
+    public static SurfaceIdentityComparer Instance { get; } = new();
+    private static StringComparison FileSystemComparison => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+    private static StringComparer FileSystemComparer => OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+
+    public bool Equals(SurfaceIdentity? x, SurfaceIdentity? y)
+    {
+        if (x is null || y is null) return x is null && y is null;
+        return string.Equals(x.Project, y.Project, FileSystemComparison) &&
+            x.Context == y.Context &&
+            string.Equals(x.TargetFramework, y.TargetFramework, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(x.RuntimeIdentifier, y.RuntimeIdentifier, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(x.Package.Id, y.Package.Id, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(x.Relationship, y.Relationship, StringComparison.OrdinalIgnoreCase) &&
+            x.Capability == y.Capability &&
+            string.Equals(x.PackageRelativePath, y.PackageRelativePath, FileSystemComparison);
+    }
+
+    public int GetHashCode(SurfaceIdentity obj)
+    {
+        var hash = new HashCode();
+        hash.Add(obj.Project, FileSystemComparer);
+        hash.Add(obj.Context);
+        hash.Add(obj.TargetFramework, StringComparer.OrdinalIgnoreCase);
+        hash.Add(obj.RuntimeIdentifier, StringComparer.OrdinalIgnoreCase);
+        hash.Add(obj.Package.Id, StringComparer.OrdinalIgnoreCase);
+        hash.Add(obj.Relationship, StringComparer.OrdinalIgnoreCase);
+        hash.Add(obj.Capability);
+        hash.Add(obj.PackageRelativePath, FileSystemComparer);
+        return hash.ToHashCode();
+    }
+}
+
+public sealed class PackageIdentityComparer : IEqualityComparer<PackageIdentity>
+{
+    public static PackageIdentityComparer Instance { get; } = new();
+    public bool Equals(PackageIdentity? x, PackageIdentity? y) => x?.Equals(y) == true;
+    public int GetHashCode(PackageIdentity obj) => obj.GetHashCode();
+}
+
 public static class CapabilityPolicy
 {
     public static bool IsStrictContentEligible(SurfaceEntry entry) =>

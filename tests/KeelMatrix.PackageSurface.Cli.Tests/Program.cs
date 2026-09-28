@@ -51,6 +51,8 @@ RunTelemetryStateMachineTests();
 RunTelemetryPayloadAllowlistRegression();
 RunParserMessageRegression();
 RunBaselineContractRegression();
+RunPackageIdentityAndPathRegression();
+RunBaselineJsonBoundaryRegression();
 
 Console.WriteLine($"PASS: diagnostics {string.Join(", ", expected)}");
 return 0;
@@ -395,6 +397,50 @@ static void RunBaselineTransactionRegression(string parent)
         "The transaction baseline seed did not succeed.");
     var approved = File.ReadAllBytes(baseline);
 
+    var aliasedAssets = File.ReadAllBytes(assets);
+    Require(CaptureCommand("baseline", assets, "--output", assets, "--no-telemetry").ExitCode == 2,
+        "A baseline output equal to project.assets.json was accepted.");
+    Require(aliasedAssets.SequenceEqual(File.ReadAllBytes(assets)), "An aliased baseline attempt changed project.assets.json.");
+    var aliasedGenerated = Path.Combine(obj, "Test.csproj.nuget.g.targets");
+    var generatedBefore = File.ReadAllBytes(aliasedGenerated);
+    Require(CaptureCommand("baseline", assets, "--output", Path.Combine(obj, ".", "Test.csproj.nuget.g.targets"), "--no-telemetry").ExitCode == 2,
+        "A baseline output equal to a generated restore import was accepted.");
+    Require(generatedBefore.SequenceEqual(File.ReadAllBytes(aliasedGenerated)), "An aliased baseline attempt changed generated restore evidence.");
+
+    var boundaryOutput = Path.Combine(root, "boundary.json");
+    File.WriteAllBytes(boundaryOutput, new byte[16 * 1024 * 1024]);
+    Require(CaptureCommand("baseline", assets, "--output", boundaryOutput, "--no-telemetry").ExitCode == 0,
+        "A pre-existing baseline exactly at the size limit was rejected.");
+
+    var oversizedOutput = Path.Combine(root, "oversized.json");
+    File.WriteAllBytes(oversizedOutput, new byte[(16 * 1024 * 1024) + 1]);
+    var oversizedBefore = File.ReadAllBytes(oversizedOutput);
+    Require(CaptureCommand("baseline", assets, "--output", oversizedOutput, "--no-telemetry").ExitCode == 2,
+        "A pre-existing oversized baseline was accepted.");
+    Require(oversizedBefore.SequenceEqual(File.ReadAllBytes(oversizedOutput)), "Oversized baseline rejection changed prior data.");
+
+    var projectInput = Path.Combine(root, "Test.csproj");
+    File.WriteAllText(projectInput, "<Project />");
+    var projectBefore = File.ReadAllBytes(projectInput);
+    Require(CaptureCommand("baseline", assets, "--output", Path.Combine(root, ".", "Test.csproj"), "--no-telemetry").ExitCode == 2,
+        "A baseline output equal to the selected project was accepted.");
+    Require(projectBefore.SequenceEqual(File.ReadAllBytes(projectInput)), "A project-alias rejection changed the project.");
+
+    var readOnlyOutput = Path.Combine(root, "readonly.json");
+    File.WriteAllBytes(readOnlyOutput, approved);
+    File.SetAttributes(readOnlyOutput, FileAttributes.ReadOnly);
+    try
+    {
+        var readOnlyBefore = File.ReadAllBytes(readOnlyOutput);
+        Require(CaptureCommand("baseline", assets, "--output", readOnlyOutput, "--no-telemetry").ExitCode == 2,
+            "A read-only baseline output was accepted.");
+        Require(readOnlyBefore.SequenceEqual(File.ReadAllBytes(readOnlyOutput)), "A read-only baseline failure changed prior data.");
+    }
+    finally
+    {
+        File.SetAttributes(readOnlyOutput, FileAttributes.Normal);
+    }
+
     foreach (var format in new[] { "text", "json", "sarif" })
     {
         var output = new StringWriter(CultureInfo.InvariantCulture);
@@ -464,6 +510,134 @@ static void RunBaselineTransactionRegression(string parent)
     finally
     {
         SetOutputSink(null);
+    }
+}
+
+static void RunPackageIdentityAndPathRegression()
+{
+    var scratch = Path.Combine(Path.GetTempPath(), "packagesurface-identity-provenance-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(scratch);
+    try
+    {
+        var mismatchRoot = Path.Combine(scratch, "mismatch");
+        var mismatchCache = Path.Combine(mismatchRoot, "cache");
+        var mismatchObj = Path.Combine(mismatchRoot, "obj");
+        Directory.CreateDirectory(mismatchObj);
+        var mismatchAssets = Path.Combine(mismatchObj, "project.assets.json");
+        WriteAssets(mismatchAssets, mismatchCache, "Claimed.Package", new List<string> { "build/tampered.targets" }, createFiles: true);
+        var mismatch = JsonNode.Parse(File.ReadAllText(mismatchAssets))!.AsObject();
+        mismatch["libraries"]!["Claimed.Package/1.0.0"]!["path"] = "Physical.Package/2.0.0";
+        mismatch["targets"]!["net8.0"]!["Claimed.Package/1.0.0"]!["build"] = new JsonObject { ["build/tampered.targets"] = new JsonObject() };
+        var physical = Path.Combine(mismatchCache, "Physical.Package", "2.0.0", "build");
+        Directory.CreateDirectory(physical);
+        File.WriteAllText(Path.Combine(physical, "tampered.targets"), "<Project />");
+        File.WriteAllText(Path.Combine(mismatchObj, "Test.csproj.nuget.g.targets"), "<Project><Import Project=\"$(NuGetPackageRoot)/Physical.Package/2.0.0/build/tampered.targets\" /></Project>");
+        File.WriteAllText(mismatchAssets, mismatch.ToJsonString());
+        var mismatchResult = ResolvedGraphClassifier.Analyze(mismatchAssets, mismatchRoot, strictContent: false);
+        Require(!mismatchResult.IsComplete && mismatchResult.Entries.Count == 0, "A package library path from a different physical package identity was attributed successfully.");
+
+        var normalizedRoot = Path.Combine(scratch, "normalized");
+        var normalizedCache = Path.Combine(normalizedRoot, "cache");
+        var normalizedObj = Path.Combine(normalizedRoot, "obj");
+        Directory.CreateDirectory(normalizedObj);
+        var normalizedAssets = Path.Combine(normalizedObj, "project.assets.json");
+        WriteAssets(normalizedAssets, normalizedCache, "Normalized.Package", Array.Empty<string>());
+        var normalized = JsonNode.Parse(File.ReadAllText(normalizedAssets))!.AsObject();
+        normalized["libraries"]!["Normalized.Package/1.0.0"]!["path"] = "Normalized.Package/01.0";
+        File.WriteAllText(normalizedAssets, normalized.ToJsonString());
+        var normalizedResult = ResolvedGraphClassifier.Analyze(normalizedAssets, normalizedRoot, strictContent: false);
+        Require(normalizedResult.IsComplete && normalizedResult.ResolvedPackageCount == 1, "Equivalent NuGet version representations were not resolved to the physical package root.");
+        Require(PackageIdentity.TryCreate("Normalized.Package", "1.0.0-alpha.01", out var prereleaseA) &&
+            PackageIdentity.TryCreate("normalized.package", "1.0.0-alpha.1", out var prereleaseB) &&
+            prereleaseA.Equals(prereleaseB), "Equivalent normalized prerelease versions were not treated as the same package identity.");
+
+        var caseRoot = Path.Combine(scratch, "case");
+        var caseCache = Path.Combine(caseRoot, "cache");
+        var caseObj = Path.Combine(caseRoot, "obj");
+        Directory.CreateDirectory(caseObj);
+        var caseAssets = Path.Combine(caseObj, "project.assets.json");
+        WriteAssets(caseAssets, caseCache, "Case.Package", new List<string> { "build/Case.targets" }, createFiles: true);
+        var caseDocument = JsonNode.Parse(File.ReadAllText(caseAssets))!.AsObject();
+        caseDocument["targets"]!["net8.0"]!["Case.Package/1.0.0"]!["build"] = new JsonObject { ["build/Case.targets"] = new JsonObject() };
+        File.WriteAllText(caseAssets, caseDocument.ToJsonString());
+        File.WriteAllText(Path.Combine(caseCache, "Case.Package", "1.0.0", "build", "Case.targets"), "<Project />");
+        File.WriteAllText(Path.Combine(caseObj, "Test.csproj.nuget.g.targets"), "<Project><Import Project=\"$(NuGetPackageRoot)/Case.Package/1.0.0/build/case.targets\" /></Project>");
+        var caseResult = ResolvedGraphClassifier.Analyze(caseAssets, caseRoot, strictContent: false);
+        if (OperatingSystem.IsWindows())
+        {
+            Require(caseResult.IsComplete && caseResult.Entries.Any(entry => entry.Active), "Windows package/import path comparison rejected a case-insensitive match: " + string.Join(" | ", caseResult.IncompleteReasons));
+        }
+        else
+        {
+            Require(!caseResult.IsComplete && caseResult.Entries.Count == 0, "A wrong-case generated import was accepted on a case-sensitive host.");
+        }
+
+        var identity = Entry(CapabilityKind.BuildTargets, "build/Case.targets", new string('a', 64)) with { Project = "Src/Consumer.csproj" };
+        var projectCase = identity with { Project = "src/Consumer.csproj" };
+        var pathCase = identity with { PackageRelativePath = "build/case.targets" };
+        if (OperatingSystem.IsWindows())
+        {
+            Require(DiffEngine.Compare(new[] { BaselineEntry.From(identity) }, new[] { projectCase }, false).Count == 0 &&
+                DiffEngine.Compare(new[] { BaselineEntry.From(identity) }, new[] { pathCase }, false).Count == 0,
+                "Windows filesystem identity comparison rejected an equivalent project or asset path.");
+        }
+        else
+        {
+            Require(DiffEngine.Compare(new[] { BaselineEntry.From(identity) }, new[] { projectCase }, false).Count > 0 &&
+                DiffEngine.Compare(new[] { BaselineEntry.From(identity) }, new[] { pathCase }, false).Count > 0,
+                "Case-distinct project or asset identities collapsed on a case-sensitive host.");
+        }
+    }
+    finally
+    {
+        if (Directory.Exists(scratch)) Directory.Delete(scratch, recursive: true);
+    }
+}
+
+static void RunBaselineJsonBoundaryRegression()
+{
+    var scratch = Path.Combine(Path.GetTempPath(), "packagesurface-json-boundary-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(scratch);
+    try
+    {
+        var entry = Entry(CapabilityKind.BuildTargets, "build/Schema.targets", new string('a', 64)) with { Project = "Consumer.csproj" };
+        var first = Path.Combine(scratch, "first.json");
+        var second = Path.Combine(scratch, "second.json");
+        var snapshot = new SurfaceSnapshot(new[] { entry }, Array.Empty<string>(), false, 1);
+        BaselineDocument.Write(first, snapshot);
+        var roundTrip = BaselineDocument.Read(first);
+        BaselineDocument.Write(second, new SurfaceSnapshot(roundTrip.Entries.Select(value => new SurfaceEntry(value.TargetFramework, value.RuntimeIdentifier, value.Context, value.PackageId, value.Version, value.Relationship, value.Capability, value.PackageRelativePath, value.Present, value.Active, value.Sha256, value.Incomplete, value.IncompleteReason, value.Project, value.ObservedPrimitives)).ToArray(), Array.Empty<string>(), roundTrip.StrictContent, 1));
+        Require(File.ReadAllBytes(first).SequenceEqual(File.ReadAllBytes(second)), "Canonical baseline write-read-write bytes were not stable.");
+
+        var canonical = JsonSerializer.Serialize(new BaselineDocument(1, "0.1.0", false, new[] { BaselineEntry.From(entry) }, Array.Empty<string>()), JsonOptions.Default);
+        var cases = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["exact duplicate"] = canonical.Replace("\"schemaVersion\":1,", "\"schemaVersion\":1,\"schemaVersion\":1,", StringComparison.Ordinal),
+            ["case duplicate"] = canonical.Replace("\"strictContent\":false,", "\"strictContent\":false,\"StrictContent\":false,", StringComparison.Ordinal),
+            ["integer enum"] = canonical.Replace("\"context\":\"Target\"", "\"context\":0", StringComparison.Ordinal),
+            ["alternative enum spelling"] = canonical.Replace("\"context\":\"Target\"", "\"context\":\"target\"", StringComparison.Ordinal),
+            ["unknown enum"] = canonical.Replace("\"capability\":\"BuildTargets\"", "\"capability\":\"Unknown\"", StringComparison.Ordinal),
+            ["wrong primitive"] = canonical.Replace("\"packageId\":\"Example.Package\"", "\"packageId\":null", StringComparison.Ordinal),
+            ["unknown member"] = canonical[..^1] + ",\"futureField\":true}",
+            ["future schema"] = canonical.Replace("\"schemaVersion\":1", "\"schemaVersion\":2", StringComparison.Ordinal)
+        };
+        foreach (var (name, json) in cases)
+        {
+            var path = Path.Combine(scratch, name.Replace(' ', '-') + ".json");
+            File.WriteAllText(path, json);
+            try
+            {
+                _ = BaselineDocument.Read(path);
+                throw new InvalidOperationException($"Baseline JSON boundary case '{name}' was accepted.");
+            }
+            catch (InvalidDataException)
+            {
+            }
+        }
+    }
+    finally
+    {
+        if (Directory.Exists(scratch)) Directory.Delete(scratch, recursive: true);
     }
 }
 

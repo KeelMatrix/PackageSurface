@@ -114,6 +114,9 @@ try {
     Invoke-GateStep 'CLI documentation contract' {
         & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-cli-documentation.ps1')
     }
+    Invoke-GateStep 'documentation route and support contract' {
+        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-documentation-contract.ps1') -RepositoryRoot $root
+    }
     Invoke-GateStep 'Release build' {
         & dotnet build $solution --configuration Release --no-restore
     }

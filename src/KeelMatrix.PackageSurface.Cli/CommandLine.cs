@@ -1,9 +1,11 @@
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using KeelMatrix.PackageSurface.Probe;
 using KeelMatrix.Telemetry;
+using Microsoft.Win32.SafeHandles;
 
 namespace KeelMatrix.PackageSurface;
 
@@ -355,7 +357,88 @@ public sealed class BaselineFileTransaction
     {
         if (string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)) return true;
         if (HasReparsePoint(left) || HasReparsePoint(right)) throw new InvalidDataException("The baseline output or an analysis input uses a symlink or reparse-point path.");
-        return false;
+        if (!File.Exists(left) || !File.Exists(right)) return false;
+
+        if (!FileIdentity.TryRead(left, out var leftIdentity) || !FileIdentity.TryRead(right, out var rightIdentity))
+        {
+            throw new InvalidDataException("The baseline alias could not be validated using file identity.");
+        }
+
+        return leftIdentity == rightIdentity;
+    }
+
+    private readonly record struct FileIdentity(ulong DeviceOrVolume, ulong FileNumber)
+    {
+        public static bool TryRead(string path, out FileIdentity identity)
+        {
+            identity = default;
+            try
+            {
+                using var handle = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                return OperatingSystem.IsWindows()
+                    ? TryReadWindows(handle, out identity)
+                    : TryReadUnix(handle, out identity);
+            }
+            catch (IOException)
+            {
+                return false;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return false;
+            }
+            catch (PlatformNotSupportedException)
+            {
+                return false;
+            }
+        }
+
+        private static bool TryReadWindows(SafeFileHandle handle, out FileIdentity identity)
+        {
+            identity = default;
+            if (!GetFileInformationByHandle(handle, out var information)) return false;
+            identity = new FileIdentity(information.VolumeSerialNumber, ((ulong)information.FileIndexHigh << 32) | information.FileIndexLow);
+            return true;
+        }
+
+        private static bool TryReadUnix(SafeFileHandle handle, out FileIdentity identity)
+        {
+            identity = default;
+            var buffer = Marshal.AllocHGlobal(256);
+            try
+            {
+                if (FStat(handle.DangerousGetHandle(), buffer) != 0) return false;
+                identity = new FileIdentity(
+                    unchecked((ulong)Marshal.ReadInt64(buffer, 0)),
+                    unchecked((ulong)Marshal.ReadInt64(buffer, 8)));
+                return true;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetFileInformationByHandle(SafeFileHandle file, out ByHandleFileInformation information);
+
+        [DllImport("libc", EntryPoint = "fstat", SetLastError = true)]
+        private static extern int FStat(IntPtr fileDescriptor, IntPtr buffer);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ByHandleFileInformation
+        {
+            public uint FileAttributes;
+            public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime;
+            public System.Runtime.InteropServices.ComTypes.FILETIME LastAccessTime;
+            public System.Runtime.InteropServices.ComTypes.FILETIME LastWriteTime;
+            public uint VolumeSerialNumber;
+            public uint FileSizeHigh;
+            public uint FileSizeLow;
+            public uint NumberOfLinks;
+            public uint FileIndexHigh;
+            public uint FileIndexLow;
+        }
     }
 
     private static bool HasReparsePoint(string path)
@@ -457,7 +540,10 @@ public sealed record Options(
         and capability filtering; project/restore and dependency-group sets must be complete in
         both directions, dependency values must use supported restore grammar and match selected
         package versions, and incoherent metadata, duplicate aliases, or malformed package
-        ID/version keys are PS007. The current candidate supports Windows, Linux, and macOS
+        ID/version keys are PS007. Target-package asset groups use NuGet's exact canonical
+        property names; unknown or case-variant groups, malformed packageFolders entries, and
+        baseline output aliases including hardlinks are PS007 before any write. The current
+        candidate supports Windows, Linux, and macOS
         for SDK-style PackageReference restore outputs; hosted CI validates the command contract
         on all three platforms. Baseline JSON uses exact camelCase property names, named string
         enums, and rejects duplicate or unknown members. It does not

@@ -32,6 +32,26 @@ public static class ResolvedGraphClassifier
     private static readonly Regex ExistsCondition = new(
         "^\\s*Exists\\s*\\(\\s*['\\\"](?<path>[^'\\\"]*)['\\\"]\\s*\\)\\s*$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly HashSet<string> TargetPackagePropertyNames = new(StringComparer.Ordinal)
+    {
+        "type",
+        "framework",
+        "dependencies",
+        "frameworkAssemblies",
+        "frameworkReferences",
+        "compile",
+        "runtime",
+        "embed",
+        "resource",
+        "analyzers",
+        "native",
+        "build",
+        "buildTransitive",
+        "buildMultiTargeting",
+        "contentFiles",
+        "runtimeTargets",
+        "tools"
+    };
 
     // Containment compares canonical identities. Production uses Path.GetFullPath;
     // the test harness injects a deterministic canonicalization function through this
@@ -1001,13 +1021,48 @@ public static class ResolvedGraphClassifier
             throw new InvalidDataException("project.assets.json has an invalid packageFolders object.");
         }
 
-        var result = folders.EnumerateObject().Select(folder => folder.Name).Where(folder => !string.IsNullOrWhiteSpace(folder)).ToArray();
-        if (result.Length == 0)
+        AddDuplicatePropertyReasons(folders, "package folder", incomplete);
+        var result = new List<string>();
+        foreach (var folder in folders.EnumerateObject())
+        {
+            if (string.IsNullOrWhiteSpace(folder.Name))
+            {
+                incomplete.Add("Restore evidence contains an empty package folder path.");
+                continue;
+            }
+
+            if (folder.Value.ValueKind != JsonValueKind.Object)
+            {
+                incomplete.Add($"Package folder '{folder.Name}' has malformed metadata.");
+                continue;
+            }
+
+            if (!Path.IsPathRooted(folder.Name))
+            {
+                incomplete.Add($"Package folder '{folder.Name}' is not an absolute path.");
+                continue;
+            }
+
+            try
+            {
+                result.Add(Path.GetFullPath(folder.Name));
+            }
+            catch (ArgumentException)
+            {
+                incomplete.Add($"Package folder '{folder.Name}' is not a valid path.");
+            }
+            catch (NotSupportedException)
+            {
+                incomplete.Add($"Package folder '{folder.Name}' is not a supported path.");
+            }
+        }
+
+        if (result.Count == 0)
         {
             throw new InvalidDataException("project.assets.json has no resolved package folder.");
         }
 
-        return result;
+        return result.Distinct(FileSystemPathComparer).ToArray();
     }
 
     private static int? ValidateAssetsFormat(JsonElement root, List<string> incomplete)
@@ -1628,6 +1683,12 @@ public static class ResolvedGraphClassifier
         AddDuplicatePropertyReasons(package, "target package metadata", incomplete);
         foreach (var group in package.EnumerateObject())
         {
+            if (!TargetPackagePropertyNames.Contains(group.Name))
+            {
+                incomplete.Add($"Target package {packageKey} has an unsupported asset group or metadata property '{group.Name}'.");
+                continue;
+            }
+
             if (group.Name.Equals("dependencies", StringComparison.OrdinalIgnoreCase))
             {
                 if (group.Value.ValueKind != JsonValueKind.Object)

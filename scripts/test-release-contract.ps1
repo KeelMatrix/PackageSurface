@@ -1,4 +1,5 @@
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '../build/Invoke-NestedPwsh.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $validator = Join-Path $root 'scripts/validate-release.ps1'
 $projectFile = Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/KeelMatrix.PackageSurface.Cli.csproj'
@@ -32,7 +33,7 @@ function Invoke-ReleaseValidation {
     )
     if ($RequireFinalized) { $arguments += '-RequireFinalized' }
     if ($FirstRelease) { $arguments += '-FirstRelease' }
-    $null = & pwsh @arguments 2>$null
+    $null = Invoke-NestedPwsh -ArgumentList $arguments 2>$null
     return $LASTEXITCODE
 }
 

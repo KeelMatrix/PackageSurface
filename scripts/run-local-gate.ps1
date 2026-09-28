@@ -3,7 +3,13 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '../build/Invoke-NestedPwsh.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$launchGuard = Join-Path $root 'build/Test-NestedPwshLaunch.ps1'
+& $launchGuard -SelfTest
+if ($LASTEXITCODE -ne 0) { throw 'Nested PowerShell launch guard self-test failed.' }
+& $launchGuard
+if ($LASTEXITCODE -ne 0) { throw 'Nested PowerShell launch guard failed.' }
 Set-Location -LiteralPath $root
 $timer = [Diagnostics.Stopwatch]::StartNew()
 $previousCi = $env:CI
@@ -84,7 +90,7 @@ try {
     }
     try {
         Invoke-GateStep 'controlled restore and permanent fixture suite' {
-            & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/run-phase0.ps1')
+            Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/run-phase0.ps1')
         }
     }
     finally {
@@ -100,38 +106,41 @@ try {
         & dotnet format $solution --verify-no-changes --no-restore
     }
     Invoke-GateStep 'repository history hygiene' {
-        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-history-hygiene.ps1') -RepositoryRoot $root
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-history-hygiene.ps1') -RepositoryRoot $root
     }
     Invoke-GateStep 'repository history hygiene regressions' {
-        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-history-hygiene-regressions.ps1')
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-history-hygiene-regressions.ps1')
     }
     Invoke-GateStep 'restore identity canonicalization' {
-        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-restore-identity-canonicalization.ps1') -RepositoryRoot $root
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-restore-identity-canonicalization.ps1') -RepositoryRoot $root
     }
     Invoke-GateStep 'packability graph audit' {
-        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-packability.ps1')
-    }
-    Invoke-GateStep 'CLI documentation contract' {
-        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-cli-documentation.ps1')
-    }
-    Invoke-GateStep 'documentation route and support contract' {
-        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-documentation-contract.ps1') -RepositoryRoot $root
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-packability.ps1')
     }
     Invoke-GateStep 'Release build' {
         & dotnet build $solution --configuration Release --no-restore
     }
+    Invoke-GateStep 'CLI documentation contract' {
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-cli-documentation.ps1') -BuiltHelpPath (Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/bin/Release/net8.0/KeelMatrix.PackageSurface.dll')
+    }
+    Invoke-GateStep 'CLI documentation negative controls' {
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-cli-documentation-regressions.ps1') -RepositoryRoot $root
+    }
+    Invoke-GateStep 'documentation route and support contract' {
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-documentation-contract.ps1') -RepositoryRoot $root
+    }
     Invoke-GateStep 'no-code-execution proof' {
-        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/verify-no-execution.ps1')
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/verify-no-execution.ps1')
     }
     $cliTests = Join-Path $root 'tests/KeelMatrix.PackageSurface.Cli.Tests/KeelMatrix.PackageSurface.Cli.Tests.csproj'
     Invoke-GateStep 'CLI contract and resource tests' {
         & dotnet run --project $cliTests --configuration Release --no-build
     }
     Invoke-GateStep 'release contract regressions' {
-        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-release-contract.ps1')
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-release-contract.ps1')
     }
     Invoke-GateStep 'vulnerability audit regressions' {
-        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-vulnerability-audit.ps1')
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-vulnerability-audit.ps1')
     }
 
     $singleProject = Join-Path $root 'fixtures/consumer/SingleTarget'
@@ -147,7 +156,7 @@ try {
     Invoke-GateStep 'public wording hygiene' {
         $nupkg = Get-ChildItem -LiteralPath $feed -Filter '*.nupkg' -File | Select-Object -First 1
         if ($null -eq $nupkg) { throw 'The package archive was not found for wording validation.' }
-        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-public-wording.ps1') -RepositoryRoot $root -PackagePath $nupkg.FullName
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-public-wording.ps1') -RepositoryRoot $root -PackagePath $nupkg.FullName
     }
 
     $packageVersion = '0.1.0'
@@ -219,15 +228,15 @@ try {
     finally { $snupkg.Dispose() }
 
     Invoke-GateStep 'final package metadata and symbol contract' {
-        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/validate-package-artifact.ps1') -PackagePath $nupkgs[0].FullName -SymbolsPath $snupkgs[0].FullName -ExpectedVersion $packageVersion
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/validate-package-artifact.ps1') -PackagePath $nupkgs[0].FullName -SymbolsPath $snupkgs[0].FullName -ExpectedVersion $packageVersion
     }
 
     Invoke-GateStep 'package-content negative regressions' {
-        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-package-content-gate.ps1') -PackagePath $nupkgs[0].FullName -ArtifactDirectory $feed
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-package-content-gate.ps1') -PackagePath $nupkgs[0].FullName -ArtifactDirectory $feed
     }
 
     Invoke-GateStep 'sensitive/local pack-input regressions' {
-        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-sensitive-pack-inputs.ps1') -ProjectFile $cliProject
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-sensitive-pack-inputs.ps1') -ProjectFile $cliProject
     }
 
     $expectedAuditProjects = @(
@@ -253,7 +262,7 @@ try {
         [IO.File]::WriteAllText($auditFile, ($audit -join [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
     }
     Invoke-GateStep 'vulnerability finding policy' {
-        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/assert-no-vulnerabilities.ps1') -InputPath $auditFile -CoveragePath $coverageFile -ExpectedProjectPath ($expectedAuditProjects -join '|') -ExpectedFramework net8.0
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/assert-no-vulnerabilities.ps1') -InputPath $auditFile -CoveragePath $coverageFile -ExpectedProjectPath ($expectedAuditProjects -join '|') -ExpectedFramework net8.0
     }
 
     $toolConfig = Join-Path $scratch 'tool.config'
@@ -269,10 +278,10 @@ try {
     if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) { throw 'The isolated tool command was not installed.' }
     Ensure-DotnetRootForInstalledTool
     Invoke-GateStep 'installed hardening regressions' {
-        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-installed-hardening.ps1') -ToolPath $tool
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-installed-hardening.ps1') -ToolPath $tool
     }
     Invoke-GateStep 'framework moniker regressions' {
-        & pwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-framework-moniker-regressions.ps1') -ToolPath $tool
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-framework-moniker-regressions.ps1') -ToolPath $tool
     }
     Invoke-GateStep 'installed tool version' { & $tool --version }
     Invoke-GateStep 'installed tool scan' { & $tool scan $singleProject --format json --no-telemetry }

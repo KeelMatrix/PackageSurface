@@ -1,8 +1,8 @@
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '../build/Invoke-NestedPwsh.ps1')
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $gate = Join-Path $root 'scripts/test-history-hygiene.ps1'
-$pwsh = (Get-Command pwsh -ErrorAction Stop).Source
 $scratchParent = [IO.Path]::GetTempPath()
 $scratch = Join-Path $scratchParent ('packagesurface-hygiene-' + [Guid]::NewGuid().ToString('N'))
 
@@ -68,7 +68,7 @@ function Invoke-Gate {
                 Join-Path $PathPrefix $legacyShimName
             }
         }
-        $outputItems = @(& $pwsh '-NoLogo' '-NoProfile' '-File' $gate '-RepositoryRoot' $Path '-GitCommandPath' $gitCommand 2>&1)
+        $outputItems = @(Invoke-NestedPwsh '-NoLogo' '-NoProfile' '-File' $gate '-RepositoryRoot' $Path '-GitCommandPath' $gitCommand 2>&1)
         $restricted = @(
             (-join (@(80,97,112,101,114,99,108,105,112) | ForEach-Object { [char]$_ })),
             (-join (@(67,111,100,101,120) | ForEach-Object { [char]$_ })),

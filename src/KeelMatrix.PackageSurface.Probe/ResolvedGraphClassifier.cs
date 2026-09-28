@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml;
 using System.Xml.Linq;
+using NuGet.Versioning;
 
 namespace KeelMatrix.PackageSurface.Probe;
 
@@ -52,6 +53,37 @@ public static class ResolvedGraphClassifier
         "runtimeTargets",
         "tools"
     };
+    private static readonly string[] RestoreRootPropertyNames =
+    {
+        "version",
+        "targets",
+        "libraries",
+        "packageFolders",
+        "project",
+        "projectFileDependencyGroups"
+    };
+    private static readonly string[] ProjectPropertyNames = { "restore", "frameworks" };
+    private static readonly string[] RestorePropertyNames = { "projectPath", "compilerApiVersion", "frameworks" };
+    private static readonly string[] FrameworkPropertyNames = { "framework", "targetAlias", "dependencies" };
+    private static readonly string[] DirectDependencyPropertyNames =
+    {
+        "version",
+        "target",
+        "include",
+        "exclude",
+        "includeAssets",
+        "excludeAssets",
+        "privateAssets",
+        "generatePathProperty",
+        "versionCentrallyManaged",
+        "autoReferenced",
+        "project",
+        "library"
+    };
+    private static readonly string[] LibraryPropertyNames = { "type", "path", "files" };
+    private static readonly string[] ContentFilePropertyNames = { "buildAction", "codeLanguage" };
+    private static readonly string[] GeneratedImportElementNames = { "Import" };
+    private static readonly string[] PackageMsBuildElementNames = { "UsingTask", "Exec", "Import", "Code" };
 
     // Containment compares canonical identities. Production uses Path.GetFullPath;
     // the test harness injects a deterministic canonicalization function through this
@@ -222,6 +254,31 @@ public static class ResolvedGraphClassifier
         AnalysisBudget? budget = null,
         string? compilerApiVersion = null) =>
         AnalyzeCore(assetsFile, projectRoot, strictContent, projectContext, selectedProjectPath, budget, compilerApiVersion);
+
+    public static string? ReadRestoreProjectPath(string assetsFile)
+    {
+        try
+        {
+            EnsureFileWithinLimit(assetsFile, MaxMetadataFileBytes, "project.assets.json");
+            using var stream = File.OpenRead(assetsFile);
+            using var document = JsonDocument.Parse(stream, new JsonDocumentOptions { MaxDepth = MaxJsonDepth });
+            var incomplete = new List<string>();
+            ValidateRestoreJsonStructure(document.RootElement, incomplete);
+            if (incomplete.Count > 0) return null;
+
+            if (document.RootElement.TryGetProperty("project", out var project) && project.ValueKind == JsonValueKind.Object &&
+                project.TryGetProperty("restore", out var restore) && restore.ValueKind == JsonValueKind.Object &&
+                restore.TryGetProperty("projectPath", out var projectPath) && projectPath.ValueKind == JsonValueKind.String)
+            {
+                return projectPath.GetString();
+            }
+        }
+        catch (Exception ex) when (ex is IOException or JsonException or InvalidDataException or InvalidOperationException)
+        {
+        }
+
+        return null;
+    }
 
     public static IReadOnlyList<string> GetReachablePackageInputPaths(string assetsFile)
     {
@@ -1184,6 +1241,126 @@ public static class ResolvedGraphClassifier
                 }
             }
         }
+
+        ValidateRestoreJsonSchema(root, incomplete);
+    }
+
+    private static void ValidateRestoreJsonSchema(JsonElement root, List<string> incomplete)
+    {
+        ValidateConsumedPropertySpellings(root, "restore root", RestoreRootPropertyNames, incomplete);
+
+        if (TryGetExactObject(root, "project", out var project))
+        {
+            ValidateConsumedPropertySpellings(project, "project metadata", ProjectPropertyNames, incomplete);
+            if (TryGetExactObject(project, "frameworks", out var projectFrameworks))
+            {
+                ValidateFrameworkMap(projectFrameworks, "project framework", incomplete);
+            }
+
+            if (TryGetExactObject(project, "restore", out var restore))
+            {
+                ValidateConsumedPropertySpellings(restore, "restore metadata", RestorePropertyNames, incomplete);
+                if (TryGetExactObject(restore, "frameworks", out var restoreFrameworks))
+                {
+                    ValidateFrameworkMap(restoreFrameworks, "restore framework", incomplete);
+                }
+            }
+        }
+
+        if (TryGetExactObject(root, "libraries", out var libraries))
+        {
+            foreach (var library in libraries.EnumerateObject())
+            {
+                if (library.Value.ValueKind == JsonValueKind.Object)
+                {
+                    ValidateConsumedPropertySpellings(library.Value, "library metadata", LibraryPropertyNames, incomplete);
+                }
+            }
+        }
+
+        if (TryGetExactObject(root, "targets", out var targets))
+        {
+            foreach (var target in targets.EnumerateObject())
+            {
+                if (target.Value.ValueKind != JsonValueKind.Object) continue;
+                foreach (var package in target.Value.EnumerateObject())
+                {
+                    if (package.Value.ValueKind != JsonValueKind.Object) continue;
+                    ValidateTargetPackageSchema(package.Value, package.Name, incomplete);
+                }
+            }
+        }
+
+        if (TryGetExactObject(root, "packageFolders", out var packageFolders))
+        {
+            foreach (var folder in packageFolders.EnumerateObject())
+            {
+                if (folder.Value.ValueKind == JsonValueKind.Object)
+                {
+                    ValidateConsumedPropertySpellings(folder.Value, "package-folder metadata", Array.Empty<string>(), incomplete);
+                }
+            }
+        }
+    }
+
+    private static void ValidateFrameworkMap(JsonElement frameworks, string description, List<string> incomplete)
+    {
+        foreach (var framework in frameworks.EnumerateObject())
+        {
+            if (framework.Value.ValueKind != JsonValueKind.Object) continue;
+            ValidateConsumedPropertySpellings(framework.Value, description + " metadata", FrameworkPropertyNames, incomplete);
+            if (!TryGetExactObject(framework.Value, "dependencies", out var dependencies)) continue;
+            foreach (var dependency in dependencies.EnumerateObject())
+            {
+                if (dependency.Value.ValueKind == JsonValueKind.Object)
+                {
+                    ValidateConsumedPropertySpellings(dependency.Value, "direct dependency metadata", DirectDependencyPropertyNames, incomplete);
+                }
+            }
+        }
+    }
+
+    private static void ValidateTargetPackageSchema(JsonElement package, string packageKey, List<string> incomplete)
+    {
+        ValidateConsumedPropertySpellings(package, $"target package metadata for {packageKey}", TargetPackagePropertyNames, incomplete);
+        if (TryGetExactObject(package, "contentFiles", out var contentFiles))
+        {
+            foreach (var contentFile in contentFiles.EnumerateObject())
+            {
+                if (contentFile.Value.ValueKind == JsonValueKind.Object)
+                {
+                    ValidateConsumedPropertySpellings(contentFile.Value, "content-file metadata", ContentFilePropertyNames, incomplete);
+                }
+            }
+        }
+    }
+
+    private static void ValidateConsumedPropertySpellings(
+        JsonElement value,
+        string description,
+        IReadOnlyCollection<string> consumedNames,
+        List<string> incomplete)
+    {
+        if (value.ValueKind != JsonValueKind.Object || consumedNames.Count == 0) return;
+        foreach (var property in value.EnumerateObject())
+        {
+            var canonical = consumedNames.FirstOrDefault(name => property.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+            if (canonical is not null && !property.Name.Equals(canonical, StringComparison.Ordinal))
+            {
+                incomplete.Add($"Restore evidence contains a non-canonical spelling of consumed {description} field '{property.Name}'; expected '{canonical}'.");
+            }
+        }
+    }
+
+    private static bool TryGetExactObject(JsonElement parent, string propertyName, out JsonElement value)
+    {
+        if (parent.ValueKind == JsonValueKind.Object && parent.TryGetProperty(propertyName, out value) && value.ValueKind == JsonValueKind.Object)
+        {
+            return true;
+        }
+
+        value = default;
+        return false;
     }
 
     private static HashSet<string> DetermineAnalyzerPackages(
@@ -2213,14 +2390,13 @@ public static class ResolvedGraphClassifier
 
         packageId = value[..separator].Trim();
         var version = value[(separator + 2)..].Trim();
-        if (!IsValidPackageId(packageId) || !TryParseRestoreVersion(version, out var minimum))
+        if (!IsValidPackageId(packageId) || !TryParsePackageVersionRange($"[{version}, )", out requirement))
         {
             packageId = string.Empty;
             requirement = null!;
             return false;
         }
 
-        requirement = new PackageVersionRange(minimum, true, null, false);
         return true;
     }
 
@@ -2243,105 +2419,21 @@ public static class ResolvedGraphClassifier
     private static bool TryParsePackageVersionRange(string? value, out PackageVersionRange requirement)
     {
         requirement = null!;
-        if (string.IsNullOrWhiteSpace(value))
+        if (string.IsNullOrWhiteSpace(value) || !VersionRange.TryParse(value, out var parsed) || parsed is null || parsed.IsFloating || (!parsed.HasLowerBound && !parsed.HasUpperBound))
         {
             return false;
         }
 
-        var text = value.Trim();
-        if (text[0] is not ('[' or '('))
-        {
-            return TryParseRestoreVersion(text, out var minimum) &&
-                SetMinimumRange(minimum, out requirement);
-        }
-
-        if (text.Length < 2 || text[^1] is not (']' or ')'))
-        {
-            return false;
-        }
-
-        var lowerInclusive = text[0] == '[';
-        var upperInclusive = text[^1] == ']';
-        var inner = text[1..^1];
-        var comma = inner.IndexOf(',');
-        if (comma < 0)
-        {
-            if (!lowerInclusive || !upperInclusive || !TryParseRestoreVersion(inner.Trim(), out var exact))
-            {
-                return false;
-            }
-
-            requirement = new PackageVersionRange(exact, true, exact, true);
-            return true;
-        }
-
-        if (inner.IndexOf(',', comma + 1) >= 0)
-        {
-            return false;
-        }
-
-        var lowerText = inner[..comma].Trim();
-        var upperText = inner[(comma + 1)..].Trim();
-        PackageIdentity? lower = null;
-        PackageIdentity? upper = null;
-        if (lowerText.Length > 0)
-        {
-            if (!TryParseRestoreVersion(lowerText, out var parsedLower)) return false;
-            lower = parsedLower;
-        }
-
-        if (upperText.Length > 0)
-        {
-            if (!TryParseRestoreVersion(upperText, out var parsedUpper)) return false;
-            upper = parsedUpper;
-        }
-
-        if (lower is null && upper is null)
-        {
-            return false;
-        }
-
-        requirement = new PackageVersionRange(lower, lowerInclusive, upper, upperInclusive);
+        requirement = new PackageVersionRange(parsed);
         return true;
     }
 
-    private static bool SetMinimumRange(PackageIdentity minimum, out PackageVersionRange requirement)
-    {
-        requirement = new PackageVersionRange(minimum, true, null, false);
-        return true;
-    }
-
-    private static bool TryParseRestoreVersion(string value, out PackageIdentity version)
-    {
-        version = null!;
-        return PackageIdentity.TryCreate("VersionRange", value, out version);
-    }
-
-    private static int CompareRestoreVersions(PackageIdentity left, PackageIdentity right) =>
-        left.CompareVersionTo(right);
-
-    private sealed record PackageVersionRange(
-        PackageIdentity? Lower,
-        bool LowerInclusive,
-        PackageIdentity? Upper,
-        bool UpperInclusive)
+    private sealed record PackageVersionRange(VersionRange Value)
     {
         public bool Matches(string value)
         {
-            if (!TryParseRestoreVersion(value, out var candidate)) return false;
-            if (Lower is not null)
-            {
-                var lowerComparison = CompareRestoreVersions(candidate, Lower);
-                if (lowerComparison < 0 || lowerComparison == 0 && !LowerInclusive) return false;
-            }
-
-            if (Upper is not null)
-            {
-                var upperComparison = CompareRestoreVersions(candidate, Upper);
-                if (upperComparison > 0 || upperComparison == 0 && !UpperInclusive) return false;
-            }
-
-            return true;
+            return PackageIdentity.TryParseNuGetVersion(value, out var candidate) &&
+                Value.Satisfies(candidate, VersionComparer.VersionRelease);
         }
     }
 
@@ -2673,6 +2765,18 @@ public static class ResolvedGraphClassifier
                         }
 
                         var elementName = reader.LocalName;
+                        ValidateConsumedXmlElementSpelling(
+                            reader,
+                            GeneratedImportElementNames,
+                            $"generated import file {Path.GetFileName(file)}",
+                            incomplete);
+                        ValidateConsumedXmlAttributeSpellings(
+                            reader,
+                            importProjectConsumed: elementName.Equals("Import", StringComparison.Ordinal),
+                            conditionConsumed: true,
+                            taskFactoryConsumed: false,
+                            description: $"generated import file {Path.GetFileName(file)}",
+                            incomplete: incomplete);
                         var condition = reader.GetAttribute("Condition");
                         if (elementName.Equals("Import", StringComparison.Ordinal) && reader.GetAttribute("Project") is string project)
                         {
@@ -2826,6 +2930,18 @@ public static class ResolvedGraphClassifier
                             incomplete.Add("A nested package import contains duplicate or case-variant attributes.");
                         }
 
+                        ValidateConsumedXmlElementSpelling(
+                            reader,
+                            GeneratedImportElementNames,
+                            "nested package import",
+                            incomplete);
+                        ValidateConsumedXmlAttributeSpellings(
+                            reader,
+                            importProjectConsumed: reader.LocalName.Equals("Import", StringComparison.Ordinal),
+                            conditionConsumed: true,
+                            taskFactoryConsumed: false,
+                            description: "nested package import",
+                            incomplete: incomplete);
                         var condition = reader.GetAttribute("Condition");
                         if (reader.LocalName.Equals("Import", StringComparison.Ordinal) && reader.GetAttribute("Project") is string project)
                         {
@@ -3998,6 +4114,59 @@ public static class ResolvedGraphClassifier
         return false;
     }
 
+    private static void ValidateConsumedXmlElementSpelling(
+        XmlReader reader,
+        IReadOnlyCollection<string> consumedNames,
+        string description,
+        List<string>? incomplete)
+    {
+        var canonical = consumedNames.FirstOrDefault(name => reader.LocalName.Equals(name, StringComparison.OrdinalIgnoreCase));
+        if (canonical is null || reader.LocalName.Equals(canonical, StringComparison.Ordinal)) return;
+
+        var message = $"{description} contains a non-canonical spelling of consumed XML element '{reader.LocalName}'; expected '{canonical}'.";
+        if (incomplete is null)
+        {
+            throw new InvalidOperationException(message);
+        }
+
+        incomplete.Add(message);
+    }
+
+    private static void ValidateConsumedXmlAttributeSpellings(
+        XmlReader reader,
+        bool importProjectConsumed,
+        bool conditionConsumed,
+        bool taskFactoryConsumed,
+        string description,
+        List<string>? incomplete)
+    {
+        if (!reader.HasAttributes) return;
+        for (var index = 0; index < reader.AttributeCount; index++)
+        {
+            reader.MoveToAttribute(index);
+            var canonical = conditionConsumed && reader.Name.Equals("Condition", StringComparison.OrdinalIgnoreCase)
+                ? "Condition"
+                : importProjectConsumed && reader.Name.Equals("Project", StringComparison.OrdinalIgnoreCase)
+                    ? "Project"
+                    : taskFactoryConsumed && reader.Name.Equals("TaskFactory", StringComparison.OrdinalIgnoreCase)
+                        ? "TaskFactory"
+                        : null;
+            if (canonical is not null && !reader.Name.Equals(canonical, StringComparison.Ordinal))
+            {
+                var message = $"{description} contains a non-canonical spelling of consumed XML attribute '{reader.Name}'; expected '{canonical}'.";
+                if (incomplete is null)
+                {
+                    reader.MoveToElement();
+                    throw new InvalidOperationException(message);
+                }
+
+                incomplete.Add(message);
+            }
+        }
+
+        reader.MoveToElement();
+    }
+
     private static string[] InspectMsBuildXml(string path)
     {
         var observations = new HashSet<string>(StringComparer.Ordinal);
@@ -4028,6 +4197,14 @@ public static class ResolvedGraphClassifier
             }
 
             if (reader.NodeType != XmlNodeType.Element) continue;
+            ValidateConsumedXmlElementSpelling(reader, PackageMsBuildElementNames, "package MSBuild XML", null);
+            ValidateConsumedXmlAttributeSpellings(
+                reader,
+                importProjectConsumed: false,
+                conditionConsumed: false,
+                taskFactoryConsumed: reader.LocalName.Equals("UsingTask", StringComparison.Ordinal),
+                description: "package MSBuild XML",
+                incomplete: null);
             switch (reader.LocalName)
             {
                 case "UsingTask":

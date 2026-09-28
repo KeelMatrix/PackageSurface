@@ -202,7 +202,8 @@ try {
             'tools/net8.0/any/KeelMatrix.PackageSurface.deps.json',
             'tools/net8.0/any/KeelMatrix.PackageSurface.dll',
             'tools/net8.0/any/KeelMatrix.PackageSurface.runtimeconfig.json',
-            'tools/net8.0/any/KeelMatrix.Telemetry.dll'
+            'tools/net8.0/any/KeelMatrix.Telemetry.dll',
+            'tools/net8.0/any/NuGet.Versioning.dll'
         )
         if (@(Compare-Object ($requiredToolFiles | Sort-Object) @($names | Where-Object { $_ -like 'tools/net8.0/any/*' } | Sort-Object)).Count -ne 0) { throw 'The package runtime payload is not exact.' }
         $unexpected = @($names | Where-Object { $_ -notin @('[Content_Types].xml', 'KeelMatrix.PackageSurface.nuspec', 'README.md', 'LICENSE/LICENSE', 'icon.png', '_rels/.rels') -and $_ -notlike 'package/services/metadata/core-properties/*.psmdcp' -and $_ -notin $requiredToolFiles })

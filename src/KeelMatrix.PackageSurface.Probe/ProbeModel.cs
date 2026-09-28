@@ -1,3 +1,5 @@
+using NuGet.Versioning;
+
 namespace KeelMatrix.PackageSurface.Probe;
 
 public enum CapabilityKind
@@ -25,12 +27,12 @@ public enum SurfaceContextKind
 /// </summary>
 public sealed class PackageIdentity : IEquatable<PackageIdentity>
 {
-    private PackageIdentity(string id, string version, string normalizedVersion, PackageVersionParts versionParts)
+    private PackageIdentity(string id, string version, NuGetVersion parsedVersion)
     {
         Id = id;
         Version = version;
-        NormalizedVersion = normalizedVersion;
-        VersionParts = versionParts;
+        NormalizedVersion = parsedVersion.ToNormalizedString();
+        ParsedVersion = parsedVersion;
     }
 
     public string Id { get; }
@@ -41,22 +43,22 @@ public sealed class PackageIdentity : IEquatable<PackageIdentity>
     public static bool TryCreate(string id, string version, out PackageIdentity identity)
     {
         identity = null!;
-        if (!IsValidId(id) || !TryParseVersion(version, out var parsedVersion)) return false;
-        identity = new PackageIdentity(id, version, parsedVersion.Normalized, parsedVersion);
+        if (!IsValidId(id) || !TryParseNuGetVersion(version, out var parsedVersion)) return false;
+        identity = new PackageIdentity(id, version, parsedVersion);
         return true;
     }
 
-    public int CompareVersionTo(PackageIdentity other) => CompareVersionParts(VersionParts, other.VersionParts);
+    public int CompareVersionTo(PackageIdentity other) => VersionComparer.VersionRelease.Compare(ParsedVersion, other.ParsedVersion);
 
     public bool Equals(PackageIdentity? other) => other is not null &&
         string.Equals(Id, other.Id, StringComparison.OrdinalIgnoreCase) &&
-        string.Equals(NormalizedVersion, other.NormalizedVersion, StringComparison.OrdinalIgnoreCase);
+        VersionComparer.VersionRelease.Equals(ParsedVersion, other.ParsedVersion);
 
     public override bool Equals(object? obj) => Equals(obj as PackageIdentity);
 
     public override int GetHashCode() => HashCode.Combine(
         StringComparer.OrdinalIgnoreCase.GetHashCode(Id),
-        StringComparer.OrdinalIgnoreCase.GetHashCode(NormalizedVersion));
+        VersionComparer.VersionRelease.GetHashCode(ParsedVersion));
 
     private static bool IsValidId(string value)
     {
@@ -69,102 +71,22 @@ public sealed class PackageIdentity : IEquatable<PackageIdentity>
         return true;
     }
 
-    private static bool TryParseVersion(string value, out PackageVersionParts parsed)
+    public static bool TryParseNuGetVersion(string value, out NuGetVersion parsed)
     {
         parsed = null!;
         if (string.IsNullOrWhiteSpace(value) || value != value.Trim() || value.Contains('/', StringComparison.Ordinal) || value.Contains('\\', StringComparison.Ordinal)) return false;
-
-        var buildSeparator = value.IndexOf('+');
-        var withoutBuild = buildSeparator < 0 ? value : value[..buildSeparator];
-        if (buildSeparator >= 0 && !IsValidIdentifiers(value[(buildSeparator + 1)..])) return false;
-
-        var prereleaseSeparator = withoutBuild.IndexOf('-');
-        var numeric = prereleaseSeparator < 0 ? withoutBuild : withoutBuild[..prereleaseSeparator];
-        var prerelease = prereleaseSeparator < 0 ? null : withoutBuild[(prereleaseSeparator + 1)..];
-        if (numeric.Length == 0 || (prerelease is not null && !IsValidIdentifiers(prerelease))) return false;
-
-        var numericParts = numeric.Split('.');
-        if (numericParts.Length is < 1 or > 4 || numericParts.Any(part => part.Length == 0 || part.Any(character => !char.IsDigit(character)))) return false;
-        var normalizedParts = numericParts
-            .Select(part => part.TrimStart('0') is { Length: > 0 } trimmed ? trimmed : "0")
-            .ToList();
-        while (normalizedParts.Count < 3) normalizedParts.Add("0");
-        while (normalizedParts.Count > 3 && normalizedParts[^1] == "0") normalizedParts.RemoveAt(normalizedParts.Count - 1);
-
-        var normalized = string.Join('.', normalizedParts);
-        var normalizedPrerelease = Array.Empty<string>();
-        if (!string.IsNullOrEmpty(prerelease))
+        if (value.IndexOfAny(['[', ']', '(', ')', ',', '*', '|']) >= 0 ||
+            !VersionRange.TryParse(value, out var range) ||
+            range is null || range.IsFloating || !range.HasLowerBound || range.HasUpperBound)
         {
-            normalizedPrerelease = prerelease.Split('.').Select(NormalizeVersionIdentifier).ToArray();
-            normalized += "-" + string.Join('.', normalizedPrerelease);
+            return false;
         }
 
-        parsed = new PackageVersionParts(normalized, normalizedParts.ToArray(), normalizedPrerelease);
-        return true;
+        parsed = range.MinVersion;
+        return parsed is not null;
     }
 
-    private static int CompareVersionParts(PackageVersionParts left, PackageVersionParts right)
-    {
-        for (var index = 0; index < Math.Max(left.NumericParts.Length, right.NumericParts.Length); index++)
-        {
-            var leftPart = index < left.NumericParts.Length ? left.NumericParts[index] : "0";
-            var rightPart = index < right.NumericParts.Length ? right.NumericParts[index] : "0";
-            var length = leftPart.Length.CompareTo(rightPart.Length);
-            if (length != 0) return length;
-            var numeric = string.CompareOrdinal(leftPart, rightPart);
-            if (numeric != 0) return numeric;
-        }
-
-        if (left.PrereleaseParts.Length == 0 && right.PrereleaseParts.Length == 0) return 0;
-        if (left.PrereleaseParts.Length == 0) return 1;
-        if (right.PrereleaseParts.Length == 0) return -1;
-        for (var index = 0; index < Math.Max(left.PrereleaseParts.Length, right.PrereleaseParts.Length); index++)
-        {
-            if (index >= left.PrereleaseParts.Length) return -1;
-            if (index >= right.PrereleaseParts.Length) return 1;
-            var leftPart = left.PrereleaseParts[index];
-            var rightPart = right.PrereleaseParts[index];
-            var leftNumeric = leftPart.All(char.IsDigit);
-            var rightNumeric = rightPart.All(char.IsDigit);
-            if (leftNumeric && rightNumeric)
-            {
-                var numeric = CompareNumericIdentifiers(leftPart, rightPart);
-                if (numeric != 0) return numeric;
-            }
-            else if (leftNumeric != rightNumeric)
-            {
-                return leftNumeric ? -1 : 1;
-            }
-            else
-            {
-                var text = string.CompareOrdinal(leftPart, rightPart);
-                if (text != 0) return text;
-            }
-        }
-
-        return 0;
-    }
-
-    private static int CompareNumericIdentifiers(string left, string right)
-    {
-        left = left.TrimStart('0');
-        right = right.TrimStart('0');
-        left = left.Length == 0 ? "0" : left;
-        right = right.Length == 0 ? "0" : right;
-        return left.Length != right.Length ? left.Length.CompareTo(right.Length) : string.CompareOrdinal(left, right);
-    }
-
-    private static string NormalizeVersionIdentifier(string value) =>
-        value.All(char.IsDigit)
-            ? value.TrimStart('0') is { Length: > 0 } trimmed ? trimmed : "0"
-            : value.ToLowerInvariant();
-
-    private static bool IsValidIdentifiers(string value) =>
-        value.Length > 0 && value.Split('.').All(part => part.Length > 0 && part.All(character => char.IsLetterOrDigit(character) || character == '-'));
-
-    private PackageVersionParts VersionParts { get; }
-
-    private sealed record PackageVersionParts(string Normalized, string[] NumericParts, string[] PrereleaseParts);
+    private NuGetVersion ParsedVersion { get; }
 }
 
 /// <summary>

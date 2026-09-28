@@ -56,7 +56,9 @@ var requiredHelpClauses = new[]
     "direct, interior, and ancestor reparse/symlink aliases",
     "PS007 and controlled exit code 2 before any mutation",
     "preserves existing output and input bytes",
-    "genuinely distinct outputs are accepted"
+    "genuinely distinct outputs are accepted",
+    "non-canonical spellings of consumed JSON/XML members",
+    "NuGet.Versioning 7.9.0 parser/comparer"
 };
 var normalizedHelpText = Regex.Replace(Options.HelpText, @"\s+", " ");
 var missingHelpClauses = requiredHelpClauses
@@ -142,6 +144,7 @@ static void RunClassifierHardeningTests()
         RunReachabilityClosureRegression(scratch);
         RunVersionAwareReachabilityConflictRegression(scratch);
         RunVersionEquivalenceRegression(scratch);
+        RunMalformedVersionEndToEndRegression(scratch);
         RunDiagnosticPathLeakRegression(scratch);
         RunApplicabilityHardeningRegressions(scratch);
         RunNestedImportRegression(scratch);
@@ -620,7 +623,7 @@ static void RunPackageIdentityAndPathRegression()
         File.WriteAllText(normalizedAssets, normalized.ToJsonString());
         var normalizedResult = ResolvedGraphClassifier.Analyze(normalizedAssets, normalizedRoot, strictContent: false);
         Require(normalizedResult.IsComplete && normalizedResult.ResolvedPackageCount == 1, "Equivalent NuGet version representations were not resolved to the physical package root.");
-        Require(PackageIdentity.TryCreate("Normalized.Package", "1.0.0-alpha.01", out var prereleaseA) &&
+        Require(PackageIdentity.TryCreate("Normalized.Package", "1.0.0-Alpha.1", out var prereleaseA) &&
             PackageIdentity.TryCreate("normalized.package", "1.0.0-alpha.1", out var prereleaseB) &&
             prereleaseA.Equals(prereleaseB), "Equivalent normalized prerelease versions were not treated as the same package identity.");
 
@@ -2751,6 +2754,127 @@ static void RunRestoreJsonStructuralDuplicateRegression(string assets, string sc
         }
     }
 
+    var spellingCases = new List<(string Name, Action<JsonObject> Mutate)>
+    {
+        ("root-version-alias", value => RenameJsonProperty(value, "version", "Version")),
+        ("root-targets-alias", value => RenameJsonProperty(value, "targets", "TARGETS")),
+        ("root-libraries-alias", value => RenameJsonProperty(value, "libraries", "Libraries")),
+        ("root-package-folders-alias", value => RenameJsonProperty(value, "packageFolders", "PACKAGEFOLDERS")),
+        ("root-project-alias", value => RenameJsonProperty(value, "project", "Project")),
+        ("root-dependency-groups-alias", value =>
+        {
+            value["projectFileDependencyGroups"] = new JsonObject { ["net8.0"] = new JsonArray() };
+            RenameJsonProperty(value, "projectFileDependencyGroups", "PROJECTFILEDEPENDENCYGROUPS");
+        }),
+        ("project-restore-alias", value => RenameJsonProperty(value["project"]!.AsObject(), "restore", "RESTORE")),
+        ("project-frameworks-alias", value => RenameJsonProperty(value["project"]!.AsObject(), "frameworks", "FRAMEWORKS")),
+        ("project-path-alias", value => RenameJsonProperty(value["project"]!["restore"]!.AsObject(), "projectPath", "PROJECTPATH")),
+        ("restore-compiler-alias", value =>
+        {
+            var restore = value["project"]!["restore"]!.AsObject();
+            restore["compilerApiVersion"] = "4.0";
+            RenameJsonProperty(restore, "compilerApiVersion", "COMPILERAPIVERSION");
+        }),
+        ("framework-framework-alias", value =>
+        {
+            var framework = value["project"]!["frameworks"]!["net8.0"]!.AsObject();
+            framework["framework"] = "net8.0";
+            RenameJsonProperty(framework, "framework", "FRAMEWORK");
+        }),
+        ("framework-target-alias-alias", value =>
+        {
+            var framework = value["project"]!["frameworks"]!["net8.0"]!.AsObject();
+            framework["targetAlias"] = "net8.0";
+            RenameJsonProperty(framework, "targetAlias", "TARGETALIAS");
+        }),
+        ("framework-dependencies-alias", value => RenameJsonProperty(value["project"]!["frameworks"]!["net8.0"]!.AsObject(), "dependencies", "DEPENDENCIES")),
+        ("dependency-version-alias", value => RenameJsonProperty(value["project"]!["frameworks"]!["net8.0"]!["dependencies"]!["XmlPackage"]!.AsObject(), "version", "VERSION")),
+        ("dependency-target-alias", value => RenameJsonProperty(value["project"]!["frameworks"]!["net8.0"]!["dependencies"]!["XmlPackage"]!.AsObject(), "target", "TARGET")),
+        ("dependency-include-alias", value =>
+        {
+            var dependency = value["project"]!["frameworks"]!["net8.0"]!["dependencies"]!["XmlPackage"]!.AsObject();
+            dependency["include"] = "all";
+            RenameJsonProperty(dependency, "include", "INCLUDE");
+        }),
+        ("dependency-exclude-alias", value =>
+        {
+            var dependency = value["project"]!["frameworks"]!["net8.0"]!["dependencies"]!["XmlPackage"]!.AsObject();
+            dependency["exclude"] = "none";
+            RenameJsonProperty(dependency, "exclude", "EXCLUDE");
+        }),
+        ("dependency-optional-alias", value =>
+        {
+            var dependency = value["project"]!["frameworks"]!["net8.0"]!["dependencies"]!["XmlPackage"]!.AsObject();
+            dependency["privateAssets"] = "all";
+            RenameJsonProperty(dependency, "privateAssets", "PRIVATEASSETS");
+        }),
+        ("library-type-alias", value => RenameJsonProperty(value["libraries"]!["XmlPackage/1.0.0"]!.AsObject(), "type", "TYPE")),
+        ("library-path-alias", value => RenameJsonProperty(value["libraries"]!["XmlPackage/1.0.0"]!.AsObject(), "path", "PATH")),
+        ("library-files-alias", value => RenameJsonProperty(value["libraries"]!["XmlPackage/1.0.0"]!.AsObject(), "files", "FILES")),
+        ("target-package-group-alias", value =>
+        {
+            var package = value["targets"]!["net8.0"]!["XmlPackage/1.0.0"]!.AsObject();
+            package["build"] = new JsonObject { ["build/structure.targets"] = new JsonObject() };
+            RenameJsonProperty(package, "build", "BUILD");
+        })
+    };
+
+    foreach (var (name, mutate) in spellingCases)
+    {
+        var path = Path.Combine(Path.GetDirectoryName(assets)!, "restore-structure-spelling-" + name + ".assets.json");
+        var malformed = JsonNode.Parse(source)!.AsObject();
+        mutate(malformed);
+        File.WriteAllText(path, malformed.ToJsonString());
+        try
+        {
+            AssertRestoreIdentityFailure(path, scratch, baseline, name);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    var generatedProps = Path.Combine(Path.GetDirectoryName(assets)!, "Test.csproj.nuget.g.props");
+    var generatedPropsBefore = File.ReadAllBytes(generatedProps);
+    try
+    {
+        foreach (var (name, xml) in new[]
+        {
+            ("generated-import-project-alias", "<Project><Import project=\"unused.props\" /></Project>"),
+            ("generated-import-condition-alias", "<Project condition=\"'$(TargetFramework)' == 'net8.0'\" />"),
+            ("generated-import-case-duplicate", "<Project><Import Project=\"unused.props\" project=\"unused.props\" /></Project>"),
+            ("generated-import-element-alias", "<Project><import Project=\"unused.props\" /></Project>")
+        })
+        {
+            File.WriteAllText(generatedProps, xml);
+            AssertRestoreIdentityFailure(assets, scratch, baseline, name);
+        }
+    }
+    finally
+    {
+        File.WriteAllBytes(generatedProps, generatedPropsBefore);
+    }
+
+    var contentAssets = Path.Combine(Path.GetDirectoryName(assets)!, "restore-structure-content-metadata.assets.json");
+    var contentBaseline = Path.Combine(Path.GetDirectoryName(assets)!, "restore-structure-content-metadata-baseline.json");
+    WriteContentAssets(contentAssets, Path.Combine(scratch, "content-cache"), "Test.csproj", "contentFiles/cs/any/content.cs", "cs", "Compile");
+    Require(CaptureCommand("baseline", contentAssets, "--output", contentBaseline, "--no-telemetry").ExitCode == 0,
+        "The content metadata baseline could not be created.");
+    try
+    {
+        var contentDocument = JsonNode.Parse(File.ReadAllText(contentAssets))!.AsObject();
+        var contentMetadata = contentDocument["targets"]!["net8.0"]!["Content.Package/1.0.0"]!["contentFiles"]!["contentFiles/cs/any/content.cs"]!.AsObject();
+        RenameJsonProperty(contentMetadata, "codeLanguage", "CODELANGUAGE");
+        File.WriteAllText(contentAssets, contentDocument.ToJsonString());
+        AssertRestoreIdentityFailure(contentAssets, scratch, contentBaseline, "content-file-metadata-alias");
+    }
+    finally
+    {
+        if (File.Exists(contentAssets)) File.Delete(contentAssets);
+        if (File.Exists(contentBaseline)) File.Delete(contentBaseline);
+    }
+
     File.Delete(baseline);
 }
 
@@ -2960,11 +3084,25 @@ static void RunVersionEquivalenceRegression(string scratch)
     Require(PackageIdentity.TryCreate("Version.Package", "1.2.3.4", out var nonZeroFourth) &&
             !PackageIdentity.TryCreate("Version.Package", "1.2.3.4.5", out _),
         "The four-component version boundary was not enforced.");
-    Require(PackageIdentity.TryCreate("Version.Package", "1.0.0-Alpha.01+Build.1", out var prerelease) &&
+    Require(PackageIdentity.TryCreate("Version.Package", "1.0.0-Alpha.1+Build.1", out var prerelease) &&
             PackageIdentity.TryCreate("version.package", "1.0.0-alpha.1+Other.2", out var equivalentPrerelease) &&
             prerelease.Equals(equivalentPrerelease),
         "Prerelease casing/components or build metadata did not use the canonical identity grammar.");
-    foreach (var invalid in new[] { "1..0", "1.0-", "1.0+", " 1.0.0", "1.0.0/child" })
+    foreach (var invalid in new[]
+    {
+        "1..0",
+        "1.0-",
+        "1.0+",
+        "1.0.0-alpha.01",
+        "1.0.0-01",
+        "1.0.0-α",
+        "1.0.0-alpha..1",
+        "1.0.0-",
+        "1.0.0/child",
+        "1.0.0,,2.0.0",
+        "1.0.0-+build",
+        " 1.0.0"
+    })
     {
         Require(!PackageIdentity.TryCreate("Version.Package", invalid, out _), $"Malformed version '{invalid}' was accepted.");
     }
@@ -2988,6 +3126,201 @@ static void RunVersionEquivalenceRegression(string scratch)
     File.WriteAllText(assets, source.ToJsonString());
     var invalidRange = ResolvedGraphClassifier.Analyze(assets, root, strictContent: false);
     Require(!invalidRange.IsComplete && invalidRange.Entries.Count == 0, "A five-component dependency range was accepted.");
+
+    foreach (var invalid in new[] { "1.0.0-alpha.01", "1.0.0-01", "1.0.0-α", "[1.0.0-alpha.01, )", "(1.0.0-01, 2.0.0]" })
+    {
+        source["project"]!["frameworks"]!["net8.0"]!["dependencies"]!["Range.Package"]!["version"] = invalid;
+        File.WriteAllText(assets, source.ToJsonString());
+        var malformed = ResolvedGraphClassifier.Analyze(assets, root, strictContent: false);
+        Require(!malformed.IsComplete && malformed.Entries.Count == 0,
+            $"Malformed NuGet version range '{invalid}' was accepted.");
+    }
+}
+
+static void RunMalformedVersionEndToEndRegression(string scratch)
+{
+    var root = Path.Combine(scratch, "malformed-version-surfaces");
+    var obj = Path.Combine(root, "obj");
+    var cache = Path.Combine(root, "cache");
+    Directory.CreateDirectory(obj);
+    var assets = Path.Combine(obj, "project.assets.json");
+    var files = new[]
+    {
+        "build/surface.targets",
+        "analyzers/dotnet/cs/surface.dll",
+        "contentFiles/cs/any/surface.cs",
+        "runtimes/win-x64/native/surface.dll",
+        "tools/surface.ps1"
+    };
+    WriteAssets(assets, cache, "Version.Surface", files, createFiles: true);
+    var document = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
+    var targetPackage = document["targets"]!["net8.0"]!["Version.Surface/1.0.0"]!.AsObject();
+    targetPackage["build"] = new JsonObject { ["build/surface.targets"] = new JsonObject() };
+    targetPackage["analyzers"] = new JsonObject { ["analyzers/dotnet/cs/surface.dll"] = new JsonObject() };
+    targetPackage["contentFiles"] = new JsonObject
+    {
+        ["contentFiles/cs/any/surface.cs"] = new JsonObject { ["buildAction"] = "Compile", ["codeLanguage"] = "cs" }
+    };
+    targetPackage["native"] = new JsonObject { ["runtimes/win-x64/native/surface.dll"] = new JsonObject() };
+    targetPackage["tools"] = new JsonObject { ["tools/surface.ps1"] = new JsonObject() };
+    File.Copy(typeof(ResolvedGraphClassifier).Assembly.Location,
+        Path.Combine(cache, "Version.Surface", "1.0.0", "analyzers", "dotnet", "cs", "surface.dll"), overwrite: true);
+    File.WriteAllText(Path.Combine(cache, "Version.Surface", "1.0.0", "build", "surface.targets"), "<Project />");
+    File.WriteAllText(Path.Combine(obj, "Test.csproj.nuget.g.targets"),
+        "<Project><Import Project=\"$(NuGetPackageRoot)/Version.Surface/1.0.0/build/surface.targets\" /></Project>");
+    File.WriteAllText(assets, document.ToJsonString());
+
+    var baseline = Path.Combine(obj, "baseline.json");
+    var baselineResult = CaptureCommand("baseline", assets, "--output", baseline, "--no-telemetry");
+    Require(baselineResult.ExitCode == 0,
+        "The all-capability version fixture could not create its baseline: " + baselineResult.Output);
+    var validSource = File.ReadAllText(assets);
+    var invalidVersions = new[] { "1.0.0-alpha.01", "1.0.0-01", "1.0.0-α" };
+    foreach (var invalid in invalidVersions)
+    {
+        var malformedPath = Path.Combine(obj, "invalid-key-" + invalid.Replace('/', '_') + ".assets.json");
+        File.WriteAllText(malformedPath, validSource.Replace("Version.Surface/1.0.0", "Version.Surface/" + invalid, StringComparison.Ordinal));
+        try
+        {
+            AssertRestoreIdentityFailure(malformedPath, root, baseline, "malformed package identity " + invalid);
+        }
+        finally
+        {
+            File.Delete(malformedPath);
+        }
+    }
+
+    var libraryPathDocument = JsonNode.Parse(validSource)!.AsObject();
+    libraryPathDocument["libraries"]!["Version.Surface/1.0.0"]!["path"] = "Version.Surface/1.0.0-alpha.01";
+    var libraryPath = Path.Combine(obj, "invalid-library-path.assets.json");
+    File.WriteAllText(libraryPath, libraryPathDocument.ToJsonString());
+    try
+    {
+        AssertRestoreIdentityFailure(libraryPath, root, baseline, "malformed library package path");
+    }
+    finally
+    {
+        File.Delete(libraryPath);
+    }
+
+    var directRangeDocument = JsonNode.Parse(validSource)!.AsObject();
+    directRangeDocument["project"]!["frameworks"]!["net8.0"]!["dependencies"]!["Version.Surface"]!["version"] = "[1.0.0-alpha.01, )";
+    var directRange = Path.Combine(obj, "invalid-direct-range.assets.json");
+    File.WriteAllText(directRange, directRangeDocument.ToJsonString());
+    try
+    {
+        AssertRestoreIdentityFailure(directRange, root, baseline, "malformed direct dependency range");
+    }
+    finally
+    {
+        File.Delete(directRange);
+    }
+
+    var targetRangeDocument = JsonNode.Parse(validSource)!.AsObject();
+    targetRangeDocument["targets"]!["net8.0"]!["Version.Surface/1.0.0"]!["dependencies"] = new JsonObject
+    {
+        ["Version.Surface"] = "[1.0.0-01, )"
+    };
+    var targetRange = Path.Combine(obj, "invalid-target-range.assets.json");
+    File.WriteAllText(targetRange, targetRangeDocument.ToJsonString());
+    try
+    {
+        AssertRestoreIdentityFailure(targetRange, root, baseline, "malformed target dependency range");
+    }
+    finally
+    {
+        File.Delete(targetRange);
+    }
+
+    var projectRangeDocument = JsonNode.Parse(validSource)!.AsObject();
+    projectRangeDocument["targets"]!["net8.0"]!["Referenced.Project/1.0.0"] = new JsonObject
+    {
+        ["dependencies"] = new JsonObject { ["Version.Surface"] = "[1.0.0-01, )" }
+    };
+    projectRangeDocument["libraries"]!["Referenced.Project/1.0.0"] = new JsonObject
+    {
+        ["type"] = "project",
+        ["path"] = "../Referenced.Project",
+        ["msbuildProject"] = "../Referenced.Project/Referenced.Project.csproj"
+    };
+    var projectRange = Path.Combine(obj, "invalid-project-range.assets.json");
+    File.WriteAllText(projectRange, projectRangeDocument.ToJsonString());
+    try
+    {
+        AssertRestoreIdentityFailure(projectRange, root, baseline, "malformed project dependency range");
+    }
+    finally
+    {
+        File.Delete(projectRange);
+    }
+
+    var format4Document = JsonNode.Parse(validSource)!.AsObject();
+    format4Document["version"] = 4;
+    format4Document["projectFileDependencyGroups"] = new JsonObject
+    {
+        ["net8.0"] = new JsonArray("Version.Surface >= 1.0.0")
+    };
+    format4Document["project"]!["frameworks"]!["net8.0"]!["framework"] = "net8.0";
+    format4Document["project"]!["frameworks"]!["net8.0"]!["targetAlias"] = "net8.0";
+    format4Document["project"]!["restore"]!["frameworks"] = new JsonObject
+    {
+        ["net8.0"] = new JsonObject { ["framework"] = "net8.0", ["targetAlias"] = "net8.0" }
+    };
+    var format4 = Path.Combine(obj, "malformed-format4-version.assets.json");
+    var format4Baseline = Path.Combine(obj, "malformed-format4-version-baseline.json");
+    File.WriteAllText(format4, format4Document.ToJsonString());
+    var format4BaselineResult = CaptureCommand("baseline", format4, "--output", format4Baseline, "--no-telemetry");
+    Require(format4BaselineResult.ExitCode == 0,
+        "The valid format 4 version fixture could not create its baseline: " + format4BaselineResult.Output);
+    try
+    {
+        format4Document["projectFileDependencyGroups"]!["net8.0"]![0] = "Version.Surface >= 1.0.0-alpha.01";
+        File.WriteAllText(format4, format4Document.ToJsonString());
+        AssertRestoreIdentityFailure(format4, root, format4Baseline, "malformed format 4 dependency requirement");
+    }
+    finally
+    {
+        if (File.Exists(format4)) File.Delete(format4);
+        if (File.Exists(format4Baseline)) File.Delete(format4Baseline);
+    }
+
+    var generatedTargets = Path.Combine(obj, "Test.csproj.nuget.g.targets");
+    var generatedTargetsBefore = File.ReadAllBytes(generatedTargets);
+    try
+    {
+        foreach (var invalid in invalidVersions)
+        {
+            File.WriteAllText(generatedTargets,
+                $"<Project><Import Project=\"$(NuGetPackageRoot)/Version.Surface/{invalid}/build/surface.targets\" /></Project>");
+            AssertRestoreIdentityFailure(assets, root, baseline, "malformed generated import version " + invalid);
+        }
+    }
+    finally
+    {
+        File.WriteAllBytes(generatedTargets, generatedTargetsBefore);
+    }
+
+    var baselineDocument = JsonNode.Parse(File.ReadAllText(baseline))!.AsObject();
+    foreach (var entry in baselineDocument["entries"]!.AsArray().OfType<JsonObject>())
+    {
+        entry["version"] = "1.0.0-alpha.01";
+    }
+    var malformedBaseline = Path.Combine(obj, "malformed-version-baseline.json");
+    File.WriteAllText(malformedBaseline, baselineDocument.ToJsonString());
+    try
+    {
+        foreach (var format in new[] { "text", "json", "sarif" })
+        {
+            var check = CaptureCommand("check", assets, "--baseline", malformedBaseline, "--format", format, "--no-telemetry");
+            Require(check.ExitCode == 2 && check.Output.Contains("PS007", StringComparison.Ordinal),
+                $"Malformed baseline version was accepted in {format} output.");
+            AssertNoSuccessfulSurfaceOutput(check.Output, format, "malformed baseline version " + format);
+        }
+    }
+    finally
+    {
+        File.Delete(malformedBaseline);
+    }
 }
 
 static void RunRestoreIdentitySetCompletenessRegression(string format4Path, string scratch, string baselinePath)

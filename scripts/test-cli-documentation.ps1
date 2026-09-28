@@ -45,7 +45,10 @@ $required = @(
     'selected package version',
     'direct/project-reference rooted',
     'schema-aware restore',
+    'unknown members',
     'non-canonical spellings',
+    'x-` prefix',
+    'urn:keelmatrix:packagesurface:extension',
     'NuGet.Versioning'
 )
 foreach ($document in $cliDocuments) {
@@ -112,7 +115,7 @@ if ($builtHelpExitCode -ne 0) {
 }
 Assert-BaselineAliasClauses 'built --help' ($builtHelp -join [Environment]::NewLine)
 
-foreach ($requiredText in @('package-surface scan <path>', '--format text|json|sarif', '--strict-content', '--project <path>', '--telemetry on|off', '--no-telemetry', 'Exit codes:', 'effective-moniker canonicalization', 'malformed package', 'ID/version', 'both directions', 'package versions', 'direct/project-reference rooted', 'disconnected package nodes', 'duplicate or case-variant', 'non-canonical spellings of consumed JSON/XML members', 'NuGet.Versioning 7.9.0 parser/comparer')) {
+foreach ($requiredText in @('package-surface scan <path>', '--format text|json|sarif', '--strict-content', '--project <path>', '--telemetry on|off', '--no-telemetry', 'Exit codes:', 'effective-moniker canonicalization', 'malformed package', 'ID/version', 'both directions', 'package versions', 'direct/project-reference rooted', 'disconnected package nodes', 'duplicate or case-variant', 'unknown members', 'non-canonical spellings of consumed JSON/XML members', 'x- prefix', 'urn:keelmatrix:packagesurface:extension', 'NuGet.Versioning 7.9.0 parser/comparer')) {
     if (-not $cliSource.Contains($requiredText, [StringComparison]::Ordinal)) { throw "CLI help is missing '$requiredText'." }
 }
 Write-Output 'CLI_DOCUMENTATION=PASS root/package/developer/release/security docs and built --help retain the same baseline-alias and command contract.'

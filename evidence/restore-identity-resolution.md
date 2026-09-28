@@ -18,6 +18,8 @@ The remaining direct JSON property lookups are schema traversal inside the canon
 
 The checked-in `scripts/test-restore-identity-canonicalization.ps1` search guard fails if a raw package-key splitter, framework-map fallback, package-root scan, or target/framework relation is reintroduced at a call site. It also requires the library lookups to remain inside the canonical boundary.
 
+The same schema boundary owns consumed-member spelling and unknown-member handling. Exact canonical JSON names are required at every consumed object level; only members with the explicit `x-` prefix are extension metadata. Consumed XML attributes require canonical names, with extension attributes limited to the `urn:keelmatrix:packagesurface:extension` namespace. Unknown or near-spelled consumed members fail closed as `PS007` before identity or capability decisions.
+
 ## Completeness and requirement grammar
 
 Before classification, declared and restore framework sets are compared in both directions, format-4 dependency-group keys are compared in both directions, and every resolved target/RID framework must belong to the canonical framework set. Case-folded and equivalent framework monikers share the same canonical key.

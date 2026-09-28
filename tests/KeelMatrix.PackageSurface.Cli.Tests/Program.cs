@@ -57,7 +57,10 @@ var requiredHelpClauses = new[]
     "PS007 and controlled exit code 2 before any mutation",
     "preserves existing output and input bytes",
     "genuinely distinct outputs are accepted",
+    "unknown members",
     "non-canonical spellings of consumed JSON/XML members",
+    "x- prefix",
+    "urn:keelmatrix:packagesurface:extension",
     "NuGet.Versioning 7.9.0 parser/comparer"
 };
 var normalizedHelpText = Regex.Replace(Options.HelpText, @"\s+", " ");
@@ -212,7 +215,7 @@ static void RunInlineTaskConventionRegression(string scratch)
 
     var fixtures = new[]
     {
-        ("positive", "<Project><UsingTask TaskName=\"Inline\" TaskFactory=\"CodeTaskFactory\"><Task><Code Type=\"Fragment\" Language=\"cs\">Log.LogMessage(\"ok\");</Code></Task></UsingTask></Project>", true),
+        ("positive", "<Project xmlns:x=\"urn:keelmatrix:packagesurface:extension\" x:marker=\"ignored\"><UsingTask TaskName=\"Inline\" TaskFactory=\"CodeTaskFactory\"><Task><Code Type=\"Fragment\" Language=\"cs\">Log.LogMessage(\"ok\");</Code></Task></UsingTask></Project>", true),
         ("custom-factory", "<Project><UsingTask TaskName=\"Inline\" TaskFactory=\"CustomFactory\"><Task><Code>Log.LogMessage(\"text\");</Code></Task></UsingTask></Project>", false),
         ("factory-only", "<Project><UsingTask TaskName=\"Inline\" TaskFactory=\"CodeTaskFactory\" /></Project>", false),
         ("comment-only", "<Project><UsingTask TaskName=\"Inline\" TaskFactory=\"CodeTaskFactory\"><Task><!-- Code --></Task></UsingTask></Project>", false),
@@ -2835,6 +2838,67 @@ static void RunRestoreJsonStructuralDuplicateRegression(string assets, string sc
         }
     }
 
+    var unknownSpellingCases = new List<(string Name, Action<JsonObject> Mutate)>
+    {
+        ("dependency-exclude-near-spelling", value =>
+        {
+            var dependency = value["project"]!["frameworks"]!["net8.0"]!["dependencies"]!["XmlPackage"]!.AsObject();
+            dependency["exlcude"] = "all";
+        }),
+        ("dependency-exclude-near-spelling-conflicting", value =>
+        {
+            var dependency = value["project"]!["frameworks"]!["net8.0"]!["dependencies"]!["XmlPackage"]!.AsObject();
+            dependency["exclude"] = "none";
+            dependency["exlcude"] = "all";
+        }),
+        ("framework-dependencies-near-spelling", value =>
+        {
+            var framework = value["project"]!["frameworks"]!["net8.0"]!.AsObject();
+            framework["dependencis"] = framework["dependencies"]!.DeepClone();
+        }),
+        ("library-path-near-spelling", value =>
+            value["libraries"]!["XmlPackage/1.0.0"]!["pathh"] = "XmlPackage/1.0.0"),
+        ("target-package-dependencies-near-spelling", value =>
+            value["targets"]!["net8.0"]!["XmlPackage/1.0.0"]!["dependencis"] = new JsonObject())
+    };
+
+    foreach (var (name, mutate) in unknownSpellingCases)
+    {
+        var path = Path.Combine(Path.GetDirectoryName(assets)!, "restore-structure-unknown-spelling-" + name + ".assets.json");
+        var malformed = JsonNode.Parse(source)!.AsObject();
+        mutate(malformed);
+        File.WriteAllText(path, malformed.ToJsonString());
+        try
+        {
+            AssertRestoreIdentityFailure(path, scratch, baseline, name);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    var extensionPath = Path.Combine(Path.GetDirectoryName(assets)!, "restore-structure-explicit-extensions.assets.json");
+    var extensionDocument = JsonNode.Parse(source)!.AsObject();
+    extensionDocument["x-root"] = "ignored";
+    extensionDocument["project"]!["x-project"] = "ignored";
+    extensionDocument["project"]!["restore"]!["x-restore"] = "ignored";
+    extensionDocument["project"]!["frameworks"]!["net8.0"]!["x-framework"] = "ignored";
+    extensionDocument["project"]!["frameworks"]!["net8.0"]!["dependencies"]!["XmlPackage"]!["x-dependency"] = "ignored";
+    extensionDocument["libraries"]!["XmlPackage/1.0.0"]!["x-library"] = "ignored";
+    extensionDocument["targets"]!["net8.0"]!["XmlPackage/1.0.0"]!["x-target-package"] = "ignored";
+    extensionDocument["packageFolders"]!.AsObject().First().Value!["x-package-folder"] = "ignored";
+    File.WriteAllText(extensionPath, extensionDocument.ToJsonString());
+    try
+    {
+        var extensionResult = ResolvedGraphClassifier.Analyze(extensionPath, scratch, strictContent: false);
+        Require(extensionResult.IsComplete, $"The explicit x- extension namespace was rejected: {string.Join(" | ", extensionResult.IncompleteReasons)}");
+    }
+    finally
+    {
+        File.Delete(extensionPath);
+    }
+
     var generatedProps = Path.Combine(Path.GetDirectoryName(assets)!, "Test.csproj.nuget.g.props");
     var generatedPropsBefore = File.ReadAllBytes(generatedProps);
     try
@@ -2843,13 +2907,19 @@ static void RunRestoreJsonStructuralDuplicateRegression(string assets, string sc
         {
             ("generated-import-project-alias", "<Project><Import project=\"unused.props\" /></Project>"),
             ("generated-import-condition-alias", "<Project condition=\"'$(TargetFramework)' == 'net8.0'\" />"),
+            ("generated-import-condition-near-spelling", "<Project><Import Project=\"unused.props\" Conditon=\"'$(TargetFramework)' == 'net8.0'\" /></Project>"),
             ("generated-import-case-duplicate", "<Project><Import Project=\"unused.props\" project=\"unused.props\" /></Project>"),
-            ("generated-import-element-alias", "<Project><import Project=\"unused.props\" /></Project>")
+            ("generated-import-element-alias", "<Project><import Project=\"unused.props\" /></Project>"),
+            ("generated-import-element-near-spelling", "<Project><Improt Project=\"unused.props\" /></Project>")
         })
         {
             File.WriteAllText(generatedProps, xml);
             AssertRestoreIdentityFailure(assets, scratch, baseline, name);
         }
+
+        File.WriteAllText(generatedProps, "<Project xmlns:x=\"urn:keelmatrix:packagesurface:extension\" x:marker=\"ignored\" />");
+        var xmlExtensionResult = ResolvedGraphClassifier.Analyze(assets, scratch, strictContent: false);
+        Require(xmlExtensionResult.IsComplete, $"The explicit XML extension namespace was rejected: {string.Join(" | ", xmlExtensionResult.IncompleteReasons)}");
     }
     finally
     {
@@ -2873,6 +2943,42 @@ static void RunRestoreJsonStructuralDuplicateRegression(string assets, string sc
     {
         if (File.Exists(contentAssets)) File.Delete(contentAssets);
         if (File.Exists(contentBaseline)) File.Delete(contentBaseline);
+    }
+
+    var contentUnknownAssets = Path.Combine(Path.GetDirectoryName(assets)!, "restore-structure-content-unknown-spelling.assets.json");
+    var contentUnknownBaseline = Path.Combine(Path.GetDirectoryName(assets)!, "restore-structure-content-unknown-spelling-baseline.json");
+    WriteContentAssets(contentUnknownAssets, Path.Combine(scratch, "content-unknown-cache"), "Test.csproj", "contentFiles/cs/any/content.cs", "cs", "Compile");
+    Require(CaptureCommand("baseline", contentUnknownAssets, "--output", contentUnknownBaseline, "--no-telemetry").ExitCode == 0,
+        "The content unknown-spelling baseline could not be created.");
+    try
+    {
+        var contentDocument = JsonNode.Parse(File.ReadAllText(contentUnknownAssets))!.AsObject();
+        var contentMetadata = contentDocument["targets"]!["net8.0"]!["Content.Package/1.0.0"]!["contentFiles"]!["contentFiles/cs/any/content.cs"]!.AsObject();
+        contentMetadata.Remove("codeLanguage");
+        contentMetadata["codeLanguge"] = "cs";
+        File.WriteAllText(contentUnknownAssets, contentDocument.ToJsonString());
+        AssertRestoreIdentityFailure(contentUnknownAssets, scratch, contentUnknownBaseline, "content-file-metadata-near-spelling");
+    }
+    finally
+    {
+        if (File.Exists(contentUnknownAssets)) File.Delete(contentUnknownAssets);
+        if (File.Exists(contentUnknownBaseline)) File.Delete(contentUnknownBaseline);
+    }
+
+    var contentExtensionAssets = Path.Combine(Path.GetDirectoryName(assets)!, "restore-structure-content-explicit-extension.assets.json");
+    WriteContentAssets(contentExtensionAssets, Path.Combine(scratch, "content-extension-cache"), "Test.csproj", "contentFiles/cs/any/content.cs", "cs", "Compile");
+    try
+    {
+        var contentDocument = JsonNode.Parse(File.ReadAllText(contentExtensionAssets))!.AsObject();
+        var contentMetadata = contentDocument["targets"]!["net8.0"]!["Content.Package/1.0.0"]!["contentFiles"]!["contentFiles/cs/any/content.cs"]!.AsObject();
+        contentMetadata["x-content"] = "ignored";
+        File.WriteAllText(contentExtensionAssets, contentDocument.ToJsonString());
+        var contentResult = ResolvedGraphClassifier.Analyze(contentExtensionAssets, scratch, strictContent: false);
+        Require(contentResult.IsComplete, $"The explicit x- content extension was rejected: {string.Join(" | ", contentResult.IncompleteReasons)}");
+    }
+    finally
+    {
+        if (File.Exists(contentExtensionAssets)) File.Delete(contentExtensionAssets);
     }
 
     File.Delete(baseline);

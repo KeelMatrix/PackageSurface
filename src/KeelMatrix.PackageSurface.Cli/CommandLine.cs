@@ -287,6 +287,7 @@ public sealed class BaselineFileTransaction
             var projectName = Path.GetFileName(project.ProjectPath);
             candidates.Add(Path.Combine(generatedDirectory, projectName + ".nuget.g.props"));
             candidates.Add(Path.Combine(generatedDirectory, projectName + ".nuget.g.targets"));
+            candidates.AddRange(ResolvedGraphClassifier.GetReachablePackageInputPaths(project.AssetsPath));
         }
 
         var candidateComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
@@ -294,7 +295,7 @@ public sealed class BaselineFileTransaction
         {
             if (PathsReferToSameFile(fullPath, candidate))
             {
-                throw new InvalidDataException("The baseline output must not alias the selected solution, project, restore, or generated-import input.");
+                throw new InvalidDataException("The baseline output must not alias the selected solution, project, restore, generated-import, or reachable package input.");
             }
         }
 
@@ -473,9 +474,8 @@ public sealed class BaselineFileTransaction
 
         while (current is not null)
         {
-            // macOS commonly exposes temporary directories through standard
-            // system-owned aliases such as /var -> /private/var. Links below
-            // that platform boundary remain rejected.
+            // macOS exposes /var through the standard /private/var system alias.
+            // Caller-controlled root aliases and links below /var remain rejected.
             if (!IsSystemRootAlias(current, pathRoot) &&
                 ((current.Attributes & FileAttributes.ReparsePoint) != 0 || current.LinkTarget is not null)) return true;
             current = current.Parent;
@@ -485,9 +485,13 @@ public sealed class BaselineFileTransaction
     }
 
     private static bool IsSystemRootAlias(DirectoryInfo directory, string? pathRoot)
+        => IsSystemRootAlias(directory, pathRoot, OperatingSystem.IsMacOS());
+
+    private static bool IsSystemRootAlias(DirectoryInfo directory, string? pathRoot, bool isMacOs)
     {
-        if (!OperatingSystem.IsMacOS() || pathRoot is null || directory.Parent is null ||
-            !string.Equals(directory.Parent.FullName, pathRoot, StringComparison.Ordinal)) return false;
+        if (!isMacOs || pathRoot is null || directory.Parent is null ||
+            !string.Equals(directory.Parent.FullName, pathRoot, StringComparison.Ordinal) ||
+            !string.Equals(directory.Name, "var", StringComparison.Ordinal)) return false;
 
         var target = directory.LinkTarget;
         if (string.IsNullOrWhiteSpace(target)) return false;
@@ -558,10 +562,13 @@ public sealed record Options(
         package versions, and incoherent metadata, duplicate aliases, or malformed package
         ID/version keys are PS007. Target-package asset groups use NuGet's exact canonical
         property names; unknown or case-variant groups, malformed packageFolders entries, and
-        baseline output aliases including hardlinks are PS007 before any write. The current
+        baseline output aliases including hardlinks to restore, generated-import, or reachable
+        package inputs are PS007 before any write. The current
         candidate supports Windows, Linux, and macOS
         for SDK-style PackageReference restore outputs; hosted CI validates the command contract
-        on all three platforms. Baseline JSON uses exact camelCase property names, named string
+        on all three platforms. On macOS, only the standard root-level /var to /private/var
+        alias is ignored; caller-controlled root aliases and links nested below /var remain
+        rejected. Baseline JSON uses exact camelCase property names, named string
         enums, and rejects duplicate or unknown members. It does not
         evaluate MSBuild conditions, execute package code, or crawl the global package cache.
         """;

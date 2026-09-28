@@ -54,6 +54,7 @@ RunParserMessageRegression();
 RunBaselineContractRegression();
 RunPackageIdentityAndPathRegression();
 RunBaselineJsonBoundaryRegression();
+RunMacOsRootAliasPredicateRegression();
 
 Console.WriteLine($"PASS: diagnostics {string.Join(", ", expected)}");
 return 0;
@@ -556,6 +557,8 @@ static void RunBaselineTransactionRegression(string parent)
     {
         SetOutputSink(null);
     }
+
+    RunReachablePackageAliasRegression(parent);
 }
 
 static void RunPackageIdentityAndPathRegression()
@@ -1406,19 +1409,29 @@ static void RunReparsePointRegression(string scratch)
 
     var ancestorTarget = Path.Combine(scratch, "ancestor-target");
     var ancestorLink = Path.Combine(scratch, "ancestor-link");
+    var ancestorCreated = false;
     try
     {
         Directory.CreateDirectory(ancestorTarget);
         Directory.CreateSymbolicLink(ancestorLink, ancestorTarget);
+        ancestorCreated = true;
+    }
+    catch (UnauthorizedAccessException ex) { Console.WriteLine($"UNVERIFIED: ancestor reparse-point regression is unavailable on this filesystem; operation=Directory.CreateSymbolicLink('{ancestorLink}', '{ancestorTarget}'); exception={ex.GetType().Name}; message={ex.Message}"); }
+    catch (IOException ex) { Console.WriteLine($"UNVERIFIED: ancestor reparse-point regression is unavailable on this filesystem; operation=Directory.CreateSymbolicLink('{ancestorLink}', '{ancestorTarget}'); exception={ex.GetType().Name}; message={ex.Message}"); }
+    catch (PlatformNotSupportedException ex) { Console.WriteLine($"UNVERIFIED: ancestor reparse-point regression is unavailable on this platform; operation=Directory.CreateSymbolicLink('{ancestorLink}', '{ancestorTarget}'); exception={ex.GetType().Name}; message={ex.Message}"); }
+
+    if (ancestorCreated)
+    {
+        Directory.CreateDirectory(Path.Combine(ancestorTarget, "obj"));
+        Directory.CreateDirectory(Path.Combine(ancestorTarget, "cache"));
         var ancestorCache = Path.Combine(ancestorLink, "cache");
         var ancestorAssets = Path.Combine(ancestorLink, "obj", "project.assets.json");
         WriteAssets(ancestorAssets, ancestorCache, "AncestorLink.Package", new List<string> { "build/inside.targets" }, createFiles: true);
+        File.WriteAllText(Path.Combine(ancestorCache, "AncestorLink.Package", "1.0.0", "build", "inside.targets"), "<Project />");
         var ancestorResult = ResolvedGraphClassifier.Analyze(ancestorAssets, ancestorLink, strictContent: false);
-        Require(ancestorResult.IsComplete, "A reparse point outside the resolved package root was treated as an unsafe package path.");
+        Require(ancestorResult.IsComplete, "A reparse point outside the resolved package root was treated as an unsafe package path: " + string.Join(" | ", ancestorResult.IncompleteReasons));
+        Console.WriteLine($"VERIFIED: ancestor reparse-point regression exercised a real directory link; link='{ancestorLink}'; target='{ancestorTarget}'");
     }
-    catch (UnauthorizedAccessException) { Console.WriteLine("UNVERIFIED: ancestor reparse-point regression is unavailable on this filesystem."); }
-    catch (IOException) { Console.WriteLine("UNVERIFIED: ancestor reparse-point regression is unavailable on this filesystem."); }
-    catch (PlatformNotSupportedException) { Console.WriteLine("UNVERIFIED: ancestor reparse-point regression is unavailable on this platform."); }
 }
 
 static void RunReparsePathVariantRegression(string scratch)
@@ -1503,6 +1516,214 @@ static void RunReparsePathVariantRegression(string scratch)
                     $"The {state} reparse point was not rejected for {variant.Name}.");
             }
         }
+    }
+
+}
+
+static void RunReachablePackageAliasRegression(string parent)
+{
+    var root = Path.Combine(parent, "reachable-package-alias");
+    var obj = Path.Combine(root, "obj");
+    var fallback = Path.Combine(root, "fallback-packages");
+    var unusedGlobal = Path.Combine(root, "global-packages");
+    Directory.CreateDirectory(obj);
+    var assets = Path.Combine(obj, "project.assets.json");
+    var files = new[]
+    {
+        "build/direct.props",
+        "buildTransitive/transitive.targets",
+        "buildMultiTargeting/outer.targets",
+        "props/import.props",
+        "targets/import.targets",
+        "runtimes/win-x64/lib/runtime.dll",
+        "ref/net8.0/compile.dll",
+        "contentFiles/cs/net8.0/source.cs",
+        "analyzers/dotnet/cs/analyzer.dll",
+        "runtimes/win-x64/native/native.dll",
+        "resource/en-US/messages.resources",
+        "tools/tool.ps1",
+        "build/nested/helper.targets"
+    };
+    WriteAssets(assets, fallback, "Alias.Package", files, createFiles: true);
+
+    var document = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
+    document["packageFolders"] = new JsonObject
+    {
+        [unusedGlobal] = new JsonObject(),
+        [fallback] = new JsonObject()
+    };
+    var fallbackPackageRoot = Path.Combine(fallback, "Alias.Package", "1.0.0");
+    var globalPackageRoot = Path.Combine(unusedGlobal, "Alias.Package", "1.0.0");
+    Directory.CreateDirectory(Path.GetDirectoryName(globalPackageRoot)!);
+    Directory.Move(fallbackPackageRoot, globalPackageRoot);
+    const string transitivePackageKey = "Transitive.Alias.Package/1.0.0";
+    const string transitiveRelative = "tools/transitive-tool.ps1";
+    var transitiveRoot = Path.Combine(fallback, "Transitive.Alias.Package", "1.0.0");
+    var transitiveFile = Path.Combine(transitiveRoot, transitiveRelative.Replace('/', Path.DirectorySeparatorChar));
+    Directory.CreateDirectory(Path.GetDirectoryName(transitiveFile)!);
+    File.WriteAllText(transitiveFile, "transitive fixture");
+    document["libraries"]![transitivePackageKey] = new JsonObject
+    {
+        ["type"] = "package",
+        ["path"] = transitivePackageKey,
+        ["files"] = new JsonArray(transitiveRelative)
+    };
+    var directTarget = document["targets"]!["net8.0"]!["Alias.Package/1.0.0"]!.AsObject();
+    directTarget["dependencies"] = new JsonObject { ["Transitive.Alias.Package"] = "1.0.0" };
+    document["targets"]!["net8.0"]![transitivePackageKey] = new JsonObject { ["type"] = "package" };
+    document["targets"]!.AsObject()["net8.0/win-x64"] = document["targets"]!["net8.0"]!.DeepClone();
+    File.WriteAllText(assets, document.ToJsonString());
+    var packageRoot = globalPackageRoot;
+    foreach (var relative in files)
+    {
+        var physical = Path.Combine(packageRoot, relative.Replace('/', Path.DirectorySeparatorChar));
+        if (physical.EndsWith(".props", StringComparison.OrdinalIgnoreCase) || physical.EndsWith(".targets", StringComparison.OrdinalIgnoreCase))
+        {
+            File.WriteAllText(physical, "<Project />");
+        }
+        else if (relative.StartsWith("analyzers/", StringComparison.OrdinalIgnoreCase))
+        {
+            File.Copy(typeof(ResolvedGraphClassifier).Assembly.Location, physical, overwrite: true);
+        }
+    }
+
+    var reachable = ResolvedGraphClassifier.GetReachablePackageInputPaths(assets)
+        .Select(Path.GetFullPath)
+        .ToHashSet(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+    Require(files.All(relative => reachable.Contains(Path.GetFullPath(Path.Combine(packageRoot, relative.Replace('/', Path.DirectorySeparatorChar))))),
+        "The preflight package-input set omitted a reachable package inventory file or fallback-root asset.");
+    Require(reachable.Contains(Path.GetFullPath(transitiveFile)),
+        "The preflight package-input set omitted a reachable transitive package asset from the RID graph.");
+
+    var seed = Path.Combine(root, "seed.json");
+    Require(CaptureCommand("baseline", assets, "--output", seed, "--no-telemetry").ExitCode == 0,
+        "The reachable package alias fixture could not create a valid baseline seed.");
+    var distinct = Path.Combine(root, "distinct-output.json");
+    var packageBytes = files.ToDictionary(
+        relative => relative,
+        relative => File.ReadAllBytes(Path.Combine(packageRoot, relative.Replace('/', Path.DirectorySeparatorChar))),
+        StringComparer.Ordinal);
+    Require(CaptureCommand("baseline", assets, "--output", distinct, "--no-telemetry").ExitCode == 0,
+        "A genuinely distinct baseline output was rejected while package inputs were present.");
+    foreach (var relative in files)
+    {
+        var packageFile = Path.Combine(packageRoot, relative.Replace('/', Path.DirectorySeparatorChar));
+        var lexicalAlias = Path.Combine(Path.GetDirectoryName(packageFile)!, ".", Path.GetFileName(packageFile));
+        Require(CaptureCommand("baseline", assets, "--output", lexicalAlias, "--no-telemetry").ExitCode == 2,
+            $"A lexical alias to reachable package input '{relative}' was accepted.");
+        Require(packageBytes[relative].SequenceEqual(File.ReadAllBytes(packageFile)),
+            $"A lexical package-input alias attempt changed '{relative}'.");
+    }
+    var transitiveAlias = Path.Combine(Path.GetDirectoryName(transitiveFile)!, ".", Path.GetFileName(transitiveFile));
+    var transitiveBefore = File.ReadAllBytes(transitiveFile);
+    Require(CaptureCommand("baseline", assets, "--output", transitiveAlias, "--no-telemetry").ExitCode == 2,
+        "A lexical alias to a reachable transitive package input was accepted.");
+    Require(transitiveBefore.SequenceEqual(File.ReadAllBytes(transitiveFile)),
+        "A transitive package-input alias attempt changed the package file.");
+
+    var hardlinkOutputs = new[] { Path.Combine(root, "package-hardlink.json"), Path.Combine(root, "package-hardlink-second.json") };
+    var representative = Path.Combine(packageRoot, "tools", "tool.ps1");
+    Require(TryCreateHardLink(representative, hardlinkOutputs[0]), "The package hardlink alias regression could not create a hardlink.");
+    Require(TryCreateHardLink(representative, hardlinkOutputs[1]), "The package multiple-hardlink alias regression could not create a second hardlink.");
+    try
+    {
+        foreach (var output in hardlinkOutputs)
+        {
+            Require(CaptureCommand("baseline", assets, "--output", output, "--no-telemetry").ExitCode == 2,
+                "A hardlink alias to a reachable package input was accepted.");
+            Require(packageBytes["tools/tool.ps1"].SequenceEqual(File.ReadAllBytes(representative)),
+                "A package hardlink alias attempt changed the representative package input.");
+        }
+    }
+    finally
+    {
+        foreach (var output in hardlinkOutputs)
+        {
+            if (File.Exists(output)) File.Delete(output);
+        }
+    }
+
+    RunSymlinkPackageAliasCase(root, assets, representative, packageBytes["tools/tool.ps1"], "direct");
+    var packageDirectory = Path.GetDirectoryName(representative)!;
+    RunDirectorySymlinkPackageAliasCase(root, assets, packageDirectory, representative, packageBytes["tools/tool.ps1"], "interior");
+    RunDirectorySymlinkPackageAliasCase(root, assets, root, representative, packageBytes["tools/tool.ps1"], "ancestor");
+}
+
+static void RunSymlinkPackageAliasCase(string root, string assets, string packageFile, byte[] before, string label)
+{
+    var output = Path.Combine(root, "package-" + label + "-symlink.json");
+    try
+    {
+        File.CreateSymbolicLink(output, packageFile);
+        Require(CaptureCommand("baseline", assets, "--output", output, "--no-telemetry").ExitCode == 2,
+            $"A {label} symlink alias to a reachable package input was accepted.");
+        Require(before.SequenceEqual(File.ReadAllBytes(packageFile)), $"A {label} symlink alias attempt changed the package input.");
+    }
+    catch (UnauthorizedAccessException) { Console.WriteLine($"UNVERIFIED: package {label} symlink-alias regression is unavailable on this filesystem."); }
+    catch (IOException) { Console.WriteLine($"UNVERIFIED: package {label} symlink-alias regression is unavailable on this filesystem."); }
+    catch (PlatformNotSupportedException) { Console.WriteLine($"UNVERIFIED: package {label} symlink-alias regression is unavailable on this platform."); }
+    finally
+    {
+        if (File.Exists(output)) File.Delete(output);
+    }
+}
+
+static void RunDirectorySymlinkPackageAliasCase(string root, string assets, string target, string packageFile, byte[] before, string label)
+{
+    var link = Path.Combine(root, "package-" + label + "-link");
+    var output = Path.Combine(link, "tool.ps1");
+    try
+    {
+        Directory.CreateSymbolicLink(link, target);
+        Require(CaptureCommand("baseline", assets, "--output", output, "--no-telemetry").ExitCode == 2,
+            $"A package {label}-directory reparse alias was accepted.");
+        Require(before.SequenceEqual(File.ReadAllBytes(packageFile)), $"A package {label}-directory alias attempt changed the package input.");
+    }
+    catch (UnauthorizedAccessException) { Console.WriteLine($"UNVERIFIED: package {label}-directory reparse regression is unavailable on this filesystem."); }
+    catch (IOException) { Console.WriteLine($"UNVERIFIED: package {label}-directory reparse regression is unavailable on this filesystem."); }
+    catch (PlatformNotSupportedException) { Console.WriteLine($"UNVERIFIED: package {label}-directory reparse regression is unavailable on this platform."); }
+}
+
+static void RunMacOsRootAliasPredicateRegression()
+{
+    var scratch = Path.Combine(Path.GetTempPath(), "packagesurface-macos-alias-" + Guid.NewGuid().ToString("N"));
+    var fakeRoot = Path.Combine(scratch, "root");
+    var privateRoot = Path.Combine(fakeRoot, "private");
+    Directory.CreateDirectory(privateRoot);
+    try
+    {
+        var method = typeof(BaselineFileTransaction).GetMethod("IsSystemRootAlias", BindingFlags.NonPublic | BindingFlags.Static, binder: null,
+            types: new[] { typeof(DirectoryInfo), typeof(string), typeof(bool) }, modifiers: null)
+            ?? throw new InvalidOperationException("The macOS root-alias predicate seam is unavailable.");
+        var standardTarget = Path.Combine(privateRoot, "var");
+        var standardLink = Path.Combine(fakeRoot, "var");
+        Directory.CreateDirectory(standardTarget);
+        Directory.CreateSymbolicLink(standardLink, standardTarget);
+        Require((bool)method.Invoke(null, new object[] { new DirectoryInfo(standardLink), fakeRoot, true })!,
+            "The standard macOS /var to /private/var alias was rejected.");
+
+        var callerTarget = Path.Combine(privateRoot, "caller-alias");
+        var callerLink = Path.Combine(fakeRoot, "caller-alias");
+        Directory.CreateDirectory(callerTarget);
+        Directory.CreateSymbolicLink(callerLink, callerTarget);
+        Require(!(bool)method.Invoke(null, new object[] { new DirectoryInfo(callerLink), fakeRoot, true })!,
+            "A caller-controlled root-level /private/<name> alias was accepted as system-owned.");
+
+        var nestedTarget = Path.Combine(privateRoot, "nested");
+        var nestedLink = Path.Combine(standardLink, "nested");
+        Directory.CreateDirectory(nestedTarget);
+        Directory.CreateSymbolicLink(nestedLink, nestedTarget);
+        Require(!(bool)method.Invoke(null, new object[] { new DirectoryInfo(nestedLink), fakeRoot, true })!,
+            "A nested link below the standard /var alias was accepted as system-owned.");
+        Require(!(bool)method.Invoke(null, new object[] { new DirectoryInfo(standardLink), fakeRoot, false })!,
+            "The macOS root-alias exception ignored a non-macOS platform.");
+    }
+    catch (UnauthorizedAccessException) { Console.WriteLine("UNVERIFIED: macOS root-alias predicate filesystem regression is unavailable on this filesystem."); }
+    catch (IOException) { Console.WriteLine("UNVERIFIED: macOS root-alias predicate filesystem regression is unavailable on this filesystem."); }
+    catch (PlatformNotSupportedException) { Console.WriteLine("UNVERIFIED: macOS root-alias predicate filesystem regression is unavailable on this platform."); }
+    finally
+    {
+        if (Directory.Exists(scratch)) Directory.Delete(scratch, recursive: true);
     }
 }
 

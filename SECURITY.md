@@ -6,7 +6,7 @@ Please report suspected vulnerabilities privately to `keelmatrix@gmail.com` with
 
 ## Supported Versions
 
-Restore target-package groups use exact NuGet schema spelling, and malformed or case-variant groups and `packageFolders` data fail closed as `PS007`. Baseline output aliases, including hardlinks to analysis inputs, are rejected by real file identity before mutation.
+Restore target-package groups use exact NuGet schema spelling, and malformed or case-variant groups and `packageFolders` data fail closed as `PS007`. Baseline output aliases, including hardlinks to restore, generated-import, and reachable package inputs, are rejected by real file identity before mutation. On macOS, only the standard root-level `/var` to `/private/var` alias is ignored; caller-controlled root aliases and links nested below `/var` remain rejected.
 
 The latest published version is the supported security baseline. During pre-release development, test the current repository revision and include the exact commit or package version in a private report. Security fixes are evaluated against the current supported version and documented in an appropriate release note after review.
 

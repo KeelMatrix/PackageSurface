@@ -46,7 +46,7 @@ try {
     Write-Utf8 $goodHelpPath $goodHelpText
 
     $brokenHelpPath = Join-Path $scratch 'help-missing-tfm-rid.txt'
-    $brokenHelpText = $goodHelpText.Replace('every TFM/RID, ', '')
+    $brokenHelpText = [regex]::Replace($goodHelpText, 'every\s+TFM/RID(?:,\s*)?', '')
     if ($brokenHelpText -eq $goodHelpText) { throw 'The built-help negative control did not remove its required clause.' }
     Write-Utf8 $brokenHelpPath $brokenHelpText
     Invoke-ExpectedValidatorFailure 'built-help-missing-clause' $root $brokenHelpPath

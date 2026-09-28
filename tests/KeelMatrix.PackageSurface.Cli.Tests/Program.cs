@@ -59,8 +59,9 @@ var requiredHelpClauses = new[]
     "genuinely distinct outputs are accepted",
     "unknown members",
     "standard unconsumed MSBuild elements and attributes",
-    "fallbackFolders only as an array of strings",
-    "SdkAnalysisLevel only as a string",
+    "native SDK shape",
+    "malformed nested",
+    "compilerApiVersion",
     "non-canonical spellings of consumed JSON/XML members",
     "x- prefix",
     "urn:keelmatrix:packagesurface:extension",
@@ -148,6 +149,7 @@ static void RunClassifierHardeningTests()
         RunRestoreIdentityCanonicalizationRegression(assets, scratch);
         RunRestoreJsonStructuralDuplicateRegression(assets, scratch);
         RunRestoreOptionalMetadataRegression(assets, scratch);
+        RunRestoreMetadataShapeRegression(assets, scratch);
         RunReachabilityClosureRegression(scratch);
         RunVersionAwareReachabilityConflictRegression(scratch);
         RunVersionEquivalenceRegression(scratch);
@@ -3222,6 +3224,183 @@ static void AssertValidRestoreMetadata(string assets, string projectRoot, string
     var check = CaptureCommand("check", assets, "--baseline", baseline, "--format", "json", "--no-telemetry");
     Require(check.ExitCode == 0 && !check.Output.Contains("PS007", StringComparison.Ordinal),
         $"{label} check failed: {check.Output}");
+}
+
+static void RunRestoreMetadataShapeRegression(string sourceAssets, string scratch)
+{
+    var validFormat3Path = Path.Combine(scratch, "restore-shape-valid-format3.assets.json");
+    var validFormat3Baseline = Path.Combine(scratch, "restore-shape-valid-format3-baseline.json");
+    var validFormat4Path = Path.Combine(scratch, "restore-shape-valid-format4.assets.json");
+    var validFormat4Baseline = Path.Combine(scratch, "restore-shape-valid-format4-baseline.json");
+    var validFormat3 = CreateValidRestoreShapeDocument(sourceAssets, format: 3);
+    var validFormat4 = CreateValidRestoreShapeDocument(sourceAssets, format: 4);
+    File.WriteAllText(validFormat3Path, validFormat3.ToJsonString());
+    WriteGeneratedImportEvidence(validFormat3Path);
+    File.WriteAllText(validFormat4Path, validFormat4.ToJsonString());
+    WriteGeneratedImportEvidence(validFormat4Path);
+
+    try
+    {
+        AssertValidRestoreMetadata(validFormat3Path, scratch, validFormat3Baseline, "all valid restore metadata shapes (format 3)");
+        AssertValidRestoreMetadata(validFormat4Path, scratch, validFormat4Baseline, "all valid restore metadata shapes (format 4)");
+
+        var mutations = new (string Name, Action<JsonObject> Mutate)[]
+        {
+            ("restore.centralPackageVersionsManagementEnabled", value => value["project"]!["restore"]!["centralPackageVersionsManagementEnabled"] = 42),
+            ("restore.configFilePaths", value => value["project"]!["restore"]!["configFilePaths"] = "bad"),
+            ("restore.crossTargeting", value => value["project"]!["restore"]!["crossTargeting"] = "bad"),
+            ("restore.frameworks", value => value["project"]!["restore"]!["frameworks"] = new JsonArray()),
+            ("restore.originalTargetFrameworks", value => value["project"]!["restore"]!["originalTargetFrameworks"] = new JsonArray(42)),
+            ("restore.outputPath", value => value["project"]!["restore"]!["outputPath"] = 42),
+            ("restore.packagesPath", value => value["project"]!["restore"]!["packagesPath"] = 42),
+            ("restore.projectName", value => value["project"]!["restore"]!["projectName"] = 42),
+            ("restore.projectPath", value => value["project"]!["restore"]!["projectPath"] = 42),
+            ("restore.projectStyle", value => value["project"]!["restore"]!["projectStyle"] = 42),
+            ("restore.projectUniqueName", value => value["project"]!["restore"]!["projectUniqueName"] = 42),
+            ("restore.restoreAuditProperties", value => value["project"]!["restore"]!["restoreAuditProperties"] = "bad"),
+            ("restore.fallbackFolders", value => value["project"]!["restore"]!["fallbackFolders"] = new JsonArray("valid", 42)),
+            ("restore.sources", value => value["project"]!["restore"]!["sources"] = new JsonArray()),
+            ("restore.warningProperties", value => value["project"]!["restore"]!["warningProperties"] = "bad"),
+            ("restore.compilerApiVersion", value => value["project"]!["restore"]!["compilerApiVersion"] = 42),
+            ("restore.SdkAnalysisLevel", value => value["project"]!["restore"]!["SdkAnalysisLevel"] = 10),
+            ("project.framework", value => value["project"]!["frameworks"]!["net8.0"]!["framework"] = 42),
+            ("project.targetAlias", value => value["project"]!["frameworks"]!["net8.0"]!["targetAlias"] = 42),
+            ("project.dependencies", value => value["project"]!["frameworks"]!["net8.0"]!["dependencies"] = new JsonArray()),
+            ("project.dependencies.value", value => value["project"]!["frameworks"]!["net8.0"]!["dependencies"]!["XmlPackage"] = new JsonObject { ["version"] = 42 }),
+            ("project.assetTargetFallback", value => value["project"]!["frameworks"]!["net8.0"]!["assetTargetFallback"] = "bad"),
+            ("project.centralPackageVersions", value => value["project"]!["frameworks"]!["net8.0"]!["centralPackageVersions"] = new JsonArray()),
+            ("project.centralPackageVersions.value", value => value["project"]!["frameworks"]!["net8.0"]!["centralPackageVersions"]!["XmlPackage"] = 42),
+            ("project.frameworkReferences", value => value["project"]!["frameworks"]!["net8.0"]!["frameworkReferences"] = new JsonArray()),
+            ("project.frameworkReferences.value", value => value["project"]!["frameworks"]!["net8.0"]!["frameworkReferences"]!["Microsoft.NETCore.App"] = "bad"),
+            ("project.imports", value => value["project"]!["frameworks"]!["net8.0"]!["imports"] = new JsonArray("net8.0", 42)),
+            ("project.runtimeIdentifierGraphPath", value => value["project"]!["frameworks"]!["net8.0"]!["runtimeIdentifierGraphPath"] = 42),
+            ("project.downloadDependencies", value => value["project"]!["frameworks"]!["net8.0"]!["downloadDependencies"] = new JsonArray(new JsonObject { ["name"] = "PackageDownload", ["version"] = 42 })),
+            ("project.warn", value => value["project"]!["frameworks"]!["net8.0"]!["warn"] = "bad"),
+            ("restore.framework.framework", value => value["project"]!["restore"]!["frameworks"]!["net8.0"]!["framework"] = 42),
+            ("restore.framework.targetAlias", value => value["project"]!["restore"]!["frameworks"]!["net8.0"]!["targetAlias"] = 42),
+            ("restore.framework.projectReferences", value => value["project"]!["restore"]!["frameworks"]!["net8.0"]!["projectReferences"] = new JsonArray()),
+            ("restore.framework.projectReferences.value", value => value["project"]!["restore"]!["frameworks"]!["net8.0"]!["projectReferences"]!["Project.csproj"] = "bad")
+        };
+
+        foreach (var (name, mutate) in mutations)
+        {
+            foreach (var (format, template, baseline) in new[]
+            {
+                ("format3", validFormat3, validFormat3Baseline),
+                ("format4", validFormat4, validFormat4Baseline)
+            })
+            {
+                var invalidPath = Path.Combine(scratch, "restore-shape-invalid-" + format + "-" + name.Replace('.', '-') + ".assets.json");
+                var invalid = template.DeepClone().AsObject();
+                mutate(invalid);
+                File.WriteAllText(invalidPath, invalid.ToJsonString());
+                WriteGeneratedImportEvidence(invalidPath);
+                try
+                {
+                    AssertRestoreIdentityFailure(invalidPath, scratch, baseline, name + " (" + format + ")");
+                }
+                finally
+                {
+                    if (File.Exists(invalidPath)) File.Delete(invalidPath);
+                    foreach (var generated in new[] { "Test.csproj.nuget.g.props", "Test.csproj.nuget.g.targets" })
+                    {
+                        var generatedPath = Path.Combine(scratch, generated);
+                        if (File.Exists(generatedPath)) File.Delete(generatedPath);
+                    }
+                }
+            }
+        }
+    }
+    finally
+    {
+        foreach (var path in new[] { validFormat3Path, validFormat3Baseline, validFormat4Path, validFormat4Baseline })
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+        foreach (var generated in new[] { "Test.csproj.nuget.g.props", "Test.csproj.nuget.g.targets" })
+        {
+            var generatedPath = Path.Combine(scratch, generated);
+            if (File.Exists(generatedPath)) File.Delete(generatedPath);
+        }
+    }
+}
+
+static JsonObject CreateValidRestoreShapeDocument(string sourceAssets, int format)
+{
+    var root = JsonNode.Parse(File.ReadAllText(sourceAssets))!.AsObject();
+    var project = root["project"]!.AsObject();
+    var restore = project["restore"]!.AsObject();
+    restore["centralPackageVersionsManagementEnabled"] = true;
+    restore["configFilePaths"] = new JsonArray("nuget.config");
+    restore["crossTargeting"] = true;
+    restore["originalTargetFrameworks"] = new JsonArray("net8.0");
+    restore["outputPath"] = "obj/";
+    restore["packagesPath"] = "packages/";
+    restore["projectName"] = "Test";
+    restore["projectStyle"] = "PackageReference";
+    restore["projectUniqueName"] = "Test.csproj";
+    restore["restoreAuditProperties"] = new JsonObject
+    {
+        ["enableAudit"] = "true",
+        ["auditLevel"] = "low",
+        ["auditMode"] = "direct",
+        ["suppressedAdvisories"] = new JsonObject { ["ADV-1"] = null }
+    };
+    restore["fallbackFolders"] = new JsonArray("fallback");
+    restore["sources"] = new JsonObject { ["https://example.test/v3/index.json"] = new JsonObject() };
+    restore["warningProperties"] = new JsonObject
+    {
+        ["allWarningsAsErrors"] = true,
+        ["noWarn"] = new JsonArray("NU1000"),
+        ["warnAsError"] = new JsonArray("NU1605"),
+        ["warnNotAsError"] = new JsonArray("NU1701")
+    };
+    restore["compilerApiVersion"] = "4.0";
+    restore["SdkAnalysisLevel"] = "10.0.400";
+    restore["frameworks"] = new JsonObject
+    {
+        ["net8.0"] = new JsonObject
+        {
+            ["framework"] = "net8.0",
+            ["targetAlias"] = "net8.0",
+            ["projectReferences"] = new JsonObject
+            {
+                ["Project.csproj"] = new JsonObject
+                {
+                    ["projectPath"] = "Project.csproj",
+                    ["includeAssets"] = "runtime; build",
+                    ["excludeAssets"] = "none",
+                    ["privateAssets"] = "all"
+                }
+            }
+        }
+    };
+
+    var framework = project["frameworks"]!["net8.0"]!.AsObject();
+    framework["framework"] = "net8.0";
+    framework["targetAlias"] = "net8.0";
+    framework["dependencies"] = new JsonObject { ["XmlPackage"] = "[1.0.0, )" };
+    framework["assetTargetFallback"] = true;
+    framework["centralPackageVersions"] = new JsonObject { ["XmlPackage"] = "1.0.0" };
+    framework["frameworkReferences"] = new JsonObject
+    {
+        ["Microsoft.NETCore.App"] = new JsonObject { ["privateAssets"] = "all" }
+    };
+    framework["imports"] = new JsonArray("net461");
+    framework["runtimeIdentifierGraphPath"] = "PortableRuntimeIdentifierGraph.json";
+    framework["downloadDependencies"] = new JsonArray
+    {
+        new JsonObject { ["name"] = "PackageDownload", ["version"] = "[1.0.0, )" }
+    };
+    framework["warn"] = true;
+
+    if (format == 4)
+    {
+        root["version"] = 4;
+        root["projectFileDependencyGroups"] = new JsonObject { ["net8.0"] = new JsonArray() };
+    }
+
+    return root;
 }
 
 static void RunReachabilityClosureRegression(string scratch)

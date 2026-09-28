@@ -312,10 +312,12 @@ foreach ($category in $requiredCategories) {
 }
 
 $matrix = [System.Collections.Generic.List[string]]::new()
+$restoreShapeEvidence = 'Admitted restore metadata is validated before graph closure against native SDK shapes: strings, booleans, string arrays, string- or object-valued maps, nullable `suppressedAdvisories` values, and `{name,version}` download-dependency objects. Both string and expanded-object dependency values are valid; wrong primitives, nulls, array elements, map values, and malformed nested metadata produce `PS007`, while absent members remain valid. The deterministic matrix covers SDK 8.0.425, 9.0.121, and 10.0.401 assets in formats 3 and 4.'
 $matrix.Add('# Phase 0 corpus matrix')
 $matrix.Add('')
 $matrix.Add('Each supported capability has direct and transitive active/inactive evidence. `ToolOrScriptPresent` is intentionally informational and inactive in every row. `BuildMultiTargeting` is project-level: the generated outer-target import is direct-only under this NuGet convention, so its transitive fixture is explicitly present/inactive.')
 $matrix.Add('Restore evidence coverage: coherent SDK-style `project.assets.json` formats 3 and 4 are supported and verified. One canonical restore-identity index and one direct/project-reference rooted package closure per applicable target graph reconcile framework keys, effective frameworks, target aliases, target/RID keys, dependency groups, and package identities before active filtering; disconnected package nodes or islands, same-ID multi-version target graphs, exact or case-variant duplicate restore-JSON properties, unknown or non-canonical spellings of consumed restore members, and incoherent or malformed identities remain PS007 evidence. Standard SDK restore metadata includes typed `fallbackFolders` and `SdkAnalysisLevel`; package XML keeps the consumed `Import`/`UsingTask`/`Exec`/`Code` contract strict while tolerating standard unconsumed MSBuild elements and attributes. Explicit `x-` JSON extension members and `urn:keelmatrix:packagesurface:extension` XML attributes remain available for unrelated metadata. The `NuGet.Versioning` 7.9.0 parser/comparer governs package keys, roots, imports, baseline provenance, dependency ranges, and format-4 requirements. Project, target-package, and format-4 dependency values use that NuGet-compatible grammar and exactly-one selected-version matching. Format 4 additionally requires matching key/effective/target-alias metadata across the project and restore framework maps, plus complete array-valued project dependency groups.')
+$matrix.Add($restoreShapeEvidence)
 $matrix.Add('')
 $matrix.Add('| Capability | Relationship | State | Context | TFM/RID | Fixture |')
 $matrix.Add('|---|---|---|---|---|---|')
@@ -342,6 +344,7 @@ foreach ($line in @(
     '', '## Per-category comparison', '')) { $report.Add([string]$line) }
 $report.AddRange($rows)
 $report.Add('')
+$report.Add($restoreShapeEvidence)
 $report.Add('Restore completeness requires both-direction project/restore and format-4 dependency-group sets, canonical target/RID membership, and SDK-shaped dependency values that match exactly one selected package version.')
 foreach ($line in @(
     '', '## Missing classifier entries', '', $missingText,

@@ -119,8 +119,16 @@ public static class ResolvedGraphClassifier
         "autoReferenced",
         "suppressParent",
         "project",
-        "library"
+        "library",
+        "versionOverride",
+        "noWarn",
+        "aliases"
     };
+    private static readonly string[] WarningPropertyNames = { "allWarningsAsErrors", "noWarn", "warnAsError", "warnNotAsError" };
+    private static readonly string[] RestoreAuditPropertyNames = { "enableAudit", "auditLevel", "auditMode", "suppressedAdvisories" };
+    private static readonly string[] ProjectReferencePropertyNames = { "projectPath", "includeAssets", "excludeAssets", "privateAssets" };
+    private static readonly string[] FrameworkReferencePropertyNames = { "privateAssets" };
+    private static readonly string[] DownloadDependencyPropertyNames = { "name", "version" };
     private static readonly string[] LibraryPropertyNames = { "sha512", "type", "path", "msbuildProject", "files", "hasTools" };
     private static readonly string[] ContentFilePropertyNames = { "related", "buildAction", "copyToOutput", "codeLanguage" };
     private static readonly string[] RuntimeTargetPropertyNames = { "rid", "assetType" };
@@ -897,25 +905,38 @@ public static class ResolvedGraphClassifier
             var frameworkRules = new Dictionary<string, PackageAssetRule>(StringComparer.OrdinalIgnoreCase);
             foreach (var dependency in dependencies.EnumerateObject())
             {
-                if (dependency.Value.ValueKind != JsonValueKind.Object)
-                {
-                    throw new InvalidDataException($"Dependency {dependency.Name} has an invalid metadata object.");
-                }
-
-                if (!dependency.Value.TryGetProperty("version", out var version) ||
-                    version.ValueKind != JsonValueKind.String ||
-                    !TryParsePackageVersionRange(version.GetString(), out var requirement))
+                if (!TryReadDependencyRequirement(dependency.Value, out var requirement))
                 {
                     incomplete.Add($"Dependency {dependency.Name} has an invalid version range.");
                     continue;
                 }
 
-                frameworkRules[dependency.Name] = new PackageAssetRule(requirement, ReadAnalyzersIncluded(dependency.Value, dependency.Name));
+                frameworkRules[dependency.Name] = new PackageAssetRule(
+                    requirement,
+                    dependency.Value.ValueKind != JsonValueKind.Object || ReadAnalyzersIncluded(dependency.Value, dependency.Name));
             }
             result[frameworkIdentity.CanonicalKey] = frameworkRules;
         }
 
         return result;
+    }
+
+    private static bool TryReadDependencyRequirement(JsonElement value, out PackageVersionRange requirement)
+    {
+        if (value.ValueKind == JsonValueKind.String)
+        {
+            return TryParsePackageVersionRange(value.GetString(), out requirement);
+        }
+
+        if (value.ValueKind == JsonValueKind.Object &&
+            value.TryGetProperty("version", out var version) &&
+            version.ValueKind == JsonValueKind.String)
+        {
+            return TryParsePackageVersionRange(version.GetString(), out requirement);
+        }
+
+        requirement = null!;
+        return false;
     }
 
     private static IEnumerable<SurfaceEntry> CreateNestedImportEntries(
@@ -1358,18 +1379,25 @@ public static class ResolvedGraphClassifier
         if (TryGetExactObject(root, "project", out var project))
         {
             ValidateConsumedPropertySpellings(project, "project metadata", ProjectPropertyNames, incomplete);
-            if (TryGetExactObject(project, "frameworks", out var projectFrameworks))
+            if (project.TryGetProperty("frameworks", out var projectFrameworks))
             {
-                ValidateFrameworkMap(projectFrameworks, "project framework", ProjectFrameworkPropertyNames, incomplete);
+                ValidateFrameworkMap(projectFrameworks, "project framework", ProjectFrameworkPropertyNames, incomplete, restoreFramework: false);
             }
 
-            if (TryGetExactObject(project, "restore", out var restore))
+            if (project.TryGetProperty("restore", out var restore))
             {
-                ValidateConsumedPropertySpellings(restore, "restore metadata", RestorePropertyNames, incomplete);
-                ValidateRestoreOptionalMetadata(restore, incomplete);
-                if (TryGetExactObject(restore, "frameworks", out var restoreFrameworks))
+                if (restore.ValueKind != JsonValueKind.Object)
                 {
-                    ValidateFrameworkMap(restoreFrameworks, "restore framework", RestoreFrameworkPropertyNames, incomplete);
+                    incomplete.Add("Restore metadata is not an object.");
+                }
+                else
+                {
+                    ValidateConsumedPropertySpellings(restore, "restore metadata", RestorePropertyNames, incomplete);
+                    ValidateRestoreOptionalMetadata(restore, incomplete);
+                    if (restore.TryGetProperty("frameworks", out var restoreFrameworks))
+                    {
+                        ValidateFrameworkMap(restoreFrameworks, "restore framework", RestoreFrameworkPropertyNames, incomplete, restoreFramework: true);
+                    }
                 }
             }
         }
@@ -1412,17 +1440,88 @@ public static class ResolvedGraphClassifier
 
     private static void ValidateRestoreOptionalMetadata(JsonElement restore, List<string> incomplete)
     {
-        if (restore.TryGetProperty("fallbackFolders", out var fallbackFolders) &&
-            (fallbackFolders.ValueKind != JsonValueKind.Array ||
-             fallbackFolders.EnumerateArray().Any(folder => folder.ValueKind != JsonValueKind.String)))
+        ValidateBooleanProperty(restore, "centralPackageVersionsManagementEnabled", "restore metadata", incomplete);
+        ValidateStringArrayProperty(restore, "configFilePaths", "restore metadata", incomplete);
+        ValidateBooleanProperty(restore, "crossTargeting", "restore metadata", incomplete);
+        ValidateStringArrayProperty(restore, "originalTargetFrameworks", "restore metadata", incomplete);
+        ValidateStringProperty(restore, "outputPath", "restore metadata", incomplete);
+        ValidateStringProperty(restore, "packagesPath", "restore metadata", incomplete);
+        ValidateStringProperty(restore, "projectName", "restore metadata", incomplete);
+        ValidateStringProperty(restore, "projectPath", "restore metadata", incomplete);
+        ValidateStringProperty(restore, "projectStyle", "restore metadata", incomplete);
+        ValidateStringProperty(restore, "projectUniqueName", "restore metadata", incomplete);
+        ValidateStringArrayProperty(restore, "fallbackFolders", "restore metadata", incomplete);
+        ValidateStringProperty(restore, "compilerApiVersion", "restore metadata", incomplete);
+        ValidateStringProperty(restore, "SdkAnalysisLevel", "restore metadata", incomplete);
+
+        if (restore.TryGetProperty("sources", out var sources))
         {
-            incomplete.Add("Restore metadata field 'fallbackFolders' must be an array of strings.");
+            if (sources.ValueKind != JsonValueKind.Object)
+            {
+                incomplete.Add("Restore metadata field 'sources' must be an object map.");
+            }
+            else
+            {
+                foreach (var source in sources.EnumerateObject())
+                {
+                    if (source.Value.ValueKind != JsonValueKind.Object)
+                    {
+                        incomplete.Add("Restore metadata field 'sources' must map source names to objects.");
+                    }
+                    else
+                    {
+                        ValidateConsumedPropertySpellings(source.Value, "source metadata", Array.Empty<string>(), incomplete);
+                    }
+                }
+            }
         }
 
-        if (restore.TryGetProperty("SdkAnalysisLevel", out var sdkAnalysisLevel) &&
-            sdkAnalysisLevel.ValueKind != JsonValueKind.String)
+        if (restore.TryGetProperty("warningProperties", out var warningProperties))
         {
-            incomplete.Add("Restore metadata field 'SdkAnalysisLevel' must be a string.");
+            if (warningProperties.ValueKind != JsonValueKind.Object)
+            {
+                incomplete.Add("Restore metadata field 'warningProperties' must be an object.");
+            }
+            else
+            {
+                ValidateConsumedPropertySpellings(warningProperties, "warning metadata", WarningPropertyNames, incomplete);
+                ValidateBooleanProperty(warningProperties, "allWarningsAsErrors", "warning metadata", incomplete);
+                ValidateStringArrayProperty(warningProperties, "noWarn", "warning metadata", incomplete);
+                ValidateStringArrayProperty(warningProperties, "warnAsError", "warning metadata", incomplete);
+                ValidateStringArrayProperty(warningProperties, "warnNotAsError", "warning metadata", incomplete);
+            }
+        }
+
+        if (restore.TryGetProperty("restoreAuditProperties", out var auditProperties))
+        {
+            if (auditProperties.ValueKind != JsonValueKind.Object)
+            {
+                incomplete.Add("Restore metadata field 'restoreAuditProperties' must be an object.");
+            }
+            else
+            {
+                ValidateConsumedPropertySpellings(auditProperties, "restore audit metadata", RestoreAuditPropertyNames, incomplete);
+                ValidateStringProperty(auditProperties, "enableAudit", "restore audit metadata", incomplete);
+                ValidateStringProperty(auditProperties, "auditLevel", "restore audit metadata", incomplete);
+                ValidateStringProperty(auditProperties, "auditMode", "restore audit metadata", incomplete);
+                if (auditProperties.TryGetProperty("suppressedAdvisories", out var suppressedAdvisories))
+                {
+                    if (suppressedAdvisories.ValueKind != JsonValueKind.Object)
+                    {
+                        incomplete.Add("Restore audit metadata field 'suppressedAdvisories' must be an object map.");
+                    }
+                    else
+                    {
+                        foreach (var advisory in suppressedAdvisories.EnumerateObject())
+                        {
+                            if (advisory.Value.ValueKind != JsonValueKind.Null)
+                            {
+                                incomplete.Add("Restore audit metadata field 'suppressedAdvisories' must map advisory names to null.");
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1430,20 +1529,199 @@ public static class ResolvedGraphClassifier
         JsonElement frameworks,
         string description,
         IReadOnlyCollection<string> propertyNames,
-        List<string> incomplete)
+        List<string> incomplete,
+        bool restoreFramework)
     {
+        if (frameworks.ValueKind != JsonValueKind.Object)
+        {
+            incomplete.Add($"{description} map must be an object.");
+            return;
+        }
+
         foreach (var framework in frameworks.EnumerateObject())
         {
-            if (framework.Value.ValueKind != JsonValueKind.Object) continue;
-            ValidateConsumedPropertySpellings(framework.Value, description + " metadata", propertyNames, incomplete);
-            if (!TryGetExactObject(framework.Value, "dependencies", out var dependencies)) continue;
-            foreach (var dependency in dependencies.EnumerateObject())
+            if (framework.Value.ValueKind != JsonValueKind.Object)
             {
-                if (dependency.Value.ValueKind == JsonValueKind.Object)
-                {
-                    ValidateConsumedPropertySpellings(dependency.Value, "direct dependency metadata", DirectDependencyPropertyNames, incomplete);
-                }
+                incomplete.Add($"{description} {framework.Name} must be an object.");
+                continue;
             }
+
+            ValidateConsumedPropertySpellings(framework.Value, description + " metadata", propertyNames, incomplete);
+            if (restoreFramework)
+            {
+                ValidateStringProperty(framework.Value, "framework", description + " metadata", incomplete);
+                ValidateStringProperty(framework.Value, "targetAlias", description + " metadata", incomplete);
+                ValidateProjectReferences(framework.Value, incomplete);
+            }
+            else
+            {
+                ValidateProjectFrameworkMetadata(framework.Value, incomplete);
+            }
+        }
+    }
+
+    private static void ValidateProjectFrameworkMetadata(JsonElement framework, List<string> incomplete)
+    {
+        ValidateStringProperty(framework, "framework", "project framework metadata", incomplete);
+        ValidateStringProperty(framework, "targetAlias", "project framework metadata", incomplete);
+        ValidateDependencyMap(framework, incomplete);
+        ValidateBooleanProperty(framework, "assetTargetFallback", "project framework metadata", incomplete);
+        ValidateStringMapProperty(framework, "centralPackageVersions", "project framework metadata", incomplete);
+        ValidateFrameworkReferences(framework, incomplete);
+        ValidateStringArrayProperty(framework, "imports", "project framework metadata", incomplete);
+        ValidateStringProperty(framework, "runtimeIdentifierGraphPath", "project framework metadata", incomplete);
+        ValidateDownloadDependencies(framework, incomplete);
+        ValidateBooleanProperty(framework, "warn", "project framework metadata", incomplete);
+    }
+
+    private static void ValidateDependencyMap(JsonElement framework, List<string> incomplete)
+    {
+        if (!framework.TryGetProperty("dependencies", out var dependencies)) return;
+        if (dependencies.ValueKind != JsonValueKind.Object)
+        {
+            incomplete.Add("Project framework metadata field 'dependencies' must be an object map.");
+            return;
+        }
+
+        foreach (var dependency in dependencies.EnumerateObject())
+        {
+            if (dependency.Value.ValueKind == JsonValueKind.String) continue;
+            if (dependency.Value.ValueKind != JsonValueKind.Object)
+            {
+                incomplete.Add("Project framework metadata field 'dependencies' must map package names to strings or objects.");
+                continue;
+            }
+
+            ValidateConsumedPropertySpellings(dependency.Value, "direct dependency metadata", DirectDependencyPropertyNames, incomplete);
+            ValidateStringProperty(dependency.Value, "version", "direct dependency metadata", incomplete);
+            ValidateStringProperty(dependency.Value, "target", "direct dependency metadata", incomplete);
+            ValidateStringProperty(dependency.Value, "include", "direct dependency metadata", incomplete);
+            ValidateStringProperty(dependency.Value, "exclude", "direct dependency metadata", incomplete);
+            ValidateStringProperty(dependency.Value, "includeAssets", "direct dependency metadata", incomplete);
+            ValidateStringProperty(dependency.Value, "excludeAssets", "direct dependency metadata", incomplete);
+            ValidateStringProperty(dependency.Value, "privateAssets", "direct dependency metadata", incomplete);
+            ValidateStringProperty(dependency.Value, "suppressParent", "direct dependency metadata", incomplete);
+            ValidateStringProperty(dependency.Value, "project", "direct dependency metadata", incomplete);
+            ValidateStringProperty(dependency.Value, "library", "direct dependency metadata", incomplete);
+            ValidateStringProperty(dependency.Value, "versionOverride", "direct dependency metadata", incomplete);
+            ValidateStringProperty(dependency.Value, "aliases", "direct dependency metadata", incomplete);
+            ValidateBooleanProperty(dependency.Value, "generatePathProperty", "direct dependency metadata", incomplete);
+            ValidateBooleanProperty(dependency.Value, "versionCentrallyManaged", "direct dependency metadata", incomplete);
+            ValidateBooleanProperty(dependency.Value, "autoReferenced", "direct dependency metadata", incomplete);
+            ValidateStringArrayProperty(dependency.Value, "noWarn", "direct dependency metadata", incomplete);
+        }
+    }
+
+    private static void ValidateProjectReferences(JsonElement framework, List<string> incomplete)
+    {
+        if (!framework.TryGetProperty("projectReferences", out var projectReferences)) return;
+        if (projectReferences.ValueKind != JsonValueKind.Object)
+        {
+            incomplete.Add("Restore framework metadata field 'projectReferences' must be an object map.");
+            return;
+        }
+
+        foreach (var project in projectReferences.EnumerateObject())
+        {
+            if (project.Value.ValueKind != JsonValueKind.Object)
+            {
+                incomplete.Add("Restore framework metadata field 'projectReferences' must map project names to objects.");
+                continue;
+            }
+
+            ValidateConsumedPropertySpellings(project.Value, "project reference metadata", ProjectReferencePropertyNames, incomplete);
+            ValidateStringProperty(project.Value, "projectPath", "project reference metadata", incomplete);
+            ValidateStringProperty(project.Value, "includeAssets", "project reference metadata", incomplete);
+            ValidateStringProperty(project.Value, "excludeAssets", "project reference metadata", incomplete);
+            ValidateStringProperty(project.Value, "privateAssets", "project reference metadata", incomplete);
+        }
+    }
+
+    private static void ValidateFrameworkReferences(JsonElement framework, List<string> incomplete)
+    {
+        if (!framework.TryGetProperty("frameworkReferences", out var frameworkReferences)) return;
+        if (frameworkReferences.ValueKind != JsonValueKind.Object)
+        {
+            incomplete.Add("Project framework metadata field 'frameworkReferences' must be an object map.");
+            return;
+        }
+
+        foreach (var reference in frameworkReferences.EnumerateObject())
+        {
+            if (reference.Value.ValueKind != JsonValueKind.Object)
+            {
+                incomplete.Add("Project framework metadata field 'frameworkReferences' must map framework names to objects.");
+                continue;
+            }
+
+            ValidateConsumedPropertySpellings(reference.Value, "framework reference metadata", FrameworkReferencePropertyNames, incomplete);
+            ValidateStringProperty(reference.Value, "privateAssets", "framework reference metadata", incomplete);
+        }
+    }
+
+    private static void ValidateDownloadDependencies(JsonElement framework, List<string> incomplete)
+    {
+        if (!framework.TryGetProperty("downloadDependencies", out var downloads)) return;
+        if (downloads.ValueKind != JsonValueKind.Array)
+        {
+            incomplete.Add("Project framework metadata field 'downloadDependencies' must be an array.");
+            return;
+        }
+
+        foreach (var download in downloads.EnumerateArray())
+        {
+            if (download.ValueKind != JsonValueKind.Object)
+            {
+                incomplete.Add("Project framework metadata field 'downloadDependencies' must contain objects.");
+                continue;
+            }
+
+            ValidateConsumedPropertySpellings(download, "download dependency metadata", DownloadDependencyPropertyNames, incomplete);
+            ValidateStringProperty(download, "name", "download dependency metadata", incomplete);
+            ValidateStringProperty(download, "version", "download dependency metadata", incomplete);
+        }
+    }
+
+    private static void ValidateStringMapProperty(JsonElement parent, string propertyName, string description, List<string> incomplete)
+    {
+        if (!parent.TryGetProperty(propertyName, out var value)) return;
+        if (value.ValueKind != JsonValueKind.Object)
+        {
+            incomplete.Add($"{description} field '{propertyName}' must be an object map.");
+            return;
+        }
+
+        foreach (var entry in value.EnumerateObject())
+        {
+            if (entry.Value.ValueKind != JsonValueKind.String)
+            {
+                incomplete.Add($"{description} field '{propertyName}' must map names to strings.");
+            }
+        }
+    }
+
+    private static void ValidateStringProperty(JsonElement parent, string propertyName, string description, List<string> incomplete)
+    {
+        if (parent.TryGetProperty(propertyName, out var value) && value.ValueKind != JsonValueKind.String)
+        {
+            incomplete.Add($"{description} field '{propertyName}' must be a string.");
+        }
+    }
+
+    private static void ValidateBooleanProperty(JsonElement parent, string propertyName, string description, List<string> incomplete)
+    {
+        if (parent.TryGetProperty(propertyName, out var value) && value.ValueKind != JsonValueKind.True && value.ValueKind != JsonValueKind.False)
+        {
+            incomplete.Add($"{description} field '{propertyName}' must be a boolean.");
+        }
+    }
+
+    private static void ValidateStringArrayProperty(JsonElement parent, string propertyName, string description, List<string> incomplete)
+    {
+        if (!parent.TryGetProperty(propertyName, out var value)) return;
+        if (value.ValueKind != JsonValueKind.Array || value.EnumerateArray().Any(item => item.ValueKind != JsonValueKind.String))
+        {
+            incomplete.Add($"{description} field '{propertyName}' must be an array of strings.");
         }
     }
 
@@ -1649,8 +1927,13 @@ public static class ResolvedGraphClassifier
     {
         if (root.TryGetProperty("project", out var project) && project.ValueKind == JsonValueKind.Object &&
             project.TryGetProperty("restore", out var restore) && restore.ValueKind == JsonValueKind.Object &&
-            restore.TryGetProperty("compilerApiVersion", out var compiler) && compiler.ValueKind == JsonValueKind.String)
+            restore.TryGetProperty("compilerApiVersion", out var compiler))
         {
+            if (compiler.ValueKind != JsonValueKind.String)
+            {
+                throw new InvalidDataException("Restore metadata field 'compilerApiVersion' must be a string.");
+            }
+
             return compiler.GetString();
         }
 
@@ -2194,15 +2477,7 @@ public static class ResolvedGraphClassifier
                 AddDuplicatePropertyReasons(dependencies, $"declared dependency for {framework.Name}", incomplete);
                 foreach (var dependency in dependencies.EnumerateObject())
                 {
-                    if (dependency.Value.ValueKind != JsonValueKind.Object)
-                    {
-                        incomplete.Add($"Declared framework {framework.Name} has malformed dependency value {dependency.Name}.");
-                        continue;
-                    }
-
-                    if (!dependency.Value.TryGetProperty("version", out var version) ||
-                        version.ValueKind != JsonValueKind.String ||
-                        !TryParsePackageVersionRange(version.GetString(), out var requirement) ||
+                    if (!TryReadDependencyRequirement(dependency.Value, out var requirement) ||
                         !TryFindMatchingPackageInFrameworkTargets(targets, restoreIdentities, frameworkIdentity.CanonicalKey, dependency.Name, requirement))
                     {
                         incomplete.Add($"Declared framework {framework.Name} has an unresolved package requirement {dependency.Name}.");
@@ -2299,10 +2574,7 @@ public static class ResolvedGraphClassifier
                 foreach (var dependency in dependencies.EnumerateObject())
                 {
                     budget.AddDependencyNode();
-                    if (dependency.Value.ValueKind != JsonValueKind.Object ||
-                        !dependency.Value.TryGetProperty("version", out var version) ||
-                        version.ValueKind != JsonValueKind.String ||
-                        !TryParsePackageVersionRange(version.GetString(), out var requirement) ||
+                    if (!TryReadDependencyRequirement(dependency.Value, out var requirement) ||
                         !TryFindMatchingTargetPackage(target.Value, restoreIdentities, dependency.Name, requirement, out _))
                     {
                         incomplete.Add($"Declared framework {framework.Name} refers to an unresolved package requirement {dependency.Name}.");

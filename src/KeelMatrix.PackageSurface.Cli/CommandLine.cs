@@ -464,6 +464,7 @@ public sealed class BaselineFileTransaction
         }
 
         var current = new DirectoryInfo(File.Exists(full) ? Path.GetDirectoryName(full)! : currentPath);
+        var pathRoot = Path.GetPathRoot(full);
         if (File.Exists(full))
         {
             var file = new FileInfo(full);
@@ -472,12 +473,22 @@ public sealed class BaselineFileTransaction
 
         while (current is not null)
         {
-            if ((current.Attributes & FileAttributes.ReparsePoint) != 0 || current.LinkTarget is not null) return true;
+            // macOS commonly exposes temporary directories through the system-owned
+            // /var -> /private/var alias. Root-level Unix aliases are outside the
+            // caller-controlled path; links below that boundary remain rejected.
+            if (!IsSystemRootAlias(current, pathRoot) &&
+                ((current.Attributes & FileAttributes.ReparsePoint) != 0 || current.LinkTarget is not null)) return true;
             current = current.Parent;
         }
 
         return false;
     }
+
+    private static bool IsSystemRootAlias(DirectoryInfo directory, string? pathRoot) =>
+        !OperatingSystem.IsWindows() &&
+        pathRoot is not null &&
+        directory.Parent is not null &&
+        string.Equals(directory.Parent.FullName, pathRoot, StringComparison.Ordinal);
 }
 
 public enum CommandKind { Scan, Baseline, Check }

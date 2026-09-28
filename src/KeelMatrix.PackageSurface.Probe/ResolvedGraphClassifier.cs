@@ -79,6 +79,11 @@ public static class ResolvedGraphClassifier
         public string Version => Identity.Version;
     }
 
+    private sealed record ReachablePackageClosure(
+        HashSet<string> PackageKeys,
+        HashSet<string> DirectPackageKeys,
+        HashSet<string> AnalyzerPackageKeys);
+
     private sealed class RestoreIdentityIndex
     {
         public Dictionary<string, RestoreFrameworkIdentity> Frameworks { get; } = new(StringComparer.OrdinalIgnoreCase);
@@ -245,10 +250,12 @@ public static class ResolvedGraphClassifier
             if (incomplete.Count > 0) return Array.Empty<string>();
 
             var budget = new AnalysisBudget();
-            var directAssetRules = ReadDirectPackageAssetRules(root, restoreIdentities);
+            var directAssetRules = ReadDirectPackageAssetRules(root, restoreIdentities, incomplete);
             var reachablePackagesByTarget = BuildReachablePackageClosures(targets, libraries, restoreIdentities, directAssetRules, incomplete, budget);
             if (incomplete.Count > 0) return Array.Empty<string>();
-            var reachablePackageKeys = reachablePackagesByTarget.Values.SelectMany(value => value).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var reachablePackageKeys = reachablePackagesByTarget.Values
+                .SelectMany(value => value.PackageKeys)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var packageRoots = ResolvePackageRoots(restoreIdentities, libraries, packageFolders, incomplete, reachablePackageKeys);
             var packageInventories = BuildPackageInventories(packageRoots, restoreIdentities, libraries, incomplete, budget);
             if (incomplete.Count > 0) return Array.Empty<string>();
@@ -260,8 +267,8 @@ public static class ResolvedGraphClassifier
                 foreach (var package in target.Value.EnumerateObject())
                 {
                     if (!restoreIdentities.TryGetLibrary(libraries, package.Name, out var identity, out var library) ||
-                        !reachablePackagesByTarget.TryGetValue(restoreIdentities.TryGetTarget(target.Name, out var targetIdentity) ? targetIdentity.CanonicalKey : string.Empty, out var reachablePackages) ||
-                        !reachablePackages.Contains(identity.CanonicalKey) ||
+                        !reachablePackagesByTarget.TryGetValue(restoreIdentities.TryGetTarget(target.Name, out var targetIdentity) ? targetIdentity.CanonicalKey : string.Empty, out var closure) ||
+                        !closure.PackageKeys.Contains(identity.CanonicalKey) ||
                         !library.TryGetProperty("type", out var type) || type.ValueKind != JsonValueKind.String ||
                         !type.GetString()!.Equals("package", StringComparison.OrdinalIgnoreCase) ||
                         !packageRoots.TryGetValue(identity.CanonicalKey, out var packageRoot) ||
@@ -343,7 +350,7 @@ public static class ResolvedGraphClassifier
                 return new ProbeResult(Array.Empty<SurfaceEntry>(), incomplete.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray());
             }
 
-            var directAssetRules = ReadDirectPackageAssetRules(root, restoreIdentities);
+            var directAssetRules = ReadDirectPackageAssetRules(root, restoreIdentities, incomplete);
             var reachablePackagesByTarget = BuildReachablePackageClosures(targets, libraries, restoreIdentities, directAssetRules, incomplete, budget);
             if (incomplete.Count > 0)
             {
@@ -354,7 +361,9 @@ public static class ResolvedGraphClassifier
             var projectEntries = new Dictionary<SurfaceIdentity, List<SurfaceEntry>>(SurfaceIdentityComparer.Instance);
             var resolvedPackages = new HashSet<PackageIdentity>(PackageIdentityComparer.Instance);
             var accumulatedEntries = 0;
-            var reachablePackageKeys = reachablePackagesByTarget.Values.SelectMany(value => value).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var reachablePackageKeys = reachablePackagesByTarget.Values
+                .SelectMany(value => value.PackageKeys)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var packageRoots = ResolvePackageRoots(restoreIdentities, libraries, packageFolders, incomplete, reachablePackageKeys);
             var packageInventories = BuildPackageInventories(packageRoots, restoreIdentities, libraries, incomplete, budget);
             ValidateRestoreEvidence(root, libraries, targets, restoreIdentities, packageFolders, packageRoots, packageInventories, incomplete, budget);
@@ -395,12 +404,13 @@ public static class ResolvedGraphClassifier
                 var tfm = targetIdentity.TargetFramework;
                 var rid = targetIdentity.RuntimeIdentifier;
                 var targetAlias = targetIdentity.TargetAlias;
-                var reachablePackages = reachablePackagesByTarget[targetIdentity.CanonicalKey];
+                var closure = reachablePackagesByTarget[targetIdentity.CanonicalKey];
+                var reachablePackages = closure.PackageKeys;
                 var targetDirectRules = directAssetRules.TryGetValue(targetFrameworkKey, out var rules)
                     ? rules
                     : new Dictionary<string, PackageAssetRule>(StringComparer.OrdinalIgnoreCase);
-                var directPackages = targetDirectRules.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
-                var analyzerPackages = DetermineAnalyzerPackages(target.Value, targetDirectRules, restoreIdentities, budget);
+                var directPackages = closure.DirectPackageKeys;
+                var analyzerPackages = closure.AnalyzerPackageKeys;
                 foreach (var package in target.Value.EnumerateObject())
                 {
                     if (!restoreIdentities.TryGetLibrary(libraries, package.Name, out var packageIdentity, out var library))
@@ -456,7 +466,7 @@ public static class ResolvedGraphClassifier
                     var files = packageInventories.TryGetValue(Path.GetFullPath(packageRoot), out var inventory)
                         ? inventory.Order(StringComparer.Ordinal).ToArray()
                         : ReadLibraryFiles(library, libraryKey, incomplete, budget).ToArray();
-                    var selectedAnalyzers = SelectAnalyzerPaths(files, projectLanguage, analyzerPackages, packageId, libraryKey, incomplete, compilerApiVersion);
+                    var selectedAnalyzers = SelectAnalyzerPaths(files, projectLanguage, analyzerPackages, libraryKey, incomplete, compilerApiVersion);
                     var targetAssets = package.Value;
                     foreach (var relativePath in files)
                     {
@@ -519,7 +529,7 @@ public static class ResolvedGraphClassifier
                             context,
                             packageId,
                             version,
-                            directPackages.Contains(packageId) ? "direct" : "transitive",
+                            directPackages.Contains(libraryKey) ? "direct" : "transitive",
                             capability,
                             relativePath,
                             present,
@@ -689,7 +699,8 @@ public static class ResolvedGraphClassifier
 
     private static Dictionary<string, Dictionary<string, PackageAssetRule>> ReadDirectPackageAssetRules(
         JsonElement root,
-        RestoreIdentityIndex restoreIdentities)
+        RestoreIdentityIndex restoreIdentities,
+        List<string> incomplete)
     {
         if (!root.TryGetProperty("project", out var project) || project.ValueKind != JsonValueKind.Object ||
             !project.TryGetProperty("frameworks", out var frameworks) || frameworks.ValueKind != JsonValueKind.Object)
@@ -728,7 +739,15 @@ public static class ResolvedGraphClassifier
                     throw new InvalidDataException($"Dependency {dependency.Name} has an invalid metadata object.");
                 }
 
-                frameworkRules[dependency.Name] = new PackageAssetRule(ReadAnalyzersIncluded(dependency.Value, dependency.Name));
+                if (!dependency.Value.TryGetProperty("version", out var version) ||
+                    version.ValueKind != JsonValueKind.String ||
+                    !TryParsePackageVersionRange(version.GetString(), out var requirement))
+                {
+                    incomplete.Add($"Dependency {dependency.Name} has an invalid version range.");
+                    continue;
+                }
+
+                frameworkRules[dependency.Name] = new PackageAssetRule(requirement, ReadAnalyzersIncluded(dependency.Value, dependency.Name));
             }
             result[frameworkIdentity.CanonicalKey] = frameworkRules;
         }
@@ -806,7 +825,7 @@ public static class ResolvedGraphClassifier
                 context,
                 packageId,
                 version,
-                directPackages.Contains(packageId) ? "direct" : "transitive",
+                directPackages.Contains(packageIdentity.Identity.CanonicalKey) ? "direct" : "transitive",
                 import.Capability.Value,
                 import.PackageRelativePath,
                 true,
@@ -957,7 +976,7 @@ public static class ResolvedGraphClassifier
         selector?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Any(value => value.Equals(expected, StringComparison.OrdinalIgnoreCase)) == true;
 
-    private static Dictionary<string, HashSet<string>> BuildReachablePackageClosures(
+    private static Dictionary<string, ReachablePackageClosure> BuildReachablePackageClosures(
         JsonElement targets,
         JsonElement libraries,
         RestoreIdentityIndex restoreIdentities,
@@ -965,7 +984,7 @@ public static class ResolvedGraphClassifier
         List<string> incomplete,
         AnalysisBudget budget)
     {
-        var result = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        var result = new Dictionary<string, ReachablePackageClosure>(StringComparer.OrdinalIgnoreCase);
         foreach (var target in targets.EnumerateObject())
         {
             if (target.Value.ValueKind != JsonValueKind.Object || !restoreIdentities.TryGetTarget(target.Name, out var targetIdentity))
@@ -977,19 +996,39 @@ public static class ResolvedGraphClassifier
                 .Where(package => restoreIdentities.TryGetPackage(package.Name, out _))
                 .Select(package => (Property: package, Identity: GetPackageIdentity(restoreIdentities, package.Name)))
                 .GroupBy(value => value.Identity.Id, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(group => group.Key, group => group.Select(value => value.Property.Name).ToArray(), StringComparer.OrdinalIgnoreCase);
+                .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.OrdinalIgnoreCase);
+            foreach (var packageGroup in packagesById)
+            {
+                var versions = packageGroup.Value
+                    .Select(value => value.Identity.CanonicalKey)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                if (versions.Length > 1)
+                {
+                    incomplete.Add($"Target {target.Name} contains multiple resolved versions for package {packageGroup.Key}.");
+                }
+            }
+
+            if (incomplete.Count > 0)
+            {
+                continue;
+            }
+
             var work = new Stack<(string SourceKey, int Depth)>();
             var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var reachable = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var directPackages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var directRules = directAssetRules.TryGetValue(targetIdentity.FrameworkKey, out var rules)
                 ? rules
                 : new Dictionary<string, PackageAssetRule>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (var direct in directRules.Keys)
+            foreach (var direct in directRules)
             {
-                if (packagesById.TryGetValue(direct, out var roots))
+                if (TryFindMatchingPackage(packagesById, direct.Key, direct.Value.Requirement, out var root, incomplete,
+                        $"direct dependency {direct.Key}"))
                 {
-                    foreach (var root in roots) work.Push((root, 0));
+                    work.Push((root.Property.Name, 0));
+                    directPackages.Add(root.Identity.CanonicalKey);
                 }
             }
 
@@ -1046,15 +1085,17 @@ public static class ResolvedGraphClassifier
 
                 foreach (var dependency in dependencies.EnumerateObject())
                 {
-                    if (!packagesById.TryGetValue(dependency.Name, out var dependencyKeys))
+                    if (dependency.Value.ValueKind != JsonValueKind.String ||
+                        !TryParsePackageVersionRange(dependency.Value.GetString(), out var requirement))
                     {
-                        incomplete.Add($"Target package {packageIdentity.CanonicalKey} refers to missing dependency {dependency.Name}.");
+                        incomplete.Add($"Target package {packageIdentity.CanonicalKey} has an invalid dependency range for {dependency.Name}.");
                         continue;
                     }
 
-                    foreach (var dependencyKey in dependencyKeys)
+                    if (TryFindMatchingPackage(packagesById, dependency.Name, requirement, out var dependencyPackage, incomplete,
+                            $"dependency {dependency.Name} of {packageIdentity.CanonicalKey}"))
                     {
-                        work.Push((dependencyKey, depth + 1));
+                        work.Push((dependencyPackage.Property.Name, depth + 1));
                     }
                 }
             }
@@ -1070,10 +1111,39 @@ public static class ResolvedGraphClassifier
                 }
             }
 
-            result[targetIdentity.CanonicalKey] = reachable;
+            var analyzerPackages = DetermineAnalyzerPackages(target.Value, directRules, restoreIdentities, reachable, packagesById, budget, incomplete);
+            result[targetIdentity.CanonicalKey] = new ReachablePackageClosure(reachable, directPackages, analyzerPackages);
         }
 
         return result;
+    }
+
+    private static bool TryFindMatchingPackage(
+        IReadOnlyDictionary<string, (JsonProperty Property, RestorePackageIdentity Identity)[]> packagesById,
+        string packageId,
+        PackageVersionRange requirement,
+        out (JsonProperty Property, RestorePackageIdentity Identity) match,
+        List<string> incomplete,
+        string context)
+    {
+        match = default;
+        if (!packagesById.TryGetValue(packageId, out var candidates))
+        {
+            incomplete.Add($"The resolved graph has no package matching {context}.");
+            return false;
+        }
+
+        var matching = candidates.Where(candidate => requirement.Matches(candidate.Identity.Version)).ToArray();
+        if (matching.Length != 1)
+        {
+            incomplete.Add(matching.Length == 0
+                ? $"The resolved graph has no package version matching {context}."
+                : $"The resolved graph has multiple package versions matching {context}.");
+            return false;
+        }
+
+        match = matching[0];
+        return true;
     }
 
     private static RestorePackageIdentity GetPackageIdentity(RestoreIdentityIndex restoreIdentities, string sourceKey)
@@ -1120,16 +1190,11 @@ public static class ResolvedGraphClassifier
         JsonElement targetAssets,
         IReadOnlyDictionary<string, PackageAssetRule> directAssetRules,
         RestoreIdentityIndex restoreIdentities,
-        AnalysisBudget budget)
+        HashSet<string> reachablePackages,
+        IReadOnlyDictionary<string, (JsonProperty Property, RestorePackageIdentity Identity)[]> packagesById,
+        AnalysisBudget budget,
+        List<string> incomplete)
     {
-        var packageProperties = targetAssets.EnumerateObject().ToArray();
-        var packageKeysById = packageProperties
-            .Select(package => restoreIdentities.TryGetPackage(package.Name, out var identity)
-                ? (Key: package.Name, Id: identity.Id)
-                : (Key: package.Name, Id: string.Empty))
-            .Where(item => item.Id.Length > 0)
-            .GroupBy(item => item.Id, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.Select(item => item.Key).ToArray(), StringComparer.OrdinalIgnoreCase);
         var excludedAnalyzerPackages = directAssetRules
             .Where(rule => !rule.Value.AnalyzersIncluded)
             .Select(rule => rule.Key)
@@ -1140,22 +1205,26 @@ public static class ResolvedGraphClassifier
 
         foreach (var direct in directAssetRules)
         {
-            if (!direct.Value.AnalyzersIncluded || !packageKeysById.TryGetValue(direct.Key, out var roots))
+            if (!direct.Value.AnalyzersIncluded || !packagesById.TryGetValue(direct.Key, out var roots))
             {
                 continue;
             }
 
-            foreach (var root in roots)
+            foreach (var root in roots.Where(root =>
+                         reachablePackages.Contains(root.Identity.CanonicalKey) &&
+                         direct.Value.Requirement.Matches(root.Identity.Version)))
             {
-                work.Push((root, 0));
+                work.Push((root.Property.Name, 0));
             }
         }
 
-        foreach (var project in packageProperties.Where(package =>
+        foreach (var project in targetAssets.EnumerateObject().Where(package =>
                      package.Value.ValueKind == JsonValueKind.Object &&
                      package.Value.TryGetProperty("type", out var type) &&
                      type.ValueKind == JsonValueKind.String &&
-                     type.GetString()!.Equals("project", StringComparison.OrdinalIgnoreCase)))
+                     type.GetString()!.Equals("project", StringComparison.OrdinalIgnoreCase) &&
+                     restoreIdentities.TryGetPackage(package.Name, out var projectIdentity) &&
+                     reachablePackages.Contains(projectIdentity.CanonicalKey)))
         {
             work.Push((project.Name, 0));
         }
@@ -1182,7 +1251,7 @@ public static class ResolvedGraphClassifier
 
             var packageId = packageIdentity.Id;
             if (excludedAnalyzerPackages.Contains(packageId)) continue;
-            active.Add(packageId);
+            active.Add(packageIdentity.CanonicalKey);
             if (!package.TryGetProperty("dependencies", out var dependencies)) continue;
             if (dependencies.ValueKind != JsonValueKind.Object)
             {
@@ -1191,15 +1260,32 @@ public static class ResolvedGraphClassifier
 
             foreach (var dependency in dependencies.EnumerateObject())
             {
-                if (!packageKeysById.TryGetValue(dependency.Name, out var dependencyKeys))
+                if (dependency.Value.ValueKind != JsonValueKind.String ||
+                    !TryParsePackageVersionRange(dependency.Value.GetString(), out var requirement))
                 {
-                    throw new InvalidDataException($"Target package {packageKey} refers to missing dependency {dependency.Name}.");
+                    incomplete.Add($"Target package {packageKey} has an invalid dependency range for {dependency.Name}.");
+                    continue;
                 }
 
-                foreach (var dependencyKey in dependencyKeys)
+                if (!packagesById.TryGetValue(dependency.Name, out var dependencyCandidates))
                 {
-                    work.Push((dependencyKey, depth + 1));
+                    incomplete.Add($"Target package {packageKey} refers to missing dependency {dependency.Name}.");
+                    continue;
                 }
+
+                var dependencyMatches = dependencyCandidates
+                    .Where(candidate => reachablePackages.Contains(candidate.Identity.CanonicalKey) &&
+                        requirement.Matches(candidate.Identity.Version))
+                    .ToArray();
+                if (dependencyMatches.Length != 1)
+                {
+                    incomplete.Add(dependencyMatches.Length == 0
+                        ? $"Target package {packageKey} has no reachable dependency version matching {dependency.Name}."
+                        : $"Target package {packageKey} has multiple reachable dependency versions matching {dependency.Name}.");
+                    continue;
+                }
+
+                work.Push((dependencyMatches[0].Property.Name, depth + 1));
             }
         }
 
@@ -2353,7 +2439,7 @@ public static class ResolvedGraphClassifier
         IReadOnlyList<GeneratedImport> imports,
         JsonElement targets,
         RestoreIdentityIndex restoreIdentities,
-        Dictionary<string, HashSet<string>> reachablePackagesByTarget,
+        IReadOnlyDictionary<string, ReachablePackageClosure> reachablePackagesByTarget,
         Dictionary<string, string> packageRoots,
         Dictionary<string, HashSet<string>> packageInventories,
         JsonElement libraries,
@@ -2418,8 +2504,8 @@ public static class ResolvedGraphClassifier
             {
                 if (target.Value.ValueKind != JsonValueKind.Object ||
                     !restoreIdentities.TryGetTarget(target.Name, out var targetIdentity) ||
-                    !reachablePackagesByTarget.TryGetValue(targetIdentity.CanonicalKey, out var reachablePackages) ||
-                    !reachablePackages.Contains(match.CanonicalKey))
+                    !reachablePackagesByTarget.TryGetValue(targetIdentity.CanonicalKey, out var closure) ||
+                    !closure.PackageKeys.Contains(match.CanonicalKey))
                 {
                     incomplete.Add("Generated NuGet import evidence refers to a package that is not reachable from an applicable project/direct root.");
                     break;
@@ -3012,7 +3098,7 @@ public static class ResolvedGraphClassifier
         var assetName = relativePath.Replace('\\', '/');
         return capability switch
         {
-            CapabilityKind.CompilerExtension => IsCompilerExtensionActive(assetName, projectLanguage, analyzerPackages, selectedAnalyzers, packageIdentity.Id, incomplete, libraryKey),
+            CapabilityKind.CompilerExtension => IsCompilerExtensionActive(assetName, projectLanguage, analyzerPackages, selectedAnalyzers, packageIdentity.CanonicalKey, incomplete, libraryKey),
             CapabilityKind.CompileSourceInjection => IsCompileContentFile(targetAssets, assetName, projectLanguage, incomplete, libraryKey),
             CapabilityKind.NativeRuntime => ContainsAsset(targetAssets, "native", assetName, incomplete, libraryKey) || ContainsAsset(targetAssets, "runtime", assetName, incomplete, libraryKey),
             _ => false
@@ -3139,7 +3225,6 @@ public static class ResolvedGraphClassifier
         IReadOnlyList<string> files,
         ProjectLanguage projectLanguage,
         HashSet<string> analyzerPackages,
-        string packageId,
         string libraryKey,
         List<string> incomplete,
         string? compilerApiVersion)
@@ -3164,7 +3249,7 @@ public static class ResolvedGraphClassifier
                 continue;
             }
 
-            if (analyzerPackages.Contains(packageId))
+            if (analyzerPackages.Contains(libraryKey))
             {
                 candidates.Add((path, roslynVersion));
             }
@@ -3275,7 +3360,7 @@ public static class ResolvedGraphClassifier
         ProjectLanguage language,
         HashSet<string> analyzerPackages,
         IReadOnlySet<string> selectedAnalyzers,
-        string packageId,
+        string packageKey,
         List<string> incomplete,
         string libraryKey)
     {
@@ -3295,7 +3380,7 @@ public static class ResolvedGraphClassifier
             return false;
         }
 
-        if (!analyzerPackages.Contains(packageId) || !IsAnalyzerApplicableToProject(path, language, incomplete, libraryKey))
+        if (!analyzerPackages.Contains(packageKey) || !IsAnalyzerApplicableToProject(path, language, incomplete, libraryKey))
         {
             return false;
         }
@@ -4091,7 +4176,7 @@ public static class ResolvedGraphClassifier
     private static string? GetString(this JsonElement element, string propertyName) =>
         element.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
-    private sealed record PackageAssetRule(bool AnalyzersIncluded);
+    private sealed record PackageAssetRule(PackageVersionRange Requirement, bool AnalyzersIncluded);
 
     private enum ProjectLanguage
     {

@@ -553,15 +553,16 @@ public sealed record Options(
         Analysis is offline and non-executing. It consumes restore evidence already on disk,
         follows only bounded static package-import chains, and reports PS007 when applicability
         or restore consistency cannot be established. A single direct/project-reference rooted
-        package closure is required for each applicable target graph; disconnected package nodes
-        or dependency islands fail closed before package inventory inspection. Generated top-level
+        package closure is required for each applicable target graph; disconnected package nodes,
+        dependency islands, and graphs containing more than one distinct version for one package ID
+        fail closed before package inventory inspection. Generated top-level
         and nested imports must resolve to packages in every applicable target graph. An incomplete invocation
         emits no surface entries and never replaces a baseline. Framework, target, dependency-
         group, target/RID, and library identities use one canonical key/effective-framework/
         target-alias relation with case/effective-moniker canonicalization before reachability
         and capability filtering; project/restore and dependency-group sets must be complete in
-        both directions, dependency values must use supported restore grammar and match selected
-        package versions, and incoherent metadata, duplicate aliases, duplicate or case-variant
+        both directions, dependency values must use supported restore grammar; package versions must
+        match exactly one selected package version, and incoherent metadata, duplicate aliases, duplicate or case-variant
         restore JSON properties, or malformed package ID/version keys are PS007. Target-package asset groups use NuGet's exact canonical
         property names; unknown or case-variant groups, malformed packageFolders entries, and
         baseline output aliases are checked before any write. An explicit baseline --output path

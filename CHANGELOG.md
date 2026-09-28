@@ -22,6 +22,7 @@ PackageSurface release history.
 
 - Restore validation now fails closed for malformed typed metadata and shares structural, import-edge, and dependency-traversal budgets across the complete invocation.
 - Restore JSON now has one structural duplicate/case-variant rejection boundary, and every applicable target graph uses one direct/project-reference rooted package closure for classification, activation, resolved counts, generated imports, and package-input preflight.
+- Same-ID multi-version target graphs are now treated as incoherent restore evidence; direct and transitive edges use their declared version ranges and require exactly one selected package version before classification or package-input preflight.
 - Package identity and dependency-range matching now share one NuGet-compatible version grammar and comparer; verified restore-format support is documented as formats 3 and 4.
 - Nested package imports inherit their importing capability and phase context, generated-import edges consume the cumulative edge budget, and baseline replacement is coupled transactionally to final report generation.
 - Incomplete multi-project selections are transactional: every `PS007`/structural-budget failure discards accumulated entries, emits no clean-looking text/JSON/SARIF result, and preserves an existing baseline so `--project` narrowing can recover.

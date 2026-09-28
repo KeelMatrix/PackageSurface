@@ -140,6 +140,7 @@ static void RunClassifierHardeningTests()
         RunRestoreIdentityCanonicalizationRegression(assets, scratch);
         RunRestoreJsonStructuralDuplicateRegression(assets, scratch);
         RunReachabilityClosureRegression(scratch);
+        RunVersionAwareReachabilityConflictRegression(scratch);
         RunVersionEquivalenceRegression(scratch);
         RunDiagnosticPathLeakRegression(scratch);
         RunApplicabilityHardeningRegressions(scratch);
@@ -2857,6 +2858,96 @@ static void RunReachabilityClosureRegression(string scratch)
         "A package reachable only from the RID-specific target graph was not confined to that graph: " + string.Join(" | ", ridResult.IncompleteReasons));
 }
 
+static void RunVersionAwareReachabilityConflictRegression(string scratch)
+{
+    var cases = new (string Name, string RootPackage, string? TransitivePackage, string DirectRange)[]
+    {
+        ("exact-direct-selection", "Versioned.Direct", null, "[1.0.0, 1.0.0]"),
+        ("range-direct-selection", "Versioned.Range.Direct", null, "[1.0.0, 2.0.0)"),
+        ("range-transitive-selection", "Versioned.Transitive.Root", "Versioned.Transitive.Dependency", "[1.0.0, 2.0.0)")
+    };
+
+    foreach (var (name, rootPackage, transitivePackage, directRange) in cases)
+    {
+        var root = Path.Combine(scratch, "version-aware-" + name);
+        var obj = Path.Combine(root, "obj");
+        var cache = Path.Combine(root, "cache");
+        Directory.CreateDirectory(obj);
+        var assets = Path.Combine(obj, "project.assets.json");
+        WriteAssets(assets, cache, rootPackage, Array.Empty<string>());
+        var baseline = Path.Combine(obj, "baseline.json");
+        Require(CaptureCommand("baseline", assets, "--output", baseline, "--no-telemetry").ExitCode == 0,
+            $"The valid {name} baseline could not be created.");
+
+        var document = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
+        if (transitivePackage is null)
+        {
+            document["project"]!["frameworks"]!["net8.0"]!["dependencies"]![rootPackage]!["version"] = directRange;
+        }
+        else
+        {
+            document["targets"]!["net8.0"]![rootPackage + "/1.0.0"]!["dependencies"] = new JsonObject
+            {
+                [transitivePackage] = directRange
+            };
+            AddPackageToAssets(document, cache, transitivePackage, Array.Empty<string>(), new JsonObject
+            {
+                ["dependencies"] = new JsonObject()
+            });
+        }
+
+        File.WriteAllText(assets, document.ToJsonString());
+        var validResult = ResolvedGraphClassifier.Analyze(assets, root, strictContent: false);
+        var expectedResolvedCount = transitivePackage is null ? 1 : 2;
+        Require(validResult.IsComplete && validResult.ResolvedPackageCount == expectedResolvedCount,
+            $"The valid {name} version-range graph was not resolved before adding the conflicting sibling: {string.Join(" | ", validResult.IncompleteReasons)}");
+
+        AddPackageVersionToAssets(document, cache, transitivePackage ?? rootPackage, "1.0.1", Array.Empty<string>());
+        File.WriteAllText(assets, document.ToJsonString());
+        AssertRestoreIdentityFailure(assets, root, baseline, name);
+    }
+
+    var surfaceRoot = Path.Combine(scratch, "version-aware-all-surfaces");
+    var surfaceObj = Path.Combine(surfaceRoot, "obj");
+    var surfaceCache = Path.Combine(surfaceRoot, "cache");
+    Directory.CreateDirectory(surfaceObj);
+    var surfaceAssets = Path.Combine(surfaceObj, "project.assets.json");
+    WriteAssets(surfaceAssets, surfaceCache, "Versioned.Surface", Array.Empty<string>());
+    var surfaceBaseline = Path.Combine(surfaceObj, "baseline.json");
+    Require(CaptureCommand("baseline", surfaceAssets, "--output", surfaceBaseline, "--no-telemetry").ExitCode == 0,
+        "The valid all-surfaces baseline could not be created.");
+
+    var surfaceDocument = JsonNode.Parse(File.ReadAllText(surfaceAssets))!.AsObject();
+    surfaceDocument["project"]!["frameworks"]!["net8.0"]!["dependencies"]!["Versioned.Surface"]!["version"] = "[1.0.0, 1.0.0]";
+    var surfaceFiles = new[]
+    {
+        "build/conflict.targets",
+        "analyzers/dotnet/cs/conflict.dll",
+        "contentFiles/cs/any/conflict.cs",
+        "runtimes/win-x64/native/conflict.dll",
+        "tools/conflict.ps1"
+    };
+    AddPackageVersionToAssets(surfaceDocument, surfaceCache, "Versioned.Surface", "1.0.1", surfaceFiles, new JsonObject
+    {
+        ["build"] = new JsonObject { ["build/conflict.targets"] = new JsonObject() },
+        ["analyzers"] = new JsonObject { ["analyzers/dotnet/cs/conflict.dll"] = new JsonObject() },
+        ["contentFiles"] = new JsonObject
+        {
+            ["contentFiles/cs/any/conflict.cs"] = new JsonObject { ["buildAction"] = "Compile", ["codeLanguage"] = "C#" }
+        },
+        ["native"] = new JsonObject { ["runtimes/win-x64/native/conflict.dll"] = new JsonObject() },
+        ["tools"] = new JsonObject { ["tools/conflict.ps1"] = new JsonObject() }
+    });
+    var surfacePackageRoot = Path.Combine(surfaceCache, "Versioned.Surface", "1.0.1");
+    File.WriteAllText(Path.Combine(surfacePackageRoot, "build", "conflict.targets"), "<Project />");
+    File.Copy(typeof(ResolvedGraphClassifier).Assembly.Location,
+        Path.Combine(surfacePackageRoot, "analyzers", "dotnet", "cs", "conflict.dll"), overwrite: true);
+    File.WriteAllText(Path.Combine(surfaceObj, "Test.csproj.nuget.g.targets"),
+        "<Project><Import Project=\"$(NuGetPackageRoot)/Versioned.Surface/1.0.1/build/conflict.targets\" /></Project>");
+    File.WriteAllText(surfaceAssets, surfaceDocument.ToJsonString());
+    AssertRestoreIdentityFailure(surfaceAssets, surfaceRoot, surfaceBaseline, "all-surfaces-multi-version-selection");
+}
+
 static void RunVersionEquivalenceRegression(string scratch)
 {
     var equivalent = new[] { "1", "1.0", "1.0.0", "1.0.0.0", "01.000.000.000" };
@@ -3095,6 +3186,12 @@ static string InsertCaseVariantRootPropertyDuplicate(string json, JsonObject roo
 static void AddPackageToAssets(JsonObject document, string cache, string packageId, IReadOnlyList<string> files, JsonObject? targetMetadata = null, string libraryType = "package")
 {
     var packageKey = packageId + "/1.0.0";
+    AddPackageVersionToAssets(document, cache, packageId, "1.0.0", files, targetMetadata, libraryType);
+}
+
+static void AddPackageVersionToAssets(JsonObject document, string cache, string packageId, string version, IReadOnlyList<string> files, JsonObject? targetMetadata = null, string libraryType = "package")
+{
+    var packageKey = packageId + "/" + version;
     var target = targetMetadata?.DeepClone()?.AsObject() ?? new JsonObject();
     document["targets"]!["net8.0"]!.AsObject()[packageKey] = target;
     var filesNode = new JsonArray();
@@ -3109,7 +3206,7 @@ static void AddPackageToAssets(JsonObject document, string cache, string package
         ["path"] = packageKey,
         ["files"] = filesNode
     };
-    var packageRoot = Path.Combine(cache, packageId, "1.0.0");
+    var packageRoot = Path.Combine(cache, packageId, version);
     Directory.CreateDirectory(packageRoot);
     foreach (var file in files)
     {

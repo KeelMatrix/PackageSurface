@@ -58,6 +58,9 @@ var requiredHelpClauses = new[]
     "preserves existing output and input bytes",
     "genuinely distinct outputs are accepted",
     "unknown members",
+    "standard unconsumed MSBuild elements and attributes",
+    "fallbackFolders only as an array of strings",
+    "SdkAnalysisLevel only as a string",
     "non-canonical spellings of consumed JSON/XML members",
     "x- prefix",
     "urn:keelmatrix:packagesurface:extension",
@@ -144,6 +147,7 @@ static void RunClassifierHardeningTests()
         RunFrameworkMonikerRegression(assets, scratch);
         RunRestoreIdentityCanonicalizationRegression(assets, scratch);
         RunRestoreJsonStructuralDuplicateRegression(assets, scratch);
+        RunRestoreOptionalMetadataRegression(assets, scratch);
         RunReachabilityClosureRegression(scratch);
         RunVersionAwareReachabilityConflictRegression(scratch);
         RunVersionEquivalenceRegression(scratch);
@@ -914,6 +918,142 @@ static void RunNestedImportRegression(string scratch)
         "An unsupported dynamic nested import was not fail-closed without disclosing its expression.");
 
     RunNestedPhaseMatrixRegression(scratch);
+    RunPackageXmlSchemaRegression(scratch);
+}
+
+static void RunPackageXmlSchemaRegression(string scratch)
+{
+    var root = Path.Combine(scratch, "package-xml-schema");
+    var cache = Path.Combine(root, "cache");
+    var obj = Path.Combine(root, "obj");
+    Directory.CreateDirectory(obj);
+    var assets = Path.Combine(obj, "project.assets.json");
+    var packageId = "Package.Xml.Schema";
+    var packagePath = "build/Package.Xml.Schema.targets";
+    WriteAssets(assets, cache, packageId, new[] { packagePath }, createFiles: true);
+    var document = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
+    document["targets"]!["net8.0"]![packageId + "/1.0.0"]!["build"] = new JsonObject { [packagePath] = new JsonObject() };
+    File.WriteAllText(assets, document.ToJsonString());
+
+    var physicalPath = Path.Combine(cache, packageId, "1.0.0", packagePath.Replace('/', Path.DirectorySeparatorChar));
+    var canonical = """
+<Project ToolsVersion="Current">
+  <PropertyGroup Label="standard">
+    <SchemaValue>1</SchemaValue>
+  </PropertyGroup>
+  <ItemGroup Label="standard">
+    <None Include="content.txt" />
+    <None Update="content.txt" />
+    <None Remove="obsolete.txt" />
+  </ItemGroup>
+  <Target Name="Standard" BeforeTargets="Build" AfterTargets="Build" DependsOnTargets="CoreCompile" Inputs="$(ProjectFile)" Outputs="$(TargetPath)" Returns="$(TargetPath)" KeepDuplicateOutputs="true" Label="standard" />
+  <UsingTask TaskName="Inline" TaskFactory="CodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll" Condition="'$(TargetFramework)' == 'never'">
+    <Task>
+      <Code Type="Fragment" Language="cs">Log.LogMessage("never executed");</Code>
+    </Task>
+  </UsingTask>
+  <Exec Command="echo never-executed" Condition="'$(TargetFramework)' == 'never'" />
+  <ImportGroup Label="standard">
+    <Import Project="helpers/Helper.targets" Condition="'$(TargetFramework)' == 'never'" Label="standard" />
+  </ImportGroup>
+</Project>
+""";
+    File.WriteAllText(physicalPath, canonical);
+    File.WriteAllText(Path.Combine(obj, "Test.csproj.nuget.g.targets"), $"<Project><Import Project=\"$(NuGetPackageRoot)/{packageId}/1.0.0/{packagePath}\" /></Project>");
+
+    var baseline = Path.Combine(root, "baseline.json");
+    var valid = ResolvedGraphClassifier.Analyze(assets, root, strictContent: false);
+    Require(valid.IsComplete, $"Standard unconsumed MSBuild constructs were rejected: {string.Join(" | ", valid.IncompleteReasons)}");
+    Require(CaptureCommand("baseline", assets, "--output", baseline, "--no-telemetry").ExitCode == 0,
+        "The standard MSBuild XML baseline could not be created.");
+
+    foreach (var (name, replacement) in new[]
+    {
+        ("element-import-case", (Old: "<Import Project=", New: "<import Project=")),
+        ("element-import-near", (Old: "<Import Project=", New: "<Impor Project=")),
+        ("element-using-task-case", (Old: "<UsingTask TaskName=", New: "<usingtask TaskName=")),
+        ("element-using-task-near", (Old: "<UsingTask TaskName=", New: "<UsingTas TaskName=")),
+        ("element-exec-case", (Old: "<Exec Command=", New: "<exec Command=")),
+        ("element-exec-near", (Old: "<Exec Command=", New: "<Exce Command=")),
+        ("element-code-case", (Old: "<Code Type=", New: "<code Type=")),
+        ("element-code-near", (Old: "<Code Type=", New: "<Cod Type="))
+    })
+    {
+        AssertPackageXmlVariantFailure(assets, root, baseline, physicalPath, canonical, name, replacement.Old, replacement.New);
+    }
+
+    foreach (var (name, canonicalAttribute, alias, near) in new[]
+    {
+        ("Project", "Project", "project", "Projec"),
+        ("Condition", "Condition", "condition", "Conditon"),
+        ("TaskName", "TaskName", "taskname", "TaskNme"),
+        ("TaskFactory", "TaskFactory", "taskfactory", "TaskFactor"),
+        ("AssemblyFile", "AssemblyFile", "assemblyfile", "AssemblyFil"),
+        ("Command", "Command", "command", "Comand"),
+        ("Type", "Type", "type", "Typ"),
+        ("Language", "Language", "language", "Langage"),
+        ("BeforeTargets", "BeforeTargets", "beforetargets", "BeforeTarget"),
+        ("AfterTargets", "AfterTargets", "aftertargets", "AfterTarget"),
+        ("DependsOnTargets", "DependsOnTargets", "dependsonTargets", "DependsOnTarget"),
+        ("Include", "Include", "include", "Includ"),
+        ("Name", "Name", "name", "Nam"),
+        ("ToolsVersion", "ToolsVersion", "toolsversion", "ToolsVersio")
+    })
+    {
+        AssertPackageXmlVariantFailure(assets, root, baseline, physicalPath, canonical, "attribute-" + name + "-case", " " + canonicalAttribute + "=", " " + alias + "=");
+        AssertPackageXmlVariantFailure(assets, root, baseline, physicalPath, canonical, "attribute-" + name + "-near", " " + canonicalAttribute + "=", " " + near + "=");
+        AssertPackageXmlDuplicateAttributeFailure(assets, root, baseline, physicalPath, canonical, name, canonicalAttribute, alias);
+    }
+}
+
+static void AssertPackageXmlVariantFailure(
+    string assets,
+    string projectRoot,
+    string baseline,
+    string physicalPath,
+    string canonical,
+    string label,
+    string oldText,
+    string newText)
+{
+    var variant = canonical.Replace(oldText, newText, StringComparison.Ordinal);
+    Require(!variant.Equals(canonical, StringComparison.Ordinal), $"The XML regression variant '{label}' was not applied.");
+    File.WriteAllText(physicalPath, variant);
+    try
+    {
+        AssertRestoreIdentityFailure(assets, projectRoot, baseline, label);
+    }
+    finally
+    {
+        File.WriteAllText(physicalPath, canonical);
+    }
+}
+
+static void AssertPackageXmlDuplicateAttributeFailure(
+    string assets,
+    string projectRoot,
+    string baseline,
+    string physicalPath,
+    string canonical,
+    string name,
+    string canonicalAttribute,
+    string alias)
+{
+    var marker = " " + canonicalAttribute + "=\"";
+    var markerIndex = canonical.IndexOf(marker, StringComparison.Ordinal);
+    Require(markerIndex >= 0, $"The XML duplicate variant '{name}' could not find its canonical attribute.");
+    var valueEnd = canonical.IndexOf('"', markerIndex + marker.Length);
+    Require(valueEnd >= 0, $"The XML duplicate variant '{name}' has no complete canonical attribute value.");
+    var variant = canonical.Insert(valueEnd + 1, " " + alias + "=\"duplicate\"");
+    File.WriteAllText(physicalPath, variant);
+    try
+    {
+        AssertRestoreIdentityFailure(assets, projectRoot, baseline, "attribute-" + name + "-duplicate");
+    }
+    finally
+    {
+        File.WriteAllText(physicalPath, canonical);
+    }
 }
 
 static void RunNestedPhaseMatrixRegression(string scratch)
@@ -2982,6 +3122,106 @@ static void RunRestoreJsonStructuralDuplicateRegression(string assets, string sc
     }
 
     File.Delete(baseline);
+}
+
+static void RunRestoreOptionalMetadataRegression(string assets, string scratch)
+{
+    var format3Path = Path.Combine(scratch, "restore-optional-format3.assets.json");
+    var format3Baseline = Path.Combine(scratch, "restore-optional-format3-baseline.json");
+    var format3 = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
+    var restore = format3["project"]!["restore"]!.AsObject();
+    restore["fallbackFolders"] = new JsonArray(@"C:\Program Files (x86)\Microsoft Visual Studio\Shared\NuGetPackages");
+    restore["SdkAnalysisLevel"] = "10.0.400";
+    format3["project"]!["frameworks"]!["net8.0"]!["downloadDependencies"] = new JsonArray
+    {
+        new JsonObject { ["name"] = "PackageDownload", ["version"] = "[1.0.0, )" }
+    };
+    File.WriteAllText(format3Path, format3.ToJsonString());
+    WriteGeneratedImportEvidence(format3Path);
+
+    try
+    {
+        AssertValidRestoreMetadata(format3Path, scratch, format3Baseline, "format 3 restore metadata");
+
+        var format4Path = Path.Combine(scratch, "restore-optional-format4.assets.json");
+        var format4Baseline = Path.Combine(scratch, "restore-optional-format4-baseline.json");
+        var format4 = JsonNode.Parse(File.ReadAllText(format3Path))!.AsObject();
+        format4["version"] = 4;
+        format4["project"]!["frameworks"]!["net8.0"]!["framework"] = "net8.0";
+        format4["project"]!["frameworks"]!["net8.0"]!["targetAlias"] = "net8.0";
+        format4["project"]!["restore"]!["frameworks"] = new JsonObject
+        {
+            ["net8.0"] = new JsonObject { ["framework"] = "net8.0", ["targetAlias"] = "net8.0" }
+        };
+        format4["projectFileDependencyGroups"] = new JsonObject
+        {
+            ["net8.0"] = new JsonArray()
+        };
+        File.WriteAllText(format4Path, format4.ToJsonString());
+        WriteGeneratedImportEvidence(format4Path);
+        try
+        {
+            AssertValidRestoreMetadata(format4Path, scratch, format4Baseline, "format 4 restore metadata");
+        }
+        finally
+        {
+            if (File.Exists(format4Path)) File.Delete(format4Path);
+            if (File.Exists(format4Baseline)) File.Delete(format4Baseline);
+            foreach (var generated in new[] { "Test.csproj.nuget.g.props", "Test.csproj.nuget.g.targets" })
+            {
+                var generatedPath = Path.Combine(scratch, generated);
+                if (File.Exists(generatedPath)) File.Delete(generatedPath);
+            }
+        }
+
+        foreach (var (name, mutate) in new (string Name, Action<JsonObject> Mutate)[]
+        {
+            ("fallback-folders-type", value => value["project"]!["restore"]!["fallbackFolders"] = "not-an-array"),
+            ("fallback-folders-item-type", value => value["project"]!["restore"]!["fallbackFolders"] = new JsonArray("valid", 42)),
+            ("sdk-analysis-level-type", value => value["project"]!["restore"]!["SdkAnalysisLevel"] = 10)
+        })
+        {
+            var invalidPath = Path.Combine(scratch, "restore-optional-invalid-" + name + ".assets.json");
+            var invalid = JsonNode.Parse(File.ReadAllText(format3Path))!.AsObject();
+            mutate(invalid);
+            File.WriteAllText(invalidPath, invalid.ToJsonString());
+            WriteGeneratedImportEvidence(invalidPath);
+            try
+            {
+                AssertRestoreIdentityFailure(invalidPath, scratch, format3Baseline, name);
+            }
+            finally
+            {
+                if (File.Exists(invalidPath)) File.Delete(invalidPath);
+            }
+        }
+    }
+    finally
+    {
+        if (File.Exists(format3Path)) File.Delete(format3Path);
+        if (File.Exists(format3Baseline)) File.Delete(format3Baseline);
+        foreach (var generated in new[] { "Test.csproj.nuget.g.props", "Test.csproj.nuget.g.targets" })
+        {
+            var generatedPath = Path.Combine(scratch, generated);
+            if (File.Exists(generatedPath)) File.Delete(generatedPath);
+        }
+    }
+}
+
+static void AssertValidRestoreMetadata(string assets, string projectRoot, string baseline, string label)
+{
+    var analyzed = ResolvedGraphClassifier.Analyze(assets, projectRoot, strictContent: false);
+    Require(analyzed.IsComplete && analyzed.Entries.Count == 0,
+        $"{label} was rejected: {string.Join(" | ", analyzed.IncompleteReasons)}");
+
+    var scan = CaptureCommand("scan", assets, "--format", "json", "--no-telemetry");
+    Require(scan.ExitCode == 0 && !scan.Output.Contains("PS007", StringComparison.Ordinal),
+        $"{label} scan failed: {scan.Output}");
+    Require(CaptureCommand("baseline", assets, "--output", baseline, "--format", "json", "--no-telemetry").ExitCode == 0,
+        $"{label} baseline failed.");
+    var check = CaptureCommand("check", assets, "--baseline", baseline, "--format", "json", "--no-telemetry");
+    Require(check.ExitCode == 0 && !check.Output.Contains("PS007", StringComparison.Ordinal),
+        $"{label} check failed: {check.Output}");
 }
 
 static void RunReachabilityClosureRegression(string scratch)

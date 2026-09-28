@@ -218,6 +218,65 @@ public static class ResolvedGraphClassifier
         string? compilerApiVersion = null) =>
         AnalyzeCore(assetsFile, projectRoot, strictContent, projectContext, selectedProjectPath, budget, compilerApiVersion);
 
+    public static IReadOnlyList<string> GetReachablePackageInputPaths(string assetsFile)
+    {
+        try
+        {
+            EnsureFileWithinLimit(assetsFile, MaxMetadataFileBytes, "project.assets.json");
+            using var stream = File.OpenRead(assetsFile);
+            using var document = JsonDocument.Parse(stream, new JsonDocumentOptions { MaxDepth = MaxJsonDepth });
+            var root = document.RootElement;
+            var incomplete = new List<string>();
+            var packageFolders = ReadPackageFolders(root, incomplete);
+            var libraries = root.TryGetProperty("libraries", out var librariesElement)
+                ? librariesElement
+                : throw new InvalidDataException("project.assets.json has no libraries object.");
+            var targets = root.TryGetProperty("targets", out var targetsElement)
+                ? targetsElement
+                : throw new InvalidDataException("project.assets.json has no targets object.");
+            if (libraries.ValueKind != JsonValueKind.Object || targets.ValueKind != JsonValueKind.Object)
+            {
+                throw new InvalidDataException("project.assets.json has invalid package input maps.");
+            }
+
+            var restoreIdentities = BuildRestoreIdentityIndex(root, libraries, targets, incomplete);
+            if (incomplete.Count > 0) return Array.Empty<string>();
+
+            var budget = new AnalysisBudget();
+            var packageRoots = ResolvePackageRoots(restoreIdentities, libraries, packageFolders, incomplete);
+            var packageInventories = BuildPackageInventories(packageRoots, restoreIdentities, libraries, incomplete, budget);
+            if (incomplete.Count > 0) return Array.Empty<string>();
+
+            var result = new HashSet<string>(FileSystemPathComparer);
+            foreach (var target in targets.EnumerateObject())
+            {
+                if (target.Value.ValueKind != JsonValueKind.Object) return Array.Empty<string>();
+                foreach (var package in target.Value.EnumerateObject())
+                {
+                    if (!restoreIdentities.TryGetLibrary(libraries, package.Name, out var identity, out var library) ||
+                        !library.TryGetProperty("type", out var type) || type.ValueKind != JsonValueKind.String ||
+                        !type.GetString()!.Equals("package", StringComparison.OrdinalIgnoreCase) ||
+                        !packageRoots.TryGetValue(identity.CanonicalKey, out var packageRoot) ||
+                        !packageInventories.TryGetValue(Path.GetFullPath(packageRoot), out var inventory))
+                    {
+                        continue;
+                    }
+
+                    foreach (var relativePath in inventory)
+                    {
+                        result.Add(Path.Combine(packageRoot, relativePath.Replace('/', Path.DirectorySeparatorChar)));
+                    }
+                }
+            }
+
+            return result.Order(StringComparer.Ordinal).ToArray();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or JsonException or NotSupportedException or InvalidOperationException or ArgumentException or FormatException or OverflowException)
+        {
+            return Array.Empty<string>();
+        }
+    }
+
     private static ProbeResult AnalyzeCore(
         string assetsFile,
         string projectRoot,

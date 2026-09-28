@@ -37,7 +37,8 @@ $expectedToolFiles = @(
     'tools/net8.0/any/KeelMatrix.PackageSurface.deps.json',
     'tools/net8.0/any/KeelMatrix.PackageSurface.dll',
     'tools/net8.0/any/KeelMatrix.PackageSurface.runtimeconfig.json',
-    'tools/net8.0/any/KeelMatrix.Telemetry.dll'
+    'tools/net8.0/any/KeelMatrix.Telemetry.dll',
+    'tools/net8.0/any/NuGet.Versioning.dll'
 )
 $fixedPackageFiles = @('[Content_Types].xml', '_rels/.rels', 'KeelMatrix.PackageSurface.nuspec', 'README.md', 'LICENSE/LICENSE', 'icon.png')
 $package = Open-Zip $PackagePath

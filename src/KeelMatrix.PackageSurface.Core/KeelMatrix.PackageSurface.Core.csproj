@@ -7,5 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\KeelMatrix.PackageSurface.Probe\*.cs" Exclude="..\KeelMatrix.PackageSurface.Probe\Program.cs" LinkBase="" />
+    <PackageReference Include="NuGet.Versioning" />
   </ItemGroup>
 </Project>

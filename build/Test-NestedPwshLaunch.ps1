@@ -320,13 +320,13 @@ function Get-CSharpLaunchAudit([string]$Path) {
     $code = Get-CSharpCodeMask $source
     $violations = [System.Collections.Generic.List[string]]::new()
     $constructors = @([regex]::Matches($code, '(?<![\w.])new\s+(?:[A-Za-z_]\w*\.)*ProcessStartInfo\b'))
-    $starts = @([regex]::Matches($code, '(?<![\w.])(?:[A-Za-z_]\w*\.)*Process\.Start\s*\('))
-    $allStartCalls = @([regex]::Matches($code, '(?<![\w.])(?:global::)?[A-Za-z_]\w*(?:(?:\.|::)[A-Za-z_]\w*)*\s*\.\s*Start\s*\('))
-    $knownStartIndexes = [System.Collections.Generic.HashSet[int]]::new()
-    foreach ($start in $starts) {
-        [void]$knownStartIndexes.Add($start.Index)
-    }
-    $unsupportedStartCalls = @($allStartCalls | Where-Object { -not $knownStartIndexes.Contains($_.Index) })
+    $starts = @([regex]::Matches($code, '(?<![\w.:])Process\s*\.\s*Start\s*\('))
+    $memberStartCalls = @([regex]::Matches($code, '\.\s*Start\s*\('))
+    $staticStartCalls = @([regex]::Matches($code, '(?<![\w.:])Start\s*\('))
+    $unsupportedStartCalls = @($memberStartCalls | Where-Object {
+            $prefix = $code.Substring(0, $_.Index)
+            $prefix -cnotmatch '(?<![\w.:])Process\s*$'
+        })
     $safeVariables = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $constructorRecords = [System.Collections.Generic.List[object]]::new()
 
@@ -392,9 +392,14 @@ function Get-CSharpLaunchAudit([string]$Path) {
         [void]$violations.Add("${Path}:$lineNumber`: unsupported C# process-launch form '$($unsupportedStart.Value.Trim())'")
     }
 
+    foreach ($staticStart in $staticStartCalls) {
+        $lineNumber = 1 + ($source.Substring(0, $staticStart.Index) -split "`n").Count - 1
+        [void]$violations.Add("${Path}:$lineNumber`: unsupported C# process-launch form '$($staticStart.Value.Trim())'")
+    }
+
     return [pscustomobject]@{
         Path = $Path
-        LaunchCount = $constructors.Count + $allStartCalls.Count
+        LaunchCount = $constructors.Count + $memberStartCalls.Count + $staticStartCalls.Count
         Violations = $violations.ToArray()
     }
 }
@@ -414,6 +419,11 @@ if ($SelfTest) {
         $unsafeInstanceCSharpPath = Join-Path $selfTestRoot 'unsafe-instance.cs'
         $unsafeQualifiedCSharpPath = Join-Path $selfTestRoot 'unsafe-qualified.cs'
         $unsafeAliasCSharpPath = Join-Path $selfTestRoot 'unsafe-alias.cs'
+        $unsafeConditionalCSharpPath = Join-Path $selfTestRoot 'unsafe-conditional.cs'
+        $unsafeNullForgivingCSharpPath = Join-Path $selfTestRoot 'unsafe-null-forgiving.cs'
+        $unsafeParenthesizedCSharpPath = Join-Path $selfTestRoot 'unsafe-parenthesized.cs'
+        $unsafeDirectConstructorCSharpPath = Join-Path $selfTestRoot 'unsafe-direct-constructor.cs'
+        $unsafeStaticImportCSharpPath = Join-Path $selfTestRoot 'unsafe-static-import.cs'
         $safeCSharpPath = Join-Path $selfTestRoot 'safe.cs'
         $safePath = Join-Path $selfTestRoot 'safe.ps1'
         [IO.File]::WriteAllText($directPath, '& pwsh -NoProfile')
@@ -479,6 +489,34 @@ var startInfo = new ProcessStartInfo("pwsh")
 };
 ProcessAlias.Start(startInfo);
 '@)
+        [IO.File]::WriteAllText($unsafeConditionalCSharpPath, @'
+using System.Diagnostics;
+var process = new Process();
+process?.Start();
+'@)
+        [IO.File]::WriteAllText($unsafeNullForgivingCSharpPath, @'
+using System.Diagnostics;
+var process = new Process();
+process!.Start();
+'@)
+        [IO.File]::WriteAllText($unsafeParenthesizedCSharpPath, @'
+using System.Diagnostics;
+var process = new Process();
+(process).Start();
+'@)
+        [IO.File]::WriteAllText($unsafeDirectConstructorCSharpPath, @'
+using System.Diagnostics;
+new Process().Start();
+'@)
+        [IO.File]::WriteAllText($unsafeStaticImportCSharpPath, @'
+using static System.Diagnostics.Process;
+var startInfo = new ProcessStartInfo("pwsh")
+{
+    UseShellExecute = false,
+    CreateNoWindow = true
+};
+Start(startInfo);
+'@)
         [IO.File]::WriteAllText($safeCSharpPath, @'
 using System.Diagnostics;
 Process.Start(new System.Diagnostics.ProcessStartInfo("pwsh")
@@ -528,6 +566,19 @@ Process.Start(new System.Diagnostics.ProcessStartInfo("pwsh")
         $unsafeAliasCSharpAudit = Get-CSharpLaunchAudit $unsafeAliasCSharpPath
         if ($unsafeAliasCSharpAudit.LaunchCount -ne 2 -or @($unsafeAliasCSharpAudit.Violations).Count -eq 0) {
             throw 'The guard self-test did not reject an aliased C# process launch form.'
+        }
+        $equivalentLaunchCases = @(
+            @{ Name = 'conditional access'; Path = $unsafeConditionalCSharpPath; Count = 1 },
+            @{ Name = 'null-forgiving access'; Path = $unsafeNullForgivingCSharpPath; Count = 1 },
+            @{ Name = 'parenthesized receiver'; Path = $unsafeParenthesizedCSharpPath; Count = 1 },
+            @{ Name = 'direct constructor receiver'; Path = $unsafeDirectConstructorCSharpPath; Count = 1 },
+            @{ Name = 'static import'; Path = $unsafeStaticImportCSharpPath; Count = 2 }
+        )
+        foreach ($case in $equivalentLaunchCases) {
+            $audit = Get-CSharpLaunchAudit $case.Path
+            if ($audit.LaunchCount -ne $case.Count -or @($audit.Violations).Count -eq 0) {
+                throw "The guard self-test did not reject the unsupported $($case.Name) C# process launch form."
+            }
         }
         $safeCSharpAudit = Get-CSharpLaunchAudit $safeCSharpPath
         if ($safeCSharpAudit.LaunchCount -ne 2 -or @($safeCSharpAudit.Violations).Count -ne 0) {

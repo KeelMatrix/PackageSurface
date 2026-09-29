@@ -1,8 +1,8 @@
 # Repository state verification
 
-This document defines the repository-state checks used at repository handoff. The handoff records the exact commit,
-remote ref, command output, and residual platform evidence for that candidate; this file is not a substitute for that
-version-specific record.
+This document defines the repository-state checks used to verify a checkout. A validation record should include the exact
+commit, remote ref, command output, and residual platform evidence for that checkout; this file is not a substitute for
+that checkout-specific record.
 
 ## Canonical repository and hosted validation
 
@@ -14,8 +14,8 @@ The canonical repository is the public `KeelMatrix/PackageSurface` GitHub reposi
 - `scripts/validate-release.ps1`: the shared version and changelog contract used by candidate checks and the release
   workflow.
 
-Both workflows disable telemetry and use least-privilege job permissions. The local gate remains the authoritative
-pre-handoff validation; hosted CI supplies independent platform evidence for the exact pushed commit.
+Both workflows disable telemetry and use least-privilege job permissions. The local gate is the authoritative repository
+validation entrypoint; hosted CI supplies independent platform evidence for the exact pushed commit.
 
 ## Required checks
 
@@ -38,8 +38,8 @@ COMMAND: pwsh -NoLogo -NoProfile -File scripts/test-release-contract.ps1
 EXPECTED: PASS for the workflow shape and shared fail-closed release-contract regression cases.
 ```
 
-The exact command output for the candidate, including `git rev-parse HEAD`, `git rev-parse origin/main`, and
-`git ls-remote origin refs/heads/main`, belongs in the repository handoff report.
+The exact command output for the checkout, including `git rev-parse HEAD`, `git rev-parse origin/main`, and
+`git ls-remote origin refs/heads/main`, belongs in its validation record.
 
 The history hygiene gate checks complete non-shallow history, KeelMatrix authorship, and restricted developer-facing
 coordination markers in tracked material and commit metadata.

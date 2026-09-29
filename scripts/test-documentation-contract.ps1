@@ -51,4 +51,25 @@ foreach ($document in $documents) {
     }
 }
 
+$evidenceDocuments = @(
+    (Join-Path $RepositoryRoot 'evidence/restore-evidence.md'),
+    (Join-Path $RepositoryRoot 'evidence/repository-state.md')
+)
+$forbiddenEvidencePhrases = @(
+    'candidate handoff',
+    'pre-handoff',
+    'acceptance accounting',
+    'read-only first-release criteria',
+    'reviewed SHA',
+    'handoff report'
+)
+foreach ($document in $evidenceDocuments) {
+    $text = Get-Content -Raw $document
+    foreach ($phrase in $forbiddenEvidencePhrases) {
+        if ($text.IndexOf($phrase, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            throw "Evidence document '$document' contains prohibited process wording '$phrase'."
+        }
+    }
+}
+
 Write-Output 'DOCUMENTATION_CONTRACT=PASS platform wording, reporting routes, and repository links are resolvable.'

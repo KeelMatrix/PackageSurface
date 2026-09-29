@@ -62,6 +62,55 @@ function Get-MeaningfulReleaseNotes([string] $Body) {
         Where-Object { $_ -match '^(?:[-*+]\s+|\d+[.)]\s+)\S' -and $_ -notmatch '^<!--' })
 }
 
+function Get-MarkdownHeadings([string] $Text) {
+    $lines = @($Text -split "`r?`n")
+    $inFence = $false
+    $fenceCharacter = $null
+    $fenceLength = 0
+    for ($index = 0; $index -lt $lines.Count; $index++) {
+        $line = [string]$lines[$index]
+        $fence = [regex]::Match($line, '^(?<indent> {0,3})(?<marker>`{3,}|~{3,})(?<remainder>.*)$')
+        if ($fence.Success) {
+            $marker = $fence.Groups['marker'].Value
+            if (-not $inFence) {
+                $inFence = $true
+                $fenceCharacter = $marker.Substring(0, 1)
+                $fenceLength = $marker.Length
+            }
+            elseif ($marker.StartsWith($fenceCharacter, [StringComparison]::Ordinal) -and
+                $marker.Length -ge $fenceLength -and $fence.Groups['remainder'].Value -match '^\s*$') {
+                $inFence = $false
+                $fenceCharacter = $null
+                $fenceLength = 0
+            }
+            continue
+        }
+        if ($inFence) { continue }
+
+        $atx = [regex]::Match($line, '^(?<indent> {0,3})(?<marks>#{1,6})(?:[ \t]+(?<text>.*?))?[ \t]*$')
+        if ($atx.Success) {
+            $headingText = $atx.Groups['text'].Value.Trim() -replace '\s+#+\s*$', ''
+            if (-not [string]::IsNullOrWhiteSpace($headingText)) {
+                [pscustomobject]@{ Level = $atx.Groups['marks'].Value.Length; Text = $headingText }
+            }
+            continue
+        }
+
+        if ($index + 1 -ge $lines.Count -or [string]::IsNullOrWhiteSpace($line) -or
+            $line -match '^ {4}' -or $line.Trim() -match '^(?:[-+*]\s+|\d+[.)]\s+|>\s+)') {
+            continue
+        }
+        $setext = [regex]::Match([string]$lines[$index + 1], '^(?<indent> {0,3})(?<marker>=+|-+)[ \t]*$')
+        if ($setext.Success -and $line.Trim() -notmatch '^(?:`{3,}|~{3,})$') {
+            [pscustomobject]@{
+                Level = if ($setext.Groups['marker'].Value[0] -eq '=') { 1 } else { 2 }
+                Text = $line.Trim()
+            }
+            [void]$index++
+        }
+    }
+}
+
 $targetSections = @($sections | Where-Object { $_.Label -ceq $Version })
 $unreleasedSections = @($sections | Where-Object { $_.Label -ceq 'Unreleased' })
 if ($unreleasedSections.Count -gt 1) {
@@ -92,14 +141,12 @@ if ($RequireFinalized) {
     }
 
     if ($FirstRelease) {
-        if ($target.Body -match '(?im)^\s*#\s+\S') {
+        $releaseHeadings = @(Get-MarkdownHeadings -Text $target.Body)
+        if (@($releaseHeadings | Where-Object { $_.Level -eq 1 }).Count -gt 0) {
             throw 'First-release notes must use a release subsection heading, not a document heading.'
         }
-        $releaseHeadings = @([regex]::Matches(
-                $target.Body,
-                '(?im)^\s*#{2,6}\s+(?<category>[^\r\n#]+?)\s*:?[ \t]*$') |
-            ForEach-Object { $_.Groups['category'].Value.Trim().TrimEnd(':').Trim() })
-        if (@($releaseHeadings | Where-Object { $_ -ceq 'Added' }).Count -ne 1) {
+        $releaseCategories = @($releaseHeadings | ForEach-Object { $_.Text.Trim().TrimEnd(':').Trim() })
+        if (@($releaseCategories | Where-Object { $_ -ceq 'Added' }).Count -ne 1) {
             throw 'First-release notes must contain an Added section.'
         }
 
@@ -124,7 +171,7 @@ if ($RequireFinalized) {
             }
         }
 
-        $unexpectedCategories = @($releaseHeadings | Where-Object { $_ -cne 'Added' })
+        $unexpectedCategories = @($releaseCategories | Where-Object { $_ -cne 'Added' })
         if ($unexpectedCategories.Count -gt 0) {
             throw "First-release notes contain non-Added release categories: $($unexpectedCategories -join ', ')."
         }

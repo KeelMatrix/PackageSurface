@@ -261,7 +261,8 @@ static void RunGeneratedImportConditionRegression(string baselineAssets)
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
-            UseShellExecute = false
+            UseShellExecute = false,
+            CreateNoWindow = true
         };
         startInfo.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, "KeelMatrix.PackageSurface.Probe.dll"));
         startInfo.ArgumentList.Add(Path.Combine(projectRoot, "obj", "project.assets.json"));

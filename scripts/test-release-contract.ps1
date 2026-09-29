@@ -182,6 +182,17 @@ try {
         [IO.File]::WriteAllText($categoryChangelog, "# Changelog`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Initial release capability review.`n`n### $category`n`n- Release note.`n", [Text.UTF8Encoding]::new($false))
         Assert-ValidationRejects "first-release category '$category'" (Invoke-ReleaseValidation -Version $version -ChangelogPath $categoryChangelog -RequireFinalized -FirstRelease)
     }
+    foreach ($heading in @('Notes', 'Metadata')) {
+        $headingChangelog = Join-Path $scratch ('CHANGELOG.heading-' + $heading + '.md')
+        [IO.File]::WriteAllText($headingChangelog, "# Changelog`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Initial release capability review.`n`n#### $heading`n`n- Release note.`n", [Text.UTF8Encoding]::new($false))
+        Assert-ValidationRejects "first-release unknown heading '$heading'" (Invoke-ReleaseValidation -Version $version -ChangelogPath $headingChangelog -RequireFinalized -FirstRelease)
+    }
+    $h1HeadingChangelog = Join-Path $scratch 'CHANGELOG.h1-heading.md'
+    [IO.File]::WriteAllText($h1HeadingChangelog, "# Changelog`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Initial release capability review.`n`n# Notes`n`n- Release note.`n", [Text.UTF8Encoding]::new($false))
+    Assert-ValidationRejects 'first-release unknown level-one heading' (Invoke-ReleaseValidation -Version $version -ChangelogPath $h1HeadingChangelog -RequireFinalized -FirstRelease)
+    $h1AddedChangelog = Join-Path $scratch 'CHANGELOG.h1-added.md'
+    [IO.File]::WriteAllText($h1AddedChangelog, "# Changelog`n`n## [$version] - 2026-09-22`n`n# Added`n`n- Initial release capability review.`n", [Text.UTF8Encoding]::new($false))
+    Assert-ValidationRejects 'first-release level-one Added heading' (Invoke-ReleaseValidation -Version $version -ChangelogPath $h1AddedChangelog -RequireFinalized -FirstRelease)
 
     $mismatchedChangelog = Join-Path $scratch 'CHANGELOG.mismatched.md'
     [IO.File]::WriteAllText($mismatchedChangelog, "# Changelog`n`n## [9.9.9] - 2026-09-22`n`n- Wrong version.`n", [Text.UTF8Encoding]::new($false))

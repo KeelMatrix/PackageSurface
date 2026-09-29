@@ -110,7 +110,13 @@ function Get-NormalizedPowerShellCommandName([string]$Name) {
     return $Name
 }
 
-function Get-PowerShellStaticStringValue([object]$Node) {
+function Get-PowerShellStaticStringValue(
+    [object]$Node,
+    [object[]]$Assignments = @(),
+    [int]$Offset = [int]::MaxValue,
+    [int]$Depth = 0
+) {
+    if ($Depth -gt 12 -or $null -eq $Node) { return $null }
     while ($Node -is [System.Management.Automation.Language.PipelineAst] -and $Node.PipelineElements.Count -eq 1) {
         $Node = $Node.PipelineElements[0]
     }
@@ -121,7 +127,151 @@ function Get-PowerShellStaticStringValue([object]$Node) {
         ($Node -is [System.Management.Automation.Language.ExpandableStringExpressionAst] -and $Node.NestedExpressions.Count -eq 0)) {
         return [string]$Node.Value
     }
+    if ($Node -is [System.Management.Automation.Language.VariableExpressionAst] -and $Assignments.Count -gt 0) {
+        $assignment = Get-LatestPowerShellAssignment -Assignments $Assignments -VariableName $Node.VariablePath.UserPath -Offset $Offset
+        if ($null -ne $assignment) {
+            return Get-PowerShellStaticStringValue -Node $assignment.Right -Assignments $Assignments -Offset $assignment.Extent.StartOffset -Depth ($Depth + 1)
+        }
+    }
+    if ($Node -is [System.Management.Automation.Language.BinaryExpressionAst] -and $Node.Operator -eq 'Plus') {
+        $left = Get-PowerShellStaticStringValue -Node $Node.Left -Assignments $Assignments -Offset $Offset -Depth ($Depth + 1)
+        $right = Get-PowerShellStaticStringValue -Node $Node.Right -Assignments $Assignments -Offset $Offset -Depth ($Depth + 1)
+        if ($null -ne $left -and $null -ne $right) { return $left + $right }
+        return $null
+    }
+    if ($Node -is [System.Management.Automation.Language.ExpandableStringExpressionAst]) {
+        $value = [string]$Node.Value
+        foreach ($nested in @($Node.NestedExpressions)) {
+            $nestedValue = Get-PowerShellStaticStringValue -Node $nested -Assignments $Assignments -Offset $Offset -Depth ($Depth + 1)
+            if ($null -eq $nestedValue) { return $null }
+            $token = [string]$nested.Extent.Text
+            if (-not $value.Contains($token, [StringComparison]::Ordinal)) { return $null }
+            $value = $value.Replace($token, $nestedValue, [StringComparison]::Ordinal)
+        }
+        return $value
+    }
+    if ($Node -is [System.Management.Automation.Language.CommandAst] -and $Node.CommandElements.Count -ge 3) {
+        $name = Get-PowerShellStaticStringValue -Node $Node.CommandElements[0] -Assignments $Assignments -Offset $Offset -Depth ($Depth + 1)
+        if ($name -ieq 'Join-Path') {
+            $base = Get-PowerShellStaticStringValue -Node $Node.CommandElements[1] -Assignments $Assignments -Offset $Offset -Depth ($Depth + 1)
+            $child = Get-PowerShellStaticStringValue -Node $Node.CommandElements[2] -Assignments $Assignments -Offset $Offset -Depth ($Depth + 1)
+            if ($null -ne $base -and $null -ne $child) { return [IO.Path]::Combine($base, $child) }
+        }
+    }
     return $null
+}
+
+function Get-PowerShellPathSafety(
+    [object]$Node,
+    [object[]]$Assignments,
+    [int]$Offset,
+    [string[]]$ParameterNames = @(),
+    [int]$Depth = 0
+) {
+    if ($Depth -gt 12 -or $null -eq $Node) {
+        return [pscustomobject]@{ Safe = $false; Known = $false; Value = $null }
+    }
+
+    $value = Get-PowerShellStaticStringValue -Node $Node -Assignments $Assignments -Offset $Offset
+    if ($null -ne $value) {
+        return [pscustomobject]@{
+            Safe = $value -notmatch '^(?i:(?:Alias|AliasProvider):)'
+            Known = $true
+            Value = $value
+        }
+    }
+
+    while ($Node -is [System.Management.Automation.Language.PipelineAst] -and $Node.PipelineElements.Count -eq 1) {
+        $Node = $Node.PipelineElements[0]
+    }
+    while ($Node -is [System.Management.Automation.Language.CommandExpressionAst]) {
+        $Node = $Node.Expression
+    }
+    if ($Node -is [System.Management.Automation.Language.VariableExpressionAst]) {
+        $assignment = Get-LatestPowerShellAssignment -Assignments $Assignments -VariableName $Node.VariablePath.UserPath -Offset $Offset
+        if ($null -ne $assignment) {
+            return Get-PowerShellPathSafety -Node $assignment.Right -Assignments $Assignments -Offset $assignment.Extent.StartOffset -ParameterNames $ParameterNames -Depth ($Depth + 1)
+        }
+        if ($Node.VariablePath.UserPath -match '^(?i:(?:PSScriptRoot|PWD|env:(?:NUGET_PACKAGES|PACKAGESURFACE_TEST_SCRATCH_DIR|TEMP|TMP|TMPDIR)))$' -or
+            $ParameterNames -contains $Node.VariablePath.UserPath) {
+            return [pscustomobject]@{ Safe = $true; Known = $false; Value = $null }
+        }
+    }
+    if ($Node -is [System.Management.Automation.Language.ParenExpressionAst]) {
+        return Get-PowerShellPathSafety -Node $Node.Pipeline -Assignments $Assignments -Offset $Offset -ParameterNames $ParameterNames -Depth ($Depth + 1)
+    }
+    if ($Node -is [System.Management.Automation.Language.IndexExpressionAst]) {
+        return Get-PowerShellPathSafety -Node $Node.Target -Assignments $Assignments -Offset $Offset -ParameterNames $ParameterNames -Depth ($Depth + 1)
+    }
+    if ($Node -is [System.Management.Automation.Language.ArrayLiteralAst]) {
+        $elements = @($Node.Elements)
+        if ($elements.Count -gt 0 -and @($elements | ForEach-Object {
+                    (Get-PowerShellPathSafety -Node $_ -Assignments $Assignments -Offset $Offset -ParameterNames $ParameterNames -Depth ($Depth + 1)).Safe
+                } | Where-Object { -not $_ }).Count -eq 0) {
+            return [pscustomobject]@{ Safe = $true; Known = $false; Value = $null }
+        }
+    }
+    if ($Node -is [System.Management.Automation.Language.ArrayExpressionAst] -and
+        $Node.Extent.Text -match '(?i)\.(?:packageFolders|FullName|PSPath)\b' -and
+        $Node.Extent.Text -notmatch '^(?i:.*(?:Alias|AliasProvider):)') {
+        return [pscustomobject]@{ Safe = $true; Known = $false; Value = $null }
+    }
+    if ($Node -is [System.Management.Automation.Language.BinaryExpressionAst] -and $Node.Operator -eq 'Plus') {
+        $left = Get-PowerShellPathSafety -Node $Node.Left -Assignments $Assignments -Offset $Offset -ParameterNames $ParameterNames -Depth ($Depth + 1)
+        $right = Get-PowerShellPathSafety -Node $Node.Right -Assignments $Assignments -Offset $Offset -ParameterNames $ParameterNames -Depth ($Depth + 1)
+        if ($left.Safe -and $right.Safe) {
+            return [pscustomobject]@{ Safe = $true; Known = $false; Value = $null }
+        }
+    }
+    if ($Node -is [System.Management.Automation.Language.ExpandableStringExpressionAst] -and
+        $Node.Extent.Text -notmatch '^(?i:.*(?:Alias|AliasProvider):)') {
+        $nested = @($Node.NestedExpressions)
+        if ($nested.Count -gt 0 -and @($nested | ForEach-Object {
+                    (Get-PowerShellPathSafety -Node $_ -Assignments $Assignments -Offset $Offset -ParameterNames $ParameterNames -Depth ($Depth + 1)).Safe
+                } | Where-Object { -not $_ }).Count -eq 0) {
+            return [pscustomobject]@{ Safe = $true; Known = $false; Value = $null }
+        }
+    }
+    if ($Node -is [System.Management.Automation.Language.MemberExpressionAst] -and
+        [string]$Node.Member.Extent.Text -match '^(?i:(?:FullName|Path|PSPath))$') {
+        return [pscustomobject]@{ Safe = $true; Known = $false; Value = $null }
+    }
+    if ($Node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+        [string]$Node.Member.Extent.Text -match '^(?i:(?:GetTempPath|GetFullPath|Combine|ToString))$') {
+        if ($Node.Extent.Text -match '^(?i:.*(?:Alias|AliasProvider):)') {
+            return [pscustomobject]@{ Safe = $false; Known = $false; Value = $null }
+        }
+        return [pscustomobject]@{ Safe = $true; Known = $false; Value = $null }
+    }
+    if ($Node -is [System.Management.Automation.Language.CommandAst]) {
+        $name = Get-PowerShellStaticStringValue -Node $Node.CommandElements[0] -Assignments $Assignments -Offset $Offset
+        if ($name -match '^(?i:(?:Join-Path|Split-Path|Resolve-Path|Convert-Path))$') {
+            $pathArguments = @($Node.CommandElements | Select-Object -Skip 1 | Where-Object {
+                    $_ -isnot [System.Management.Automation.Language.CommandParameterAst]
+                })
+            if ($Node.Extent.Text -match '^(?i:.*(?:Alias|AliasProvider):)' -or $pathArguments.Count -eq 0 -or
+                @($pathArguments | ForEach-Object {
+                        (Get-PowerShellPathSafety -Node $_ -Assignments $Assignments -Offset $Offset -ParameterNames $ParameterNames -Depth ($Depth + 1)).Safe
+                    } | Where-Object { -not $_ }).Count -gt 0) {
+                return [pscustomobject]@{ Safe = $false; Known = $false; Value = $null }
+            }
+            return [pscustomobject]@{ Safe = $true; Known = $false; Value = $null }
+        }
+    }
+    if ($Node -is [System.Management.Automation.Language.IfStatementAst]) {
+        $blocks = @($Node.Clauses | ForEach-Object { $_.Item2 })
+        if ($null -ne $Node.ElseClause) { $blocks += $Node.ElseClause }
+        if ($blocks.Count -eq $Node.Clauses.Count + 1 -and
+            @($blocks | ForEach-Object {
+                    $statements = @($_.Statements)
+                    if ($statements.Count -ne 1) { $false } else {
+                        (Get-PowerShellPathSafety -Node $statements[0] -Assignments $Assignments -Offset $Offset -ParameterNames $ParameterNames -Depth ($Depth + 1)).Safe
+                    }
+                } | Where-Object { -not $_ }).Count -eq 0) {
+            return [pscustomobject]@{ Safe = $true; Known = $false; Value = $null }
+        }
+    }
+    return [pscustomobject]@{ Safe = $false; Known = $false; Value = $null }
 }
 
 function Test-NestedPowerShellExecutable([string]$Value) {
@@ -229,45 +379,48 @@ function Get-PowerShellParameterValue(
     [object[]]$Elements,
     [int]$ParameterIndex,
     [object[]]$Assignments,
-    [int]$Offset
+    [int]$Offset,
+    [string[]]$ParameterNames = @()
 ) {
     $parameter = $Elements[$ParameterIndex]
     if ($parameter.Argument) {
-        $value = Get-PowerShellStaticStringValue $parameter.Argument
-        if ($null -eq $value -and $parameter.Argument -is [System.Management.Automation.Language.VariableExpressionAst]) {
-            $value = Get-LatestPowerShellStringAssignment -Assignments $Assignments -VariableName $parameter.Argument.VariablePath.UserPath -Offset $Offset
-        }
-        return [pscustomobject]@{ Found = $true; Known = $null -ne $value; Value = $value }
+        $value = Get-PowerShellStaticStringValue -Node $parameter.Argument -Assignments $Assignments -Offset $Offset
+        $safety = Get-PowerShellPathSafety -Node $parameter.Argument -Assignments $Assignments -Offset $Offset -ParameterNames $ParameterNames
+        return [pscustomobject]@{ Found = $true; Known = $null -ne $value; Safe = $safety.Safe; Value = $value }
     }
     if ($ParameterIndex + 1 -ge $Elements.Count -or
         $Elements[$ParameterIndex + 1] -is [System.Management.Automation.Language.CommandParameterAst]) {
-        return [pscustomobject]@{ Found = $true; Known = $false; Value = $null }
+        return [pscustomobject]@{ Found = $true; Known = $false; Safe = $false; Value = $null }
     }
-    $value = Get-PowerShellStaticStringValue $Elements[$ParameterIndex + 1]
-    if ($null -eq $value -and $Elements[$ParameterIndex + 1] -is [System.Management.Automation.Language.VariableExpressionAst]) {
-        $value = Get-LatestPowerShellStringAssignment -Assignments $Assignments -VariableName $Elements[$ParameterIndex + 1].VariablePath.UserPath -Offset $Offset
-    }
-    return [pscustomobject]@{ Found = $true; Known = $null -ne $value; Value = $value }
+    $value = Get-PowerShellStaticStringValue -Node $Elements[$ParameterIndex + 1] -Assignments $Assignments -Offset $Offset
+    $safety = Get-PowerShellPathSafety -Node $Elements[$ParameterIndex + 1] -Assignments $Assignments -Offset $Offset -ParameterNames $ParameterNames
+    return [pscustomobject]@{ Found = $true; Known = $null -ne $value; Safe = $safety.Safe; Value = $value }
 }
 
 function Get-PowerShellAliasProviderMutation(
     [System.Management.Automation.Language.CommandAst]$Command,
     [string]$NormalizedCommandName,
-    [object[]]$Assignments
+    [object[]]$Assignments,
+    [string[]]$ParameterNames = @()
 ) {
     if ($NormalizedCommandName -notmatch '^(?i:New-Item|ni|Set-Item|si|Copy-Item|cpi|cp|copy|Move-Item|mi|move|mv|Rename-Item|ri|New-ItemProperty|nipo|Set-ItemProperty|sp)$') {
         return $null
     }
 
     $elements = @($Command.CommandElements | Select-Object -Skip 1)
-    $pathParameterNames = '^(?i:Path|LiteralPath|PSPath|PSLiteralPath|Name)$'
+    if (@($elements | Where-Object {
+                $_ -is [System.Management.Automation.Language.VariableExpressionAst] -and $_.Splatted
+            }).Count -gt 0) {
+        return 'alias-provider mutation cannot be audited'
+    }
+    $pathParameterNames = '^(?i:Path|LiteralPath|PSPath|PSLiteralPath|Name|Destination|Target)$'
     $positionalSeen = $false
     for ($index = 0; $index -lt $elements.Count; $index++) {
         $element = $elements[$index]
         if ($element -is [System.Management.Automation.Language.CommandParameterAst]) {
             if ($element.ParameterName -match $pathParameterNames) {
-                $valueState = Get-PowerShellParameterValue -Elements $elements -ParameterIndex $index -Assignments $Assignments -Offset $Command.Extent.StartOffset
-                if ($valueState.Value -match '^(?i:(?:Alias|AliasProvider):)') {
+                $valueState = Get-PowerShellParameterValue -Elements $elements -ParameterIndex $index -Assignments $Assignments -Offset $Command.Extent.StartOffset -ParameterNames $ParameterNames
+                if (-not $valueState.Safe -or $valueState.Value -match '^(?i:(?:Alias|AliasProvider):)') {
                     return 'alias-provider mutation cannot be audited'
                 }
             }
@@ -279,11 +432,9 @@ function Get-PowerShellAliasProviderMutation(
         }
         if (-not $positionalSeen) {
             $positionalSeen = $true
-            $value = Get-PowerShellStaticStringValue $element
-            if ($null -eq $value -and $element -is [System.Management.Automation.Language.VariableExpressionAst]) {
-                $value = Get-LatestPowerShellStringAssignment -Assignments $Assignments -VariableName $element.VariablePath.UserPath -Offset $Command.Extent.StartOffset
-            }
-            if ($value -match '^(?i:(?:Alias|AliasProvider):)') {
+            $value = Get-PowerShellStaticStringValue -Node $element -Assignments $Assignments -Offset $Command.Extent.StartOffset
+            $safety = Get-PowerShellPathSafety -Node $element -Assignments $Assignments -Offset $Command.Extent.StartOffset -ParameterNames $ParameterNames
+            if (-not $safety.Safe -or $value -match '^(?i:(?:Alias|AliasProvider):)') {
                 return 'alias-provider mutation cannot be audited'
             }
         }
@@ -306,6 +457,14 @@ function Get-LaunchViolations([string]$Path) {
                 param($node)
                 $node -is [System.Management.Automation.Language.AssignmentStatementAst]
             }, $true))
+    $parameterNames = @($ast.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.ParameterAst]
+            }, $true) | ForEach-Object { $_.Name.VariablePath.UserPath })
+    $parameterNames += @($ast.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.ForEachStatementAst]
+            }, $true) | ForEach-Object { $_.Variable.VariablePath.UserPath })
     $scriptBlockParameters = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($parameter in @($ast.FindAll({
                 param($node)
@@ -365,7 +524,7 @@ function Get-LaunchViolations([string]$Path) {
         }
         $normalizedCommandName = Get-NormalizedPowerShellCommandName $commandName
 
-        $aliasProviderReason = Get-PowerShellAliasProviderMutation -Command $command -NormalizedCommandName $normalizedCommandName -Assignments $assignments
+        $aliasProviderReason = Get-PowerShellAliasProviderMutation -Command $command -NormalizedCommandName $normalizedCommandName -Assignments $assignments -ParameterNames $parameterNames
         if ($null -ne $aliasProviderReason) {
             [void]$violations.Add("${Path}:$lineNumber`: PowerShell alias-provider mutation '$aliasProviderReason'")
             continue
@@ -971,6 +1130,14 @@ if ($SelfTest) {
         $aliasProviderPath = Join-Path $selfTestRoot 'alias-provider.ps1'
         $newAliasProviderPath = Join-Path $selfTestRoot 'new-alias-provider.ps1'
         $aliasProviderShorthandPath = Join-Path $selfTestRoot 'alias-provider-shorthand.ps1'
+        $derivedAliasProviderPath = Join-Path $selfTestRoot 'derived-alias-provider.ps1'
+        $expandableAliasProviderPath = Join-Path $selfTestRoot 'expandable-alias-provider.ps1'
+        $joinAliasProviderPath = Join-Path $selfTestRoot 'join-alias-provider.ps1'
+        $reassignedAliasProviderPath = Join-Path $selfTestRoot 'reassigned-alias-provider.ps1'
+        $unknownAliasProviderPath = Join-Path $selfTestRoot 'unknown-alias-provider.ps1'
+        $qualifiedAliasProviderPath = Join-Path $selfTestRoot 'qualified-alias-provider.ps1'
+        $splattedAliasProviderPath = Join-Path $selfTestRoot 'splatted-alias-provider.ps1'
+        $safeFileMutationPath = Join-Path $selfTestRoot 'safe-file-mutation.ps1'
         $dotnetProcessPath = Join-Path $selfTestRoot 'dotnet-process.ps1'
         $dynamicFilePath = Join-Path $selfTestRoot 'dynamic-file-path.ps1'
         $dynamicSplatFilePath = Join-Path $selfTestRoot 'dynamic-splat-file-path.ps1'
@@ -1223,6 +1390,47 @@ launch -NoProfile
 si -Path Alias:launch -Value pwsh
 ni -Path Alias:other -Value powershell
 '@)
+        [IO.File]::WriteAllText($derivedAliasProviderPath, @'
+$provider = 'Alias:'
+$path = $provider + 'launch'
+Set-Item -Path $path -Value pwsh
+launch -NoProfile
+'@)
+        [IO.File]::WriteAllText($expandableAliasProviderPath, @'
+$provider = 'Alias:'
+$path = "${provider}launch"
+Set-Item -Path:$path -Value pwsh
+launch -NoProfile
+'@)
+        [IO.File]::WriteAllText($joinAliasProviderPath, @'
+$provider = 'Alias:'
+$path = Join-Path $provider 'launch'
+si $path -Value pwsh
+launch -NoProfile
+'@)
+        [IO.File]::WriteAllText($reassignedAliasProviderPath, @'
+$provider = 'scratch'
+$provider = 'AliasProvider:'
+$path = $provider + 'launch'
+ni -Path $path -Value pwsh
+launch -NoProfile
+'@)
+        [IO.File]::WriteAllText($unknownAliasProviderPath, @'
+$path = Get-ProviderPath
+Set-Item -Path $path -Value pwsh
+'@)
+        [IO.File]::WriteAllText($qualifiedAliasProviderPath, @'
+$provider = 'Alias:'
+$path = $provider + 'launch'
+Microsoft.PowerShell.Management\Set-Item -Path $path -Value pwsh
+'@)
+        [IO.File]::WriteAllText($splattedAliasProviderPath, @'
+$parameters = @{ Path = 'scratch/item.txt'; Value = 'content' }
+Set-Item @parameters
+'@)
+        [IO.File]::WriteAllText($safeFileMutationPath, @'
+Set-Item -Path 'scratch/item.txt' -Value 'content'
+'@)
         [IO.File]::WriteAllText($dotnetProcessPath, @'
 [System.Diagnostics.Process]::Start('pwsh')
 '@)
@@ -1296,6 +1504,13 @@ Process.Start(new System.Diagnostics.ProcessStartInfo("pwsh")
                     @{ Name = 'Alias provider Set-Item'; Path = $aliasProviderPath },
                     @{ Name = 'Alias provider New-Item'; Path = $newAliasProviderPath },
                     @{ Name = 'Alias provider shorthand'; Path = $aliasProviderShorthandPath },
+                    @{ Name = 'derived Alias provider path'; Path = $derivedAliasProviderPath },
+                    @{ Name = 'expandable Alias provider path'; Path = $expandableAliasProviderPath },
+                    @{ Name = 'Join-Path Alias provider path'; Path = $joinAliasProviderPath },
+                    @{ Name = 'reassigned Alias provider path'; Path = $reassignedAliasProviderPath },
+                    @{ Name = 'unknown Alias provider path'; Path = $unknownAliasProviderPath },
+                    @{ Name = 'qualified Alias provider path'; Path = $qualifiedAliasProviderPath },
+                    @{ Name = 'splatted Alias provider path'; Path = $splattedAliasProviderPath },
                     @{ Name = '.NET process API'; Path = $dotnetProcessPath },
                     @{ Name = 'dynamic Start-Process FilePath'; Path = $dynamicFilePath },
                     @{ Name = 'dynamic splatted FilePath'; Path = $dynamicSplatFilePath },
@@ -1306,6 +1521,9 @@ Process.Start(new System.Diagnostics.ProcessStartInfo("pwsh")
             if (@(Get-LaunchViolations $dynamicCase.Path).Count -eq 0) {
                 throw "The guard self-test did not reject the unsupported $($dynamicCase.Name) form."
             }
+        }
+        if (@(Get-LaunchViolations $safeFileMutationPath).Count -ne 0) {
+            throw 'The guard self-test rejected an ordinary non-provider file mutation.'
         }
         $unsafeCSharpAudit = Get-CSharpLaunchAudit $unsafeCSharpPath
         if ($unsafeCSharpAudit.LaunchCount -ne 2 -or @($unsafeCSharpAudit.Violations).Count -eq 0) {

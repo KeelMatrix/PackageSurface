@@ -27,7 +27,7 @@ public static class CommandLine
         }
         catch (ArgumentException ex)
         {
-            Console.Error.WriteLine($"error: {ex.Message}");
+            Console.Error.WriteLine($"error: {DiagnosticDataPolicy.SafeParserMessage(ex.Message)}");
             return 2;
         }
         if (parsed.Kind == ParseResultKind.Help)
@@ -44,7 +44,7 @@ public static class CommandLine
 
         if (parsed.Kind == ParseResultKind.Invalid)
         {
-            Console.Error.WriteLine($"error: {parsed.Error}");
+            Console.Error.WriteLine($"error: {DiagnosticDataPolicy.SafeParserMessage(parsed.Error)}");
             Console.Error.WriteLine("Run 'package-surface --help' for usage.");
             return 2;
         }
@@ -601,7 +601,7 @@ public sealed record Options(
 
         if (!Enum.TryParse<CommandKind>(args[0], ignoreCase: true, out var command) || !Enum.IsDefined(command))
         {
-            return new(ParseResultKind.Invalid, Error: $"Unknown command '{args[0]}'.");
+            return new(ParseResultKind.Invalid, Error: "Unknown command.");
         }
 
         string? input = null;
@@ -673,7 +673,7 @@ public sealed record Options(
 
             if (argument.StartsWith('-'))
             {
-                return new(ParseResultKind.Invalid, Error: $"Unknown option '{argument}'.");
+                return new(ParseResultKind.Invalid, Error: "Unknown option.");
             }
 
             if (input is not null)

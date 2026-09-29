@@ -258,6 +258,27 @@ public sealed record ProbeResult(
 public static class DiagnosticDataPolicy
 {
     public const string GenericIncompleteReason = "The input, baseline, or restore evidence could not be analyzed completely.";
+    public const string GenericParserReason = "Invalid command-line arguments.";
+    private static readonly HashSet<string> SafeParserReasons = new(StringComparer.Ordinal)
+    {
+        "--version cannot be combined with another argument.",
+        "Unknown command.",
+        "--format must be text, json, or sarif.",
+        "Unknown option.",
+        "Only one input path is allowed.",
+        "An input path is required.",
+        "baseline requires --output <baseline>.",
+        "--output is only valid with baseline.",
+        "check requires --baseline <baseline>.",
+        "--baseline is only valid with check.",
+        "--format requires a value.",
+        "--output requires a value.",
+        "--baseline requires a value.",
+        "--project requires a value.",
+        "--compiler-api-version requires a value.",
+        "--telemetry requires a value.",
+        "--telemetry must be on or off."
+    };
 
     public static IReadOnlyList<string> NormalizeReasons(IEnumerable<string> reasons) =>
         reasons.Select(SanitizeReason)
@@ -270,6 +291,11 @@ public static class DiagnosticDataPolicy
         exception is InvalidDataException && !ContainsAbsolutePathMarker(exception.Message)
             ? SanitizeReason(exception.Message)
             : GenericIncompleteReason;
+
+    public static string SafeParserMessage(string? message) =>
+        message is not null && SafeParserReasons.Contains(message.Trim())
+            ? message.Trim()
+            : GenericParserReason;
 
     public static string SanitizeReason(string reason)
     {

@@ -81,6 +81,7 @@ RunClassifierHardeningTests();
 RunTelemetryStateMachineTests();
 RunTelemetryPayloadAllowlistRegression();
 RunParserMessageRegression();
+RunParserTokenPrivacyRegression();
 RunBaselineContractRegression();
 RunPackageIdentityAndPathRegression();
 RunBaselineJsonBoundaryRegression();
@@ -341,6 +342,50 @@ static void RunParserMessageRegression()
             !text.Contains("invalid command-line arguments", StringComparison.Ordinal) &&
             !text.Contains("safe-input", StringComparison.Ordinal),
         "Missing option value lost its safe specific parser message or echoed input text.");
+}
+
+static void RunParserTokenPrivacyRegression()
+{
+    const string marker = "ParserSecretMarker-7f1c2a";
+    var untrustedTokens = new[]
+    {
+        $"C:\\PRIVATE\\{marker}",
+        $"/home/PRIVATE/{marker}",
+        marker
+    };
+    foreach (var format in new[] { "text", "json", "sarif" })
+    {
+        foreach (var token in untrustedTokens)
+        {
+            foreach (var arguments in new[]
+            {
+                new[] { token, "--no-telemetry" },
+                new[] { "scan", "safe-input", $"--unknown={token}", "--format", format, "--no-telemetry" }
+            })
+            {
+                var error = new StringWriter(CultureInfo.InvariantCulture);
+                var output = new StringWriter(CultureInfo.InvariantCulture);
+                var priorError = Console.Error;
+                var priorOutput = Console.Out;
+                try
+                {
+                    Console.SetError(error);
+                    Console.SetOut(output);
+                    Require(CommandLine.Run(arguments) == 2, "A token privacy parser case did not return exit code 2.");
+                }
+                finally
+                {
+                    Console.SetError(priorError);
+                    Console.SetOut(priorOutput);
+                }
+
+                var combined = error.ToString() + output;
+                Require(!combined.Contains(marker, StringComparison.Ordinal) &&
+                        !combined.Contains(token, StringComparison.OrdinalIgnoreCase),
+                    $"Parser diagnostic leaked untrusted token data for {format} output mode.");
+            }
+        }
+    }
 }
 
 static void RunBaselineContractRegression()

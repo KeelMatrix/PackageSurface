@@ -321,6 +321,12 @@ function Get-CSharpLaunchAudit([string]$Path) {
     $violations = [System.Collections.Generic.List[string]]::new()
     $constructors = @([regex]::Matches($code, '(?<![\w.])new\s+(?:[A-Za-z_]\w*\.)*ProcessStartInfo\b'))
     $starts = @([regex]::Matches($code, '(?<![\w.])(?:[A-Za-z_]\w*\.)*Process\.Start\s*\('))
+    $allStartCalls = @([regex]::Matches($code, '(?<![\w.])(?:global::)?[A-Za-z_]\w*(?:(?:\.|::)[A-Za-z_]\w*)*\s*\.\s*Start\s*\('))
+    $knownStartIndexes = [System.Collections.Generic.HashSet[int]]::new()
+    foreach ($start in $starts) {
+        [void]$knownStartIndexes.Add($start.Index)
+    }
+    $unsupportedStartCalls = @($allStartCalls | Where-Object { -not $knownStartIndexes.Contains($_.Index) })
     $safeVariables = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $constructorRecords = [System.Collections.Generic.List[object]]::new()
 
@@ -337,12 +343,24 @@ function Get-CSharpLaunchAudit([string]$Path) {
             $code.Substring(0, $constructor.Index),
             '(?s)(?:\b(?:var|ProcessStartInfo)\s+)?(?<name>[A-Za-z_]\w*)\s*=\s*$')
         $variableName = if ($assignment.Success) { $assignment.Groups['name'].Value } else { $null }
+        $postConstructionMutation = $false
+        if ($variableName) {
+            $mutation = [regex]::Match(
+                $code.Substring($constructor.Index + $constructor.Length),
+                '(?m)\b' + [regex]::Escape($variableName) + '\s*\.\s*(?<property>UseShellExecute|CreateNoWindow)\s*=')
+            if ($mutation.Success) {
+                $postConstructionMutation = $true
+                $mutationIndex = $constructor.Index + $constructor.Length + $mutation.Index
+                $mutationLine = 1 + ($source.Substring(0, $mutationIndex) -split "`n").Count - 1
+                [void]$violations.Add("${Path}:$mutationLine`: ProcessStartInfo property '$($mutation.Groups['property'].Value)' must not be changed after construction")
+            }
+        }
         [void]$constructorRecords.Add([pscustomobject]@{
                 Index = $constructor.Index
-                Safe = $hasSafeShell -and $hasNoWindow
+                Safe = $hasSafeShell -and $hasNoWindow -and -not $postConstructionMutation
                 Variable = $variableName
             })
-        if ($variableName -and $hasSafeShell -and $hasNoWindow) {
+        if ($variableName -and $hasSafeShell -and $hasNoWindow -and -not $postConstructionMutation) {
             [void]$safeVariables.Add($variableName)
         }
     }
@@ -369,9 +387,14 @@ function Get-CSharpLaunchAudit([string]$Path) {
         }
     }
 
+    foreach ($unsupportedStart in $unsupportedStartCalls) {
+        $lineNumber = 1 + ($source.Substring(0, $unsupportedStart.Index) -split "`n").Count - 1
+        [void]$violations.Add("${Path}:$lineNumber`: unsupported C# process-launch form '$($unsupportedStart.Value.Trim())'")
+    }
+
     return [pscustomobject]@{
         Path = $Path
-        LaunchCount = $constructors.Count + $starts.Count
+        LaunchCount = $constructors.Count + $allStartCalls.Count
         Violations = $violations.ToArray()
     }
 }
@@ -387,6 +410,10 @@ if ($SelfTest) {
         $splatSafePath = Join-Path $selfTestRoot 'splat-safe.ps1'
         $splatNoNewWindowPath = Join-Path $selfTestRoot 'splat-nonewwindow-safe.ps1'
         $unsafeCSharpPath = Join-Path $selfTestRoot 'unsafe.cs'
+        $unsafeMutationCSharpPath = Join-Path $selfTestRoot 'unsafe-mutation.cs'
+        $unsafeInstanceCSharpPath = Join-Path $selfTestRoot 'unsafe-instance.cs'
+        $unsafeQualifiedCSharpPath = Join-Path $selfTestRoot 'unsafe-qualified.cs'
+        $unsafeAliasCSharpPath = Join-Path $selfTestRoot 'unsafe-alias.cs'
         $safeCSharpPath = Join-Path $selfTestRoot 'safe.cs'
         $safePath = Join-Path $selfTestRoot 'safe.ps1'
         [IO.File]::WriteAllText($directPath, '& pwsh -NoProfile')
@@ -417,6 +444,40 @@ Start-Process @parameters
 using System.Diagnostics;
 var startInfo = new ProcessStartInfo("pwsh") { UseShellExecute = true };
 Process.Start(startInfo);
+'@)
+        [IO.File]::WriteAllText($unsafeMutationCSharpPath, @'
+using System.Diagnostics;
+var startInfo = new ProcessStartInfo("pwsh")
+{
+    UseShellExecute = false,
+    CreateNoWindow = true
+};
+startInfo.UseShellExecute = true;
+Process.Start(startInfo);
+'@)
+        [IO.File]::WriteAllText($unsafeInstanceCSharpPath, @'
+using System.Diagnostics;
+var process = new Process();
+process.Start();
+'@)
+        [IO.File]::WriteAllText($unsafeQualifiedCSharpPath, @'
+using System.Diagnostics;
+var startInfo = new ProcessStartInfo("pwsh")
+{
+    UseShellExecute = false,
+    CreateNoWindow = true
+};
+global::System.Diagnostics.Process.Start(startInfo);
+'@)
+        [IO.File]::WriteAllText($unsafeAliasCSharpPath, @'
+using ProcessAlias = System.Diagnostics.Process;
+using System.Diagnostics;
+var startInfo = new ProcessStartInfo("pwsh")
+{
+    UseShellExecute = false,
+    CreateNoWindow = true
+};
+ProcessAlias.Start(startInfo);
 '@)
         [IO.File]::WriteAllText($safeCSharpPath, @'
 using System.Diagnostics;
@@ -451,6 +512,22 @@ Process.Start(new System.Diagnostics.ProcessStartInfo("pwsh")
         $unsafeCSharpAudit = Get-CSharpLaunchAudit $unsafeCSharpPath
         if ($unsafeCSharpAudit.LaunchCount -ne 2 -or @($unsafeCSharpAudit.Violations).Count -eq 0) {
             throw 'The guard self-test did not reject an unsafe C# process launch.'
+        }
+        $unsafeMutationCSharpAudit = Get-CSharpLaunchAudit $unsafeMutationCSharpPath
+        if ($unsafeMutationCSharpAudit.LaunchCount -ne 2 -or @($unsafeMutationCSharpAudit.Violations).Count -eq 0) {
+            throw 'The guard self-test did not reject post-construction C# process-launch mutation.'
+        }
+        $unsafeInstanceCSharpAudit = Get-CSharpLaunchAudit $unsafeInstanceCSharpPath
+        if ($unsafeInstanceCSharpAudit.LaunchCount -ne 1 -or @($unsafeInstanceCSharpAudit.Violations).Count -eq 0) {
+            throw 'The guard self-test did not reject an instance C# process launch.'
+        }
+        $unsafeQualifiedCSharpAudit = Get-CSharpLaunchAudit $unsafeQualifiedCSharpPath
+        if ($unsafeQualifiedCSharpAudit.LaunchCount -ne 2 -or @($unsafeQualifiedCSharpAudit.Violations).Count -eq 0) {
+            throw 'The guard self-test did not reject an unsupported qualified C# process launch form.'
+        }
+        $unsafeAliasCSharpAudit = Get-CSharpLaunchAudit $unsafeAliasCSharpPath
+        if ($unsafeAliasCSharpAudit.LaunchCount -ne 2 -or @($unsafeAliasCSharpAudit.Violations).Count -eq 0) {
+            throw 'The guard self-test did not reject an aliased C# process launch form.'
         }
         $safeCSharpAudit = Get-CSharpLaunchAudit $safeCSharpPath
         if ($safeCSharpAudit.LaunchCount -ne 2 -or @($safeCSharpAudit.Violations).Count -ne 0) {

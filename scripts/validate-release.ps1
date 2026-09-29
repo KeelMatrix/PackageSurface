@@ -92,7 +92,14 @@ if ($RequireFinalized) {
     }
 
     if ($FirstRelease) {
-        if ($target.Body -notmatch '(?im)^\s*#{2,6}\s+Added\s*:?[ \t]*$') {
+        if ($target.Body -match '(?im)^\s*#\s+\S') {
+            throw 'First-release notes must use a release subsection heading, not a document heading.'
+        }
+        $releaseHeadings = @([regex]::Matches(
+                $target.Body,
+                '(?im)^\s*#{2,6}\s+(?<category>[^\r\n#]+?)\s*:?[ \t]*$') |
+            ForEach-Object { $_.Groups['category'].Value.Trim().TrimEnd(':').Trim() })
+        if (@($releaseHeadings | Where-Object { $_ -ceq 'Added' }).Count -ne 1) {
             throw 'First-release notes must contain an Added section.'
         }
 
@@ -117,12 +124,9 @@ if ($RequireFinalized) {
             }
         }
 
-        $prohibitedCategories = [regex]::Matches(
-            $target.Body,
-            '(?im)^\s*#{2,6}\s+(?<category>Changed|Fixed|Deprecated|Removed|Security|Compatibility)\s*:?[ \t]*$') |
-            ForEach-Object { $_.Groups['category'].Value }
-        if ($prohibitedCategories.Count -gt 0) {
-            throw "First-release notes contain non-Added release categories: $($prohibitedCategories -join ', ')."
+        $unexpectedCategories = @($releaseHeadings | Where-Object { $_ -cne 'Added' })
+        if ($unexpectedCategories.Count -gt 0) {
+            throw "First-release notes contain non-Added release categories: $($unexpectedCategories -join ', ')."
         }
     }
 

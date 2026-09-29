@@ -1,8 +1,8 @@
 # Restore compatibility evidence
 
-This record captures restore-framework compatibility and assets-format evidence from controlled candidate runs. The exact
-candidate SHA, command durations, and current platform status belong in the candidate handoff; the examples below are
-not a claim that a later checkout has the same state.
+This record captures restore-framework compatibility and assets-format evidence from controlled runs. The exact commit,
+command durations, and current platform status are run-specific metadata; the examples below describe the controlled
+inputs and observed results and do not claim that a later checkout has the same state.
 
 ## Framework reconciliation
 
@@ -40,6 +40,6 @@ Observed results were formats 3, 3, 3, 3, and 4 respectively. SDK `10.0.401` the
 
 ## Interpretation
 
-Native format-4 generation under the pinned SDK remains an explicitly documented environment distinction. Candidate
-acceptance accounting is maintained against the read-only first-release criteria for the exact reviewed SHA and must not be
-inferred from this reusable restore evidence alone.
+Native format-4 generation under the pinned SDK remains an explicitly documented environment distinction. This reusable
+restore evidence should be considered together with the exact repository state and current validation results; it is not
+by itself evidence about a later checkout.

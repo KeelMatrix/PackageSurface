@@ -437,6 +437,7 @@ static void RunBaselineTransactionRegression(string parent)
     Require(CommandLine.Run(new[] { "baseline", assets, "--output", baseline, "--no-telemetry" }) == 0,
         "The transaction baseline seed did not succeed.");
     var approved = File.ReadAllBytes(baseline);
+    RunTerminalIncompleteReportRegression(root);
 
     var aliasedAssets = File.ReadAllBytes(assets);
     Require(CaptureCommand("baseline", assets, "--output", assets, "--no-telemetry").ExitCode == 2,
@@ -596,6 +597,34 @@ static void RunBaselineTransactionRegression(string parent)
     }
 
     RunReachablePackageAliasRegression(parent);
+}
+
+static void RunTerminalIncompleteReportRegression(string parent)
+{
+    var root = Path.Combine(parent, "late-terminal-incomplete");
+    var cache = Path.Combine(root, "cache");
+    var obj = Path.Combine(root, "obj");
+    Directory.CreateDirectory(obj);
+    var assets = Path.Combine(obj, "project.assets.json");
+    var baseline = Path.Combine(root, "approved.json");
+    WriteAssets(assets, cache, "Late.Strict.Package", new List<string> { "build/late.targets" }, createFiles: true);
+    File.WriteAllText(Path.Combine(cache, "Late.Strict.Package", "1.0.0", "build", "late.targets"), "<Project />");
+    Require(CommandLine.Run(new[] { "baseline", assets, "--output", baseline, "--no-telemetry" }) == 0,
+        "The late strict-content baseline seed did not succeed.");
+
+    foreach (var format in new[] { "text", "json", "sarif" })
+    {
+        var result = CaptureCommand("check", assets, "--baseline", baseline, "--strict-content", "--format", format, "--no-telemetry");
+        Require(result.ExitCode == 2 && result.Output.Contains("PS007", StringComparison.Ordinal),
+            $"Late strict-baseline mismatch did not return PS007 for {format}.");
+        AssertNoSuccessfulSurfaceOutput(result.Output, format, "late strict-baseline mismatch");
+        if (format.Equals("json", StringComparison.Ordinal))
+        {
+            using var document = JsonDocument.Parse(result.Output);
+            Require(document.RootElement.GetProperty("incompleteReasons").GetArrayLength() > 0,
+                "Late strict-baseline mismatch omitted incompleteReasons from JSON.");
+        }
+    }
 }
 
 static void RunPackageIdentityAndPathRegression()
@@ -1105,6 +1134,34 @@ static void RunNestedPhaseMatrixRegression(string scratch)
         var entries = result.Entries.Where(candidate => candidate.PackageRelativePath.Equals(path, StringComparison.OrdinalIgnoreCase)).ToArray();
         Require(entries.Length > 0 && entries.All(entry => entry.Active && entry.Sha256 is not null), $"Nested phase matrix descendant '{path}' was not active and fingerprinted.");
     }
+
+    var rootProps = Path.Combine(packageRoot, "build", "Root.props");
+    File.WriteAllText(Path.Combine(packageRoot, "build", "Helper.targets"), "<Project />");
+    File.WriteAllText(rootProps, "<Project><Import Project=\"Helper.targets\" Condition=\"'$(TargetFramework)' != '.NETCoreApp,Version=v8.0'\" /></Project>");
+    var literalAlias = ResolvedGraphClassifier.Analyze(assets, root, strictContent: true);
+    Require(literalAlias.IsComplete && literalAlias.Entries.Any(entry => entry.PackageRelativePath.Equals("build/Helper.targets", StringComparison.OrdinalIgnoreCase) && entry.Active),
+        "A literal framework alias was normalized instead of compared with MSBuild string semantics: entries=" + string.Join(" | ", literalAlias.Entries.Select(entry => $"{entry.PackageRelativePath}:{entry.Active}")) + " reasons=" + string.Join(" | ", literalAlias.IncompleteReasons));
+
+    File.WriteAllText(rootProps, "<Project><Import Project=\"Helper.targets\" Condition=\"'$(TargetFramework)' == '$(TargetFramework)'\" /></Project>");
+    var propertyReference = ResolvedGraphClassifier.Analyze(assets, root, strictContent: true);
+    Require(propertyReference.IsComplete && propertyReference.Entries.Any(entry => entry.PackageRelativePath.Equals("build/Helper.targets", StringComparison.OrdinalIgnoreCase) && entry.Active),
+        "A supported property reference on the right side of a condition was not resolved.");
+
+    File.WriteAllText(rootProps, "<Project><Import Project=\"Helper.targets\" Condition=\"&quot;$( TargetFramework )&quot; == &quot;net8.0&quot; AND ('$(TargetFramework)' != 'net9.0' OR '$(TargetFramework)' == 'net8.0')\" /></Project>");
+    var quotedBoolean = ResolvedGraphClassifier.Analyze(assets, root, strictContent: true);
+    Require(quotedBoolean.IsComplete && quotedBoolean.Entries.Any(entry => entry.PackageRelativePath.Equals("build/Helper.targets", StringComparison.OrdinalIgnoreCase) && entry.Active),
+        "Quoted or nested AND/OR TargetFramework conditions were not evaluated with the supported string grammar.");
+
+    var outerProps = Path.Combine(packageRoot, "buildMultiTargeting", "Outer.props");
+    File.WriteAllText(outerProps, "<Project><Import Project=\"OuterHelper.targets\" Condition=\"'$(TargetFramework)' == ''\" /></Project>");
+    var outerBuild = ResolvedGraphClassifier.Analyze(assets, root, strictContent: true);
+    Require(outerBuild.IsComplete && outerBuild.Entries.Any(entry => entry.PackageRelativePath.Equals("buildMultiTargeting/OuterHelper.targets", StringComparison.OrdinalIgnoreCase) && entry.Active),
+        "Outer-build TargetFramework condition context was not evaluated independently from target-build context.");
+
+    File.WriteAllText(rootProps, "<Project><Import Project=\"Helper.targets\" Condition=\"'$(TargetFramework)' == '$(UnsupportedConditionProperty)'\" /></Project>");
+    var unsupportedExpansion = ResolvedGraphClassifier.Analyze(assets, root, strictContent: true);
+    Require(!unsupportedExpansion.IsComplete && unsupportedExpansion.IncompleteReasons.Any(reason => reason.Contains("unsupported property expansion", StringComparison.OrdinalIgnoreCase)),
+        "An unsupported condition property expansion was treated as a known false branch.");
 }
 
 static void RunImportEdgeBudgetRegression(string scratch)
@@ -2394,6 +2451,57 @@ static void RunPackageFoldersValidationRegression(string assets, string scratch)
     {
         File.Delete(fallbackPath);
     }
+
+    var absoluteFolderPath = Path.Combine(scratch, "PRIVATE_CACHE_MARKER");
+    var mixedPath = Path.Combine(Path.GetDirectoryName(assets)!, "package-folders-mixed-invalid.assets.json");
+    var mixed = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
+    mixed["packageFolders"] = new JsonObject
+    {
+        [Path.GetFullPath(cache)] = new JsonObject(),
+        [absoluteFolderPath] = null
+    };
+    File.WriteAllText(mixedPath, mixed.ToJsonString());
+    try
+    {
+        foreach (var format in new[] { "text", "json", "sarif" })
+        {
+            var result = CaptureCommand("scan", mixedPath, "--format", format, "--no-telemetry");
+            Require(result.ExitCode == 2 && !result.Output.Contains(absoluteFolderPath, StringComparison.OrdinalIgnoreCase),
+                $"Mixed valid/invalid packageFolders leaked its absolute cache path in {format} output.");
+            AssertNoSuccessfulSurfaceOutput(result.Output, format, "mixed invalid packageFolders");
+        }
+    }
+    finally
+    {
+        File.Delete(mixedPath);
+    }
+
+    foreach (var marker in new[]
+    {
+        "/home/PRIVATE_CACHE_MARKER",
+        "C:\\PRIVATE_CACHE_MARKER",
+        "ARBITRARY_PRIVATE_MEMBER_MARKER"
+    })
+    {
+        var structuralPath = Path.Combine(Path.GetDirectoryName(assets)!, "package-folders-structural-marker.assets.json");
+        var original = File.ReadAllText(assets);
+        var property = JsonSerializer.Serialize(marker);
+        File.WriteAllText(structuralPath, "{" + property + ":true," + property + ":false," + original.TrimStart()[1..]);
+        try
+        {
+            foreach (var format in new[] { "text", "json", "sarif" })
+            {
+                var result = CaptureCommand("scan", structuralPath, "--format", format, "--no-telemetry");
+                Require(result.ExitCode == 2 && !result.Output.Contains(marker, StringComparison.OrdinalIgnoreCase),
+                    $"Duplicate/unknown path-marked restore members leaked in {format} output.");
+                AssertNoSuccessfulSurfaceOutput(result.Output, format, "path-marked restore members");
+            }
+        }
+        finally
+        {
+            File.Delete(structuralPath);
+        }
+    }
 }
 
 static void AssertFormat4DependencyGroupFailure(string assets, string baseline)
@@ -3475,7 +3583,14 @@ static void RunReachabilityClosureRegression(string scratch)
     var projectReferenceKey = "Referenced.Project/1.0.0";
     rootedDocument["targets"]!["net8.0"]![projectReferenceKey] = new JsonObject { ["dependencies"] = new JsonObject { ["Project.Root"] = "1.0.0" } };
     rootedDocument["libraries"]![projectReferenceKey] = new JsonObject { ["type"] = "project", ["path"] = "../Referenced.Project", ["msbuildProject"] = "../Referenced.Project/Referenced.Project.csproj" };
-    AddPackageToAssets(rootedDocument, rootedCache, "Project.Root", new List<string> { "tools/project-root.ps1" }, new JsonObject { ["tools"] = new JsonObject { ["tools/project-root.ps1"] = new JsonObject() } });
+    var projectReferenceAnalyzer = "analyzers/dotnet/cs/project-reference.dll";
+    AddPackageToAssets(rootedDocument, rootedCache, "Project.Root", new List<string> { "tools/project-root.ps1", projectReferenceAnalyzer }, new JsonObject
+    {
+        ["tools"] = new JsonObject { ["tools/project-root.ps1"] = new JsonObject() },
+        ["analyzers"] = new JsonObject { [projectReferenceAnalyzer] = new JsonObject() }
+    });
+    var projectReferenceAnalyzerPath = Path.Combine(rootedCache, "Project.Root", "1.0.0", projectReferenceAnalyzer.Replace('/', Path.DirectorySeparatorChar));
+    File.Copy(typeof(ResolvedGraphClassifier).Assembly.Location, projectReferenceAnalyzerPath, overwrite: true);
     File.WriteAllText(rootedAssets, rootedDocument.ToJsonString());
     var rootedResult = ResolvedGraphClassifier.Analyze(rootedAssets, rootedRoot, strictContent: false);
     Require(rootedResult.IsComplete && rootedResult.ResolvedPackageCount == 5,
@@ -3483,6 +3598,8 @@ static void RunReachabilityClosureRegression(string scratch)
     Require(rootedResult.Entries.Any(entry => entry.PackageId == "Chain.Leaf" && entry.Relationship == "transitive") &&
             rootedResult.Entries.Any(entry => entry.PackageId == "Project.Root" && entry.Relationship == "transitive"),
         "Reachable transitive and project-reference packages were not classified with the expected relationship.");
+    Require(rootedResult.Entries.Any(entry => entry.PackageId == "Project.Root" && entry.Capability == CapabilityKind.CompilerExtension && entry.Active),
+        "An analyzer exported only through a project-reference root was not activated: " + string.Join(" | ", rootedResult.Entries.Select(entry => $"{entry.PackageId}:{entry.Capability}:{entry.Active}:{entry.PackageRelativePath}")) + " reasons=" + string.Join(" | ", rootedResult.IncompleteReasons));
 
     var ridRoot = Path.Combine(scratch, "reachability-rid");
     var ridObj = Path.Combine(ridRoot, "obj");

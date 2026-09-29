@@ -252,6 +252,82 @@ public sealed record ProbeResult(
 }
 
 /// <summary>
+/// Applies the package-relative diagnostic boundary to every validation reason
+/// and exception message before it can reach a report or stderr.
+/// </summary>
+public static class DiagnosticDataPolicy
+{
+    public const string GenericIncompleteReason = "The input, baseline, or restore evidence could not be analyzed completely.";
+
+    public static IReadOnlyList<string> NormalizeReasons(IEnumerable<string> reasons) =>
+        reasons.Select(SanitizeReason)
+            .Where(reason => reason.Length > 0)
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+    public static string SafeExceptionMessage(Exception exception) =>
+        exception is InvalidDataException && !ContainsAbsolutePathMarker(exception.Message)
+            ? SanitizeReason(exception.Message)
+            : GenericIncompleteReason;
+
+    public static string SanitizeReason(string reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason) || ContainsAbsolutePathMarker(reason))
+        {
+            return GenericIncompleteReason;
+        }
+
+        if (ContainsUntrustedMemberName(reason))
+        {
+            if (reason.Contains("unknown", StringComparison.OrdinalIgnoreCase)) return "Restore evidence contains an unknown metadata member.";
+            if (reason.Contains("non-canonical", StringComparison.OrdinalIgnoreCase)) return "Restore evidence contains a non-canonical metadata member spelling.";
+            return "Restore evidence contains duplicate or case-variant metadata members.";
+        }
+
+        return reason.Trim();
+    }
+
+    private static bool ContainsUntrustedMemberName(string value)
+    {
+        var memberName = value.Contains("property", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("field", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("member", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("element", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("attribute", StringComparison.OrdinalIgnoreCase);
+        var failureKind = value.Contains("unknown", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("duplicate", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("case-variant", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("non-canonical", StringComparison.OrdinalIgnoreCase);
+        return memberName && failureKind;
+    }
+
+    private static bool ContainsAbsolutePathMarker(string value)
+    {
+        for (var index = 0; index < value.Length; index++)
+        {
+            if (index + 2 < value.Length && char.IsLetter(value[index]) && value[index + 1] == ':' &&
+                (value[index + 2] == '\\' || value[index + 2] == '/'))
+            {
+                return true;
+            }
+
+            if (value[index] == '\\' && index + 1 < value.Length && value[index + 1] == '\\')
+            {
+                return true;
+            }
+
+            if (value[index] != '/') continue;
+            var atBoundary = index == 0 || char.IsWhiteSpace(value[index - 1]) ||
+                value[index - 1] is '\'' or '\"' or '(' or '[' or ':' or '=';
+            if (atBoundary) return true;
+        }
+
+        return false;
+    }
+}
+
+/// <summary>
 /// Cumulative safety budget shared by every analysis started for one CLI invocation.
 /// </summary>
 public sealed class AnalysisBudget

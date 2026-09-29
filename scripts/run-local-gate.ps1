@@ -410,6 +410,73 @@ try {
         & dotnet restore $dependencyProjectFile --configfile $nugetConfig --packages $shippingPackages --force-evaluate | Out-Null
     }
 
+    $projectReferenceProject = Join-Path $root 'fixtures/consumer/ProjectReferenceAnalyzer'
+    $projectReferenceFile = Join-Path $projectReferenceProject 'ProjectReferenceAnalyzer.csproj'
+    $projectReferenceBaseline = Join-Path $scratch 'project-reference-baseline.json'
+    Invoke-GateStep 'installed project-reference analyzer baseline' { & $tool baseline $projectReferenceProject --output $projectReferenceBaseline --strict-content --format json --no-telemetry }
+    $projectReferenceBaselineDocument = Get-Content -LiteralPath $projectReferenceBaseline -Raw | ConvertFrom-Json
+    if (@($projectReferenceBaselineDocument.entries | Where-Object { $_.capability -eq 'CompilerExtension' -and $_.active }).Count -eq 0) {
+        throw 'Installed tool did not activate the analyzer exported only through a project reference.'
+    }
+    $projectReferenceNoAnalyzerBaseline = Join-Path $scratch 'project-reference-no-analyzer-baseline.json'
+    $projectReferenceAddBackup = Join-Path $scratch 'ProjectReferenceAnalyzer.add.backup'
+    Copy-Item -LiteralPath $projectReferenceFile -Destination $projectReferenceAddBackup -Force
+    try {
+        $projectReferenceWithoutAnalyzer = Get-Content -LiteralPath $projectReferenceFile -Raw
+        $projectReferenceWithoutAnalyzer = $projectReferenceWithoutAnalyzer.Replace('    <ProjectReference Include="..\ReferencedAnalyzer\ReferencedAnalyzer.csproj" />', '', [StringComparison]::Ordinal)
+        [IO.File]::WriteAllText($projectReferenceFile, $projectReferenceWithoutAnalyzer, [Text.UTF8Encoding]::new($false))
+        Invoke-GateStep 'installed project-reference removal restore' { & dotnet restore $projectReferenceFile --configfile $nugetConfig --packages $shippingPackages --force-evaluate }
+        Invoke-GateStep 'installed project-reference no-analyzer baseline' { & $tool baseline $projectReferenceProject --output $projectReferenceNoAnalyzerBaseline --strict-content --format json --no-telemetry }
+    }
+    finally {
+        Copy-Item -LiteralPath $projectReferenceAddBackup -Destination $projectReferenceFile -Force
+        & dotnet restore $projectReferenceFile --configfile $nugetConfig --packages $shippingPackages --force-evaluate | Out-Null
+    }
+    $projectReferenceAdditionOutput = @(& $tool check $projectReferenceProject --baseline $projectReferenceNoAnalyzerBaseline --strict-content --format json --no-telemetry 2>&1)
+    $projectReferenceAdditionExitCode = $LASTEXITCODE
+    if ($projectReferenceAdditionExitCode -ne 1 -or -not (($projectReferenceAdditionOutput -join [Environment]::NewLine).Contains('PS002', [StringComparison]::Ordinal))) {
+        throw 'Installed tool did not report an analyzer difference when the project reference was added.'
+    }
+    Write-Output 'PROJECT_REFERENCE_ANALYZER_ADD=PASS installed tool detects the analyzer exported when the project reference is added.'
+    $projectReferenceAssets = Join-Path $projectReferenceProject 'obj/project.assets.json'
+    $projectReferenceAssetsDocument = Get-Content -LiteralPath $projectReferenceAssets -Raw | ConvertFrom-Json
+    $projectReferenceFolder = @($projectReferenceAssetsDocument.packageFolders.psobject.Properties.Name | Select-Object -First 1)
+    $projectReferenceLibrary = $projectReferenceAssetsDocument.libraries.psobject.Properties['keelmatrix.phase0.compilerextension/1.0.0']
+    if ($null -eq $projectReferenceLibrary) { throw 'Project-reference analyzer package is missing from the restored graph.' }
+    $projectReferenceAnalyzer = Join-Path (Join-Path $projectReferenceFolder $projectReferenceLibrary.Value.path) 'analyzers/dotnet/cs/KeelMatrix.Phase0.SourceGeneratorStyle.dll'
+    $projectReferenceAnalyzerBackup = Join-Path $scratch 'project-reference-analyzer.backup'
+    Copy-Item -LiteralPath $projectReferenceAnalyzer -Destination $projectReferenceAnalyzerBackup -Force
+    try {
+        [IO.File]::AppendAllText($projectReferenceAnalyzer, "`nproject-reference-content-change", [Text.UTF8Encoding]::new($false))
+        $projectReferenceChangeOutput = @(& $tool check $projectReferenceProject --baseline $projectReferenceBaseline --strict-content --format json --no-telemetry 2>&1)
+        $projectReferenceChangeExitCode = $LASTEXITCODE
+        if ($projectReferenceChangeExitCode -ne 1 -or -not (($projectReferenceChangeOutput -join [Environment]::NewLine).Contains('PS005', [StringComparison]::Ordinal))) {
+            throw 'Installed tool did not report PS005 for changed project-reference analyzer content.'
+        }
+        Write-Output 'PROJECT_REFERENCE_ANALYZER_STRICT=PASS active analyzer addition and content change are enforced by the installed tool.'
+    }
+    finally { Copy-Item -LiteralPath $projectReferenceAnalyzerBackup -Destination $projectReferenceAnalyzer -Force }
+
+    $projectReferenceFileBackup = Join-Path $scratch 'ProjectReferenceAnalyzer.csproj.backup'
+    Copy-Item -LiteralPath $projectReferenceFile -Destination $projectReferenceFileBackup -Force
+    try {
+        $projectReferenceText = Get-Content -LiteralPath $projectReferenceFile -Raw
+        $projectReferenceText = $projectReferenceText.Replace('<ProjectReference Include="..\ReferencedAnalyzer\ReferencedAnalyzer.csproj" />', '<ProjectReference Include="..\ReferencedAnalyzer\ReferencedAnalyzer.csproj" ExcludeAssets="analyzers" />', [StringComparison]::Ordinal)
+        [IO.File]::WriteAllText($projectReferenceFile, $projectReferenceText, [Text.UTF8Encoding]::new($false))
+        Invoke-GateStep 'installed project-reference analyzer exclusion restore' { & dotnet restore $projectReferenceFile --configfile $nugetConfig --packages $shippingPackages --force-evaluate }
+        $projectReferenceExcludeOutput = @(& $tool scan $projectReferenceProject --format json --no-telemetry 2>&1)
+        $projectReferenceExcludeExitCode = $LASTEXITCODE
+        $projectReferenceExcludeDocument = ($projectReferenceExcludeOutput -join [Environment]::NewLine) | ConvertFrom-Json
+        if ($projectReferenceExcludeExitCode -ne 0 -or @($projectReferenceExcludeDocument.entries | Where-Object { $_.capability -eq 'CompilerExtension' -and $_.active }).Count -ne 0) {
+            throw 'Installed tool did not honor ExcludeAssets=analyzers on a project reference.'
+        }
+        Write-Output 'PROJECT_REFERENCE_ANALYZER_EXCLUDE=PASS project-reference analyzer exclusion is enforced by the installed tool.'
+    }
+    finally {
+        Copy-Item -LiteralPath $projectReferenceFileBackup -Destination $projectReferenceFile -Force
+        & dotnet restore $projectReferenceFile --configfile $nugetConfig --packages $shippingPackages --force-evaluate | Out-Null
+    }
+
     $incompleteRoot = Join-Path $scratch 'incomplete'
     New-Item -ItemType Directory -Force -Path $incompleteRoot | Out-Null
     Invoke-GateStep 'incomplete restore fail-closed' { & $tool check $incompleteRoot --baseline $baselineA --format text --no-telemetry } 2

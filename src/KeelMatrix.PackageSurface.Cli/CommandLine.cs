@@ -15,7 +15,7 @@ public static class CommandLine
     private const long MaxOutputBytes = 16 * 1024 * 1024;
     private const long MaxInputBytes = 16 * 1024 * 1024;
     private const long MaxTotalInputBytes = 128 * 1024 * 1024;
-    private static readonly string[] GenericIncompleteReasons = { "The input, baseline, or restore evidence could not be analyzed completely." };
+    private static readonly string[] GenericIncompleteReasons = { DiagnosticDataPolicy.GenericIncompleteReason };
     public const string ToolVersion = "0.1.0";
 
     public static int Run(string[] args)
@@ -85,14 +85,13 @@ public static class CommandLine
             }
 
             var incomplete = diagnostics.Any(diagnostic => diagnostic.Id == "PS007");
-            var report = ReportDocument.Create(options.Command, current, diagnostics);
             try
             {
                 if (options.Command == CommandKind.Baseline && !incomplete)
                 {
                     try
                     {
-                        report.EnsureOutputWithinLimit(MaxOutputBytes);
+                        ReportDocument.EnsureOutputWithinLimit(current, diagnostics, MaxOutputBytes);
                         baselineTransaction!.Begin();
                         BaselineDocument.Write(options.OutputPath!, current);
                     }
@@ -101,10 +100,13 @@ public static class CommandLine
                         baselineTransaction!.Rollback();
                         diagnostics.Add(Diagnostic.Create("PS007", "The baseline could not be persisted after validating the analyzed surface."));
                         incomplete = true;
-                        report = ReportDocument.Create(options.Command, current, diagnostics);
                     }
                 }
 
+                // The terminal result is normalized only after every command
+                // status mutation, including persistence and strict-policy
+                // failures, has completed.
+                var report = ReportDocument.Create(options.Command, current, diagnostics);
                 WriteOutput(report, options.Format);
                 baselineTransaction?.Commit();
             }
@@ -131,7 +133,7 @@ public static class CommandLine
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or ArgumentException or JsonException or NotSupportedException or InvalidOperationException)
         {
-            var message = SafeFailureMessage(ex);
+            var message = DiagnosticDataPolicy.SafeExceptionMessage(ex);
             var report = ReportDocument.Create(
                 options.Command,
                 new SurfaceSnapshot(Array.Empty<SurfaceEntry>(), GenericIncompleteReasons, options.StrictContent, 0),
@@ -195,19 +197,6 @@ public static class CommandLine
         }
 
         return SurfaceSnapshot.Create(entries, reasons, strictContent, resolvedPackages);
-    }
-
-    private static string SafeFailureMessage(Exception exception)
-    {
-        if (exception is InvalidDataException invalid &&
-            !invalid.Message.Contains(Path.DirectorySeparatorChar, StringComparison.Ordinal) &&
-            !invalid.Message.Contains(Path.AltDirectorySeparatorChar, StringComparison.Ordinal) &&
-            !invalid.Message.Contains(":\\", StringComparison.Ordinal))
-        {
-            return invalid.Message;
-        }
-
-        return "The input, baseline, or restore evidence could not be analyzed completely.";
     }
 
     private static Action? TelemetryHook { get; set; }
@@ -587,8 +576,10 @@ public sealed record Options(
         on all three platforms. On macOS, only the standard root-level /var to /private/var
         alias is ignored; caller-controlled root aliases and links nested below /var remain
         rejected. Baseline JSON uses exact camelCase property names, named string
-        enums, and rejects duplicate or unknown members. It does not
-        evaluate MSBuild conditions, execute package code, or crawl the global package cache.
+        enums, and rejects duplicate or unknown members. It does not execute full MSBuild
+        evaluation, execute package code, or crawl the global package cache. It proves only
+        the bounded condition grammar documented below; unsupported expansions stay unknown
+        and produce PS007.
         """;
 
     public static ParseResult Parse(string[] args)
@@ -1159,13 +1150,13 @@ public sealed record Diagnostic(
     CapabilityKind? Capability = null)
 {
     public static Diagnostic Create(string id, string message, string? project = null, string? packageId = null, string? path = null) =>
-        new(id, id switch { "PS001" => "NewCapability", "PS002" => "NewActiveAsset", "PS003" => "BuildSurfaceChanged", "PS004" => "CompilerSurfaceChanged", "PS005" => "ContentFingerprintChanged", "PS006" => "NativeSurfaceChanged", _ => "AnalysisIncomplete" }, message, id == "PS007" ? "error" : "warning", project, packageId, path);
+        new(id, id switch { "PS001" => "NewCapability", "PS002" => "NewActiveAsset", "PS003" => "BuildSurfaceChanged", "PS004" => "CompilerSurfaceChanged", "PS005" => "ContentFingerprintChanged", "PS006" => "NativeSurfaceChanged", _ => "AnalysisIncomplete" }, DiagnosticDataPolicy.SanitizeReason(message), id == "PS007" ? "error" : "warning", project, packageId, path);
 
     public static Diagnostic ForEntry(string id, string message, SurfaceEntry entry) =>
-        new(id, id switch { "PS001" => "NewCapability", "PS002" => "NewActiveAsset", "PS003" => "BuildSurfaceChanged", "PS004" => "CompilerSurfaceChanged", "PS005" => "ContentFingerprintChanged", "PS006" => "NativeSurfaceChanged", _ => "AnalysisIncomplete" }, message, id == "PS007" ? "error" : "warning", entry.Project, entry.PackageId, entry.PackageRelativePath, entry.Version, entry.Relationship, entry.Context, entry.TargetFramework, entry.RuntimeIdentifier, entry.Capability);
+        new(id, id switch { "PS001" => "NewCapability", "PS002" => "NewActiveAsset", "PS003" => "BuildSurfaceChanged", "PS004" => "CompilerSurfaceChanged", "PS005" => "ContentFingerprintChanged", "PS006" => "NativeSurfaceChanged", _ => "AnalysisIncomplete" }, DiagnosticDataPolicy.SanitizeReason(message), id == "PS007" ? "error" : "warning", entry.Project, entry.PackageId, entry.PackageRelativePath, entry.Version, entry.Relationship, entry.Context, entry.TargetFramework, entry.RuntimeIdentifier, entry.Capability);
 
     public static Diagnostic ForBaseline(string id, string message, BaselineEntry entry) =>
-        new(id, id switch { "PS001" => "NewCapability", "PS002" => "NewActiveAsset", "PS003" => "BuildSurfaceChanged", "PS004" => "CompilerSurfaceChanged", "PS005" => "ContentFingerprintChanged", "PS006" => "NativeSurfaceChanged", _ => "AnalysisIncomplete" }, message, id == "PS007" ? "error" : "warning", entry.Project, entry.PackageId, entry.PackageRelativePath, entry.Version, entry.Relationship, entry.Context, entry.TargetFramework, entry.RuntimeIdentifier, entry.Capability);
+        new(id, id switch { "PS001" => "NewCapability", "PS002" => "NewActiveAsset", "PS003" => "BuildSurfaceChanged", "PS004" => "CompilerSurfaceChanged", "PS005" => "ContentFingerprintChanged", "PS006" => "NativeSurfaceChanged", _ => "AnalysisIncomplete" }, DiagnosticDataPolicy.SanitizeReason(message), id == "PS007" ? "error" : "warning", entry.Project, entry.PackageId, entry.PackageRelativePath, entry.Version, entry.Relationship, entry.Context, entry.TargetFramework, entry.RuntimeIdentifier, entry.Capability);
 }
 
 public static class DiffEngine
@@ -1215,24 +1206,52 @@ public sealed record ReportDocument(
     IReadOnlyList<Diagnostic> Diagnostics,
     IReadOnlyList<string> IncompleteReasons)
 {
-    public static ReportDocument Create(CommandKind command, SurfaceSnapshot snapshot, IReadOnlyList<Diagnostic> diagnostics) => new(CommandLineSchema.Version, command.ToString().ToLowerInvariant(), snapshot.StrictContent, snapshot.Entries, diagnostics, snapshot.IncompleteReasons);
+    public static ReportDocument Create(CommandKind command, SurfaceSnapshot snapshot, IReadOnlyList<Diagnostic> diagnostics)
+    {
+        var normalizedDiagnostics = diagnostics
+            .Select(diagnostic => diagnostic with { Message = DiagnosticDataPolicy.SanitizeReason(diagnostic.Message) })
+            .ToArray();
+        var incompleteDiagnostics = normalizedDiagnostics
+            .Where(diagnostic => diagnostic.Id == "PS007")
+            .ToArray();
+        if (incompleteDiagnostics.Length > 0)
+        {
+            var incompleteReasons = DiagnosticDataPolicy.NormalizeReasons(
+                snapshot.IncompleteReasons.Concat(incompleteDiagnostics.Select(diagnostic => diagnostic.Message)));
+            return new(CommandLineSchema.Version, command.ToString().ToLowerInvariant(), snapshot.StrictContent,
+                Array.Empty<SurfaceEntry>(), incompleteDiagnostics, incompleteReasons);
+        }
 
-    public void EnsureOutputWithinLimit(long limit)
+        return new(CommandLineSchema.Version, command.ToString().ToLowerInvariant(), snapshot.StrictContent,
+            snapshot.Entries, normalizedDiagnostics, DiagnosticDataPolicy.NormalizeReasons(snapshot.IncompleteReasons));
+    }
+
+    public static void EnsureOutputWithinLimit(SurfaceSnapshot snapshot, IReadOnlyList<Diagnostic> diagnostics, long limit) =>
+        EnsureOutputWithinLimit(snapshot.Entries, diagnostics, snapshot.IncompleteReasons, limit);
+
+    public void EnsureOutputWithinLimit(long limit) =>
+        EnsureOutputWithinLimit(Entries, Diagnostics, IncompleteReasons, limit);
+
+    private static void EnsureOutputWithinLimit(
+        IReadOnlyList<SurfaceEntry> entries,
+        IReadOnlyList<Diagnostic> diagnostics,
+        IReadOnlyList<string> incompleteReasons,
+        long limit)
     {
         long estimated = 512;
-        foreach (var entry in Entries)
+        foreach (var entry in entries)
         {
             estimated += 768L + (entry.Project?.Length ?? 0) + entry.PackageId.Length + entry.Version.Length + entry.PackageRelativePath.Length;
             if (estimated > limit) throw new InvalidDataException("The report exceeds the supported output size limit.");
         }
 
-        foreach (var diagnostic in Diagnostics)
+        foreach (var diagnostic in diagnostics)
         {
             estimated += 512L + diagnostic.Message.Length + (diagnostic.Project?.Length ?? 0) + (diagnostic.PackageId?.Length ?? 0) + (diagnostic.PackageRelativePath?.Length ?? 0);
             if (estimated > limit) throw new InvalidDataException("The report exceeds the supported output size limit.");
         }
 
-        estimated += IncompleteReasons.Sum(reason => 128L + reason.Length);
+        estimated += incompleteReasons.Sum(reason => 128L + reason.Length);
         if (estimated > limit) throw new InvalidDataException("The report exceeds the supported output size limit.");
     }
 

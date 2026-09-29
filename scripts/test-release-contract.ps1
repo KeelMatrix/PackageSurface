@@ -8,6 +8,7 @@ $workflowDirectory = Join-Path $root '.github/workflows'
 $ciWorkflowPath = Join-Path $workflowDirectory 'ci.yml'
 $releaseWorkflowPath = Join-Path $workflowDirectory 'release.yml'
 $localGatePath = Join-Path $root 'scripts/run-local-gate.ps1'
+$builtCliPath = Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/bin/Release/net8.0/KeelMatrix.PackageSurface.dll'
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('packagesurface-release-contract-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $scratch | Out-Null
 
@@ -134,6 +135,37 @@ try {
     $candidateFirstRelease = "# Changelog`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Initial release capability review.`n"
     [IO.File]::WriteAllText($candidateChangelog, $candidateFirstRelease, [Text.UTF8Encoding]::new($false))
     Assert-ValidationPass 'real project with finalized version-consistent first-release changelog' (Invoke-ReleaseValidation -Version $version -ChangelogPath $candidateChangelog -RequireFinalized -FirstRelease)
+
+    # Compose the same documentation and release-contract checks used by the
+    # publication gate against a concise finalized first-release entry. The
+    # changelog is intentionally not copied into fixed-sentence parity: release
+    # validation owns its semantic/version contract.
+    if (-not (Test-Path -LiteralPath $builtCliPath -PathType Leaf)) { throw 'Built CLI is missing for the composed release-gate test.' }
+    $helpPath = Join-Path $scratch 'built-help.txt'
+    $help = @(& dotnet $builtCliPath --help 2>&1)
+    if ($LASTEXITCODE -ne 0) { throw "Built CLI help failed with exit code $LASTEXITCODE." }
+    [IO.File]::WriteAllText($helpPath, ($help -join [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+
+    $composedRoot = Join-Path $scratch 'composed-release-gate'
+    foreach ($relative in @(
+        'README.md',
+        'CHANGELOG.md',
+        'SECURITY.md',
+        'docs/DEV.md',
+        'src/KeelMatrix.PackageSurface.Cli/README.md',
+        'src/KeelMatrix.PackageSurface.Cli/CommandLine.cs'
+    )) {
+        $destination = Join-Path $composedRoot $relative
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+        Copy-Item -LiteralPath (Join-Path $root $relative) -Destination $destination
+    }
+    Copy-Item -LiteralPath $candidateChangelog -Destination (Join-Path $composedRoot 'CHANGELOG.md') -Force
+    $documentationOutput = @(Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-cli-documentation.ps1') -RepositoryRoot $composedRoot -BuiltHelpTextPath $helpPath 2>&1)
+    $documentationExitCode = $LASTEXITCODE
+    if ($documentationExitCode -ne 0) {
+        throw "Composed release documentation gate failed with exit code ${documentationExitCode}: $($documentationOutput -join [Environment]::NewLine)"
+    }
+    Assert-ValidationPass 'composed finalized first-release gate' (Invoke-ReleaseValidation -Version $version -ChangelogPath (Join-Path $composedRoot 'CHANGELOG.md') -RequireFinalized -FirstRelease)
 
     $wholeWordChangelog = Join-Path $scratch 'CHANGELOG.whole-word.md'
     [IO.File]::WriteAllText($wholeWordChangelog, "# Changelog`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Adds package prefixes and nowhere-only documentation examples.`n", [Text.UTF8Encoding]::new($false))

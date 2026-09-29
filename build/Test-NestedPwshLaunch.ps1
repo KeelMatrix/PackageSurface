@@ -293,6 +293,18 @@ function Get-CSharpCodeMask([string]$Text) {
     return $builder.ToString()
 }
 
+function Normalize-CSharpIdentifierEscapes([string]$Code) {
+    return [regex]::Replace($Code, '\\u([0-9A-Fa-f]{4})|\\U([0-9A-Fa-f]{8})', {
+            param($match)
+            $hex = if ($match.Groups[1].Success) { $match.Groups[1].Value } else { $match.Groups[2].Value }
+            $codePoint = [Convert]::ToInt32($hex, 16)
+            if ($codePoint -gt 0x10FFFF -or ($codePoint -ge 0xD800 -and $codePoint -le 0xDFFF)) {
+                return $match.Value
+            }
+            return [char]::ConvertFromUtf32($codePoint)
+        })
+}
+
 function Get-CSharpInitializerBody([string]$Code, [int]$StartIndex) {
     $openBrace = $Code.IndexOf('{', $StartIndex)
     $semicolon = $Code.IndexOf(';', $StartIndex)
@@ -317,7 +329,7 @@ function Get-CSharpInitializerBody([string]$Code, [int]$StartIndex) {
 
 function Get-CSharpLaunchAudit([string]$Path) {
     $source = [IO.File]::ReadAllText($Path)
-    $code = Get-CSharpCodeMask $source
+    $code = Normalize-CSharpIdentifierEscapes (Get-CSharpCodeMask $source)
     $violations = [System.Collections.Generic.List[string]]::new()
     $constructors = @([regex]::Matches($code, '(?<![\w.])new\s+(?:[A-Za-z_]\w*\.)*ProcessStartInfo\b'))
     $starts = @([regex]::Matches($code, '(?<![\w.:])Process\s*\.\s*Start\s*\('))
@@ -424,6 +436,9 @@ if ($SelfTest) {
         $unsafeParenthesizedCSharpPath = Join-Path $selfTestRoot 'unsafe-parenthesized.cs'
         $unsafeDirectConstructorCSharpPath = Join-Path $selfTestRoot 'unsafe-direct-constructor.cs'
         $unsafeStaticImportCSharpPath = Join-Path $selfTestRoot 'unsafe-static-import.cs'
+        $unsafeEscapedMemberCSharpPath = Join-Path $selfTestRoot 'unsafe-escaped-member.cs'
+        $unsafeLongEscapedMemberCSharpPath = Join-Path $selfTestRoot 'unsafe-long-escaped-member.cs'
+        $safeEscapedMemberCSharpPath = Join-Path $selfTestRoot 'safe-escaped-member.cs'
         $safeCSharpPath = Join-Path $selfTestRoot 'safe.cs'
         $safePath = Join-Path $selfTestRoot 'safe.ps1'
         [IO.File]::WriteAllText($directPath, '& pwsh -NoProfile')
@@ -517,6 +532,27 @@ var startInfo = new ProcessStartInfo("pwsh")
 };
 Start(startInfo);
 '@)
+        [IO.File]::WriteAllText($unsafeEscapedMemberCSharpPath, @'
+using System.Diagnostics;
+var info = GetUnsafeInfo();
+Process.\u0053tart(info);
+static ProcessStartInfo GetUnsafeInfo() => new("pwsh");
+'@)
+        [IO.File]::WriteAllText($unsafeLongEscapedMemberCSharpPath, @'
+using System.Diagnostics;
+var info = GetUnsafeInfo();
+\U00000050rocess.\U00000053tart(info);
+static ProcessStartInfo GetUnsafeInfo() => new("pwsh");
+'@)
+        [IO.File]::WriteAllText($safeEscapedMemberCSharpPath, @'
+using System.Diagnostics;
+var startInfo = new ProcessStartInfo("pwsh")
+{
+    UseShellExecute = false,
+    CreateNoWindow = true
+};
+\u0050rocess.\u0053tart(startInfo);
+'@)
         [IO.File]::WriteAllText($safeCSharpPath, @'
 using System.Diagnostics;
 Process.Start(new System.Diagnostics.ProcessStartInfo("pwsh")
@@ -572,13 +608,19 @@ Process.Start(new System.Diagnostics.ProcessStartInfo("pwsh")
             @{ Name = 'null-forgiving access'; Path = $unsafeNullForgivingCSharpPath; Count = 1 },
             @{ Name = 'parenthesized receiver'; Path = $unsafeParenthesizedCSharpPath; Count = 1 },
             @{ Name = 'direct constructor receiver'; Path = $unsafeDirectConstructorCSharpPath; Count = 1 },
-            @{ Name = 'static import'; Path = $unsafeStaticImportCSharpPath; Count = 2 }
+            @{ Name = 'static import'; Path = $unsafeStaticImportCSharpPath; Count = 2 },
+            @{ Name = 'escaped member with target-typed helper'; Path = $unsafeEscapedMemberCSharpPath; Count = 1 },
+            @{ Name = 'long escaped member with target-typed helper'; Path = $unsafeLongEscapedMemberCSharpPath; Count = 1 }
         )
         foreach ($case in $equivalentLaunchCases) {
             $audit = Get-CSharpLaunchAudit $case.Path
             if ($audit.LaunchCount -ne $case.Count -or @($audit.Violations).Count -eq 0) {
                 throw "The guard self-test did not reject the unsupported $($case.Name) C# process launch form."
             }
+        }
+        $safeEscapedMemberCSharpAudit = Get-CSharpLaunchAudit $safeEscapedMemberCSharpPath
+        if ($safeEscapedMemberCSharpAudit.LaunchCount -ne 2 -or @($safeEscapedMemberCSharpAudit.Violations).Count -ne 0) {
+            throw 'The guard self-test rejected a contained C# process launch with escaped identifiers.'
         }
         $safeCSharpAudit = Get-CSharpLaunchAudit $safeCSharpPath
         if ($safeCSharpAudit.LaunchCount -ne 2 -or @($safeCSharpAudit.Violations).Count -ne 0) {

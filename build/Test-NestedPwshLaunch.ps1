@@ -146,6 +146,236 @@ function Get-LaunchViolations([string]$Path) {
     return $violations.ToArray()
 }
 
+function Get-CSharpCodeMask([string]$Text) {
+    $builder = [Text.StringBuilder]::new($Text.Length)
+    $state = 'Code'
+    $index = 0
+    while ($index -lt $Text.Length) {
+        $character = $Text[$index]
+        $nextCharacter = if ($index + 1 -lt $Text.Length) { $Text[$index + 1] } else { [char]0 }
+        if ($state -eq 'LineComment') {
+            if ($character -eq "`r" -or $character -eq "`n") {
+                [void]$builder.Append($character)
+                $state = 'Code'
+            }
+            else {
+                [void]$builder.Append(' ')
+            }
+            $index++
+            continue
+        }
+        if ($state -eq 'BlockComment') {
+            if ($character -eq '*' -and $nextCharacter -eq '/') {
+                [void]$builder.Append('  ')
+                $index += 2
+                $state = 'Code'
+            }
+            elseif ($character -eq "`r" -or $character -eq "`n") {
+                [void]$builder.Append($character)
+                $index++
+            }
+            else {
+                [void]$builder.Append(' ')
+                $index++
+            }
+            continue
+        }
+        if ($state -eq 'String') {
+            if ($character -eq '\') {
+                [void]$builder.Append(' ')
+                if ($index + 1 -lt $Text.Length) {
+                    if ($Text[$index + 1] -eq "`r" -or $Text[$index + 1] -eq "`n") {
+                        [void]$builder.Append($Text[$index + 1])
+                    }
+                    else {
+                        [void]$builder.Append(' ')
+                    }
+                    $index += 2
+                }
+                else {
+                    $index++
+                }
+            }
+            elseif ($character -eq '"') {
+                [void]$builder.Append(' ')
+                $index++
+                $state = 'Code'
+            }
+            elseif ($character -eq "`r" -or $character -eq "`n") {
+                [void]$builder.Append($character)
+                $index++
+                $state = 'Code'
+            }
+            else {
+                [void]$builder.Append(' ')
+                $index++
+            }
+            continue
+        }
+        if ($state -eq 'VerbatimString') {
+            if ($character -eq '"' -and $nextCharacter -eq '"') {
+                [void]$builder.Append('  ')
+                $index += 2
+            }
+            elseif ($character -eq '"') {
+                [void]$builder.Append(' ')
+                $index++
+                $state = 'Code'
+            }
+            elseif ($character -eq "`r" -or $character -eq "`n") {
+                [void]$builder.Append($character)
+                $index++
+            }
+            else {
+                [void]$builder.Append(' ')
+                $index++
+            }
+            continue
+        }
+        if ($state -eq 'Char') {
+            if ($character -eq '\') {
+                [void]$builder.Append(' ')
+                if ($index + 1 -lt $Text.Length) {
+                    [void]$builder.Append(' ')
+                    $index += 2
+                }
+                else {
+                    $index++
+                }
+            }
+            elseif ($character -eq "'") {
+                [void]$builder.Append(' ')
+                $index++
+                $state = 'Code'
+            }
+            elseif ($character -eq "`r" -or $character -eq "`n") {
+                [void]$builder.Append($character)
+                $index++
+                $state = 'Code'
+            }
+            else {
+                [void]$builder.Append(' ')
+                $index++
+            }
+            continue
+        }
+
+        if ($character -eq '/' -and $nextCharacter -eq '/') {
+            [void]$builder.Append('  ')
+            $index += 2
+            $state = 'LineComment'
+        }
+        elseif ($character -eq '/' -and $nextCharacter -eq '*') {
+            [void]$builder.Append('  ')
+            $index += 2
+            $state = 'BlockComment'
+        }
+        elseif ($character -eq '@' -and $nextCharacter -eq '"') {
+            [void]$builder.Append('  ')
+            $index += 2
+            $state = 'VerbatimString'
+        }
+        elseif ($character -eq '"') {
+            [void]$builder.Append(' ')
+            $index++
+            $state = 'String'
+        }
+        elseif ($character -eq "'") {
+            [void]$builder.Append(' ')
+            $index++
+            $state = 'Char'
+        }
+        else {
+            [void]$builder.Append($character)
+            $index++
+        }
+    }
+    return $builder.ToString()
+}
+
+function Get-CSharpInitializerBody([string]$Code, [int]$StartIndex) {
+    $openBrace = $Code.IndexOf('{', $StartIndex)
+    $semicolon = $Code.IndexOf(';', $StartIndex)
+    if ($openBrace -lt 0 -or ($semicolon -ge 0 -and $semicolon -lt $openBrace)) {
+        return $null
+    }
+
+    $depth = 0
+    for ($index = $openBrace; $index -lt $Code.Length; $index++) {
+        if ($Code[$index] -eq '{') {
+            $depth++
+        }
+        elseif ($Code[$index] -eq '}') {
+            $depth--
+            if ($depth -eq 0) {
+                return $Code.Substring($openBrace + 1, $index - $openBrace - 1)
+            }
+        }
+    }
+    return $null
+}
+
+function Get-CSharpLaunchAudit([string]$Path) {
+    $source = [IO.File]::ReadAllText($Path)
+    $code = Get-CSharpCodeMask $source
+    $violations = [System.Collections.Generic.List[string]]::new()
+    $constructors = @([regex]::Matches($code, '(?<![\w.])new\s+(?:[A-Za-z_]\w*\.)*ProcessStartInfo\b'))
+    $starts = @([regex]::Matches($code, '(?<![\w.])(?:[A-Za-z_]\w*\.)*Process\.Start\s*\('))
+    $safeVariables = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $constructorRecords = [System.Collections.Generic.List[object]]::new()
+
+    foreach ($constructor in $constructors) {
+        $body = Get-CSharpInitializerBody -Code $code -StartIndex $constructor.Index
+        $hasSafeShell = $null -ne $body -and $body -match '(?m)\bUseShellExecute\s*=\s*false\b'
+        $hasNoWindow = $null -ne $body -and $body -match '(?m)\bCreateNoWindow\s*=\s*true\b'
+        if (-not ($hasSafeShell -and $hasNoWindow)) {
+            $lineNumber = 1 + ($source.Substring(0, $constructor.Index) -split "`n").Count - 1
+            [void]$violations.Add("${Path}:$lineNumber`: ProcessStartInfo must set UseShellExecute = false and CreateNoWindow = true")
+        }
+
+        $assignment = [regex]::Match(
+            $code.Substring(0, $constructor.Index),
+            '(?s)(?:\b(?:var|ProcessStartInfo)\s+)?(?<name>[A-Za-z_]\w*)\s*=\s*$')
+        $variableName = if ($assignment.Success) { $assignment.Groups['name'].Value } else { $null }
+        [void]$constructorRecords.Add([pscustomobject]@{
+                Index = $constructor.Index
+                Safe = $hasSafeShell -and $hasNoWindow
+                Variable = $variableName
+            })
+        if ($variableName -and $hasSafeShell -and $hasNoWindow) {
+            [void]$safeVariables.Add($variableName)
+        }
+    }
+
+    foreach ($start in $starts) {
+        $argumentText = $code.Substring($start.Index + $start.Length)
+        $argument = [regex]::Match($argumentText, '^\s*(?<value>[A-Za-z_]\w*)(?:\s*,|\s*\))')
+        if (-not $argument.Success) {
+            $directConstructor = @($constructorRecords | Where-Object {
+                    $_.Index -gt $start.Index -and
+                    $_.Index -lt ($start.Index + $start.Length + 32)
+                } | Select-Object -First 1)
+            if ($directConstructor.Count -gt 0 -and $directConstructor[0].Safe) {
+                continue
+            }
+            $lineNumber = 1 + ($source.Substring(0, $start.Index) -split "`n").Count - 1
+            [void]$violations.Add("${Path}:$lineNumber`: Process.Start must use a contained ProcessStartInfo")
+            continue
+        }
+        $variableName = $argument.Groups['value'].Value
+        if (-not $safeVariables.Contains($variableName)) {
+            $lineNumber = 1 + ($source.Substring(0, $start.Index) -split "`n").Count - 1
+            [void]$violations.Add("${Path}:$lineNumber`: Process.Start argument '$variableName' is not backed by a contained ProcessStartInfo")
+        }
+    }
+
+    return [pscustomobject]@{
+        Path = $Path
+        LaunchCount = $constructors.Count + $starts.Count
+        Violations = $violations.ToArray()
+    }
+}
+
 if ($SelfTest) {
     $selfTestRoot = Join-Path ([IO.Path]::GetTempPath()) "nested-pwsh-guard-$([Guid]::NewGuid().ToString('N'))"
     New-Item -ItemType Directory -Path $selfTestRoot -Force | Out-Null
@@ -156,6 +386,8 @@ if ($SelfTest) {
         $embeddedSafePath = Join-Path $selfTestRoot 'embedded-safe.ps1'
         $splatSafePath = Join-Path $selfTestRoot 'splat-safe.ps1'
         $splatNoNewWindowPath = Join-Path $selfTestRoot 'splat-nonewwindow-safe.ps1'
+        $unsafeCSharpPath = Join-Path $selfTestRoot 'unsafe.cs'
+        $safeCSharpPath = Join-Path $selfTestRoot 'safe.cs'
         $safePath = Join-Path $selfTestRoot 'safe.ps1'
         [IO.File]::WriteAllText($directPath, '& pwsh -NoProfile')
         [IO.File]::WriteAllText($processPath, "Start-Process 'example.exe'")
@@ -181,6 +413,19 @@ $parameters = @{ FilePath = 'example.exe' }
 $parameters.NoNewWindow = $true
 Start-Process @parameters
 '@)
+        [IO.File]::WriteAllText($unsafeCSharpPath, @'
+using System.Diagnostics;
+var startInfo = new ProcessStartInfo("pwsh") { UseShellExecute = true };
+Process.Start(startInfo);
+'@)
+        [IO.File]::WriteAllText($safeCSharpPath, @'
+using System.Diagnostics;
+Process.Start(new System.Diagnostics.ProcessStartInfo("pwsh")
+{
+    UseShellExecute = false,
+    CreateNoWindow = true
+});
+'@)
         [IO.File]::WriteAllText($safePath, "Invoke-NestedPwsh -ArgumentList @('-NoProfile')")
         if (@(Get-LaunchViolations $directPath).Count -eq 0) {
             throw 'The guard self-test did not reject a direct nested PowerShell launch.'
@@ -203,6 +448,14 @@ Start-Process @parameters
         if (@(Get-LaunchViolations $safePath).Count -ne 0) {
             throw 'The guard self-test rejected a helper-mediated launch.'
         }
+        $unsafeCSharpAudit = Get-CSharpLaunchAudit $unsafeCSharpPath
+        if ($unsafeCSharpAudit.LaunchCount -ne 2 -or @($unsafeCSharpAudit.Violations).Count -eq 0) {
+            throw 'The guard self-test did not reject an unsafe C# process launch.'
+        }
+        $safeCSharpAudit = Get-CSharpLaunchAudit $safeCSharpPath
+        if ($safeCSharpAudit.LaunchCount -ne 2 -or @($safeCSharpAudit.Violations).Count -ne 0) {
+            throw 'The guard self-test rejected a contained C# process launch.'
+        }
 
     }
     finally {
@@ -224,6 +477,20 @@ $scriptFiles = Get-ChildItem -LiteralPath $repositoryRoot -Recurse -File -Filter
 $violations = @($scriptFiles | ForEach-Object { Get-LaunchViolations $_.FullName })
 if ($violations.Count -gt 0) {
     throw "Visible child process launch sites must use the shared containment helper."
+}
+
+$csharpFiles = Get-ChildItem -LiteralPath $repositoryRoot -Recurse -File -Filter '*.cs' |
+    Where-Object {
+        $_.FullName -notmatch '[\\/]((\.git)|(bin)|(obj)|(artifacts)|_probe[\\/]corpus)([\\/]|$)'
+    }
+$csharpAudits = @($csharpFiles | ForEach-Object { Get-CSharpLaunchAudit $_.FullName })
+$csharpLaunchCount = ($csharpAudits | ForEach-Object { $_.LaunchCount } | Measure-Object -Sum).Sum
+if ($csharpFiles.Count -eq 0 -or $csharpLaunchCount -eq 0) {
+    throw 'C# process-launch guard found no ProcessStartInfo or Process.Start site to audit.'
+}
+$csharpViolations = @($csharpAudits | ForEach-Object { $_.Violations })
+if ($csharpViolations.Count -gt 0) {
+    throw "C# process-launch sites must use contained ProcessStartInfo instances.`n$($csharpViolations -join [Environment]::NewLine)"
 }
 
 Write-Output 'Nested PowerShell launch guard passed.'

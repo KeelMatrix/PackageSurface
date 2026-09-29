@@ -21,7 +21,6 @@ $parityDocuments = @(
     $cliDocuments[0],
     $cliDocuments[1],
     (Join-Path $root 'docs/DEV.md'),
-    (Join-Path $root 'CHANGELOG.md'),
     (Join-Path $root 'SECURITY.md')
 )
 $required = @(

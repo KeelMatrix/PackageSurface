@@ -83,6 +83,13 @@ foreach ($consumer in $exclusionConsumers) {
     Invoke-Recorded "dotnet restore $project --configfile $root/NuGet.config --force-evaluate" { dotnet restore $project --configfile (Join-Path $root 'NuGet.config') --force-evaluate }
 }
 
+# Keep a real restored project-reference consumer in the permanent corpus. Its
+# analyzer package is reachable only through the referenced project, so this
+# catches any stage that mistakes the package-only projection for the graph.
+$projectReferenceConsumer = 'ProjectReferenceAnalyzer'
+$projectReferenceProject = Join-Path $root "fixtures/consumer/$projectReferenceConsumer/$projectReferenceConsumer.csproj"
+Invoke-Recorded "dotnet restore $projectReferenceProject --configfile $root/NuGet.config --force-evaluate" { dotnet restore $projectReferenceProject --configfile (Join-Path $root 'NuGet.config') --force-evaluate }
+
 $languageConventionScript = Join-Path $root 'scripts/test-language-conventions.ps1'
 Invoke-Recorded "pwsh -NoProfile -File $languageConventionScript" { Invoke-NestedPwsh -NoProfile -File $languageConventionScript }
 
@@ -111,6 +118,14 @@ foreach ($consumer in $exclusionConsumers) {
         throw "$consumer analyzer exclusion regression failed."
     }
 }
+$projectReferenceAssets = Join-Path $root "fixtures/consumer/$projectReferenceConsumer/obj/project.assets.json"
+$projectReferenceRoot = Join-Path $root "fixtures/consumer/$projectReferenceConsumer"
+$projectReferenceProbe = Invoke-Recorded "dotnet run --project $probe --configuration Release --no-build -- $projectReferenceAssets $projectReferenceRoot $compilerApiVersion" { dotnet run --project $probe --configuration Release --no-build -- $projectReferenceAssets $projectReferenceRoot $compilerApiVersion }
+$projectReferenceResult = $projectReferenceProbe.Output.Trim() | ConvertFrom-Json
+if (-not $projectReferenceResult.IsComplete -or @($projectReferenceResult.Entries | Where-Object { $_.Capability -eq 'CompilerExtension' -and $_.Active }).Count -eq 0) {
+    throw 'The real project-reference analyzer consumer did not activate its exported analyzer.'
+}
+Write-Output 'PROJECT_REFERENCE_ANALYZER=PASS exported analyzer is active through the restored project-reference graph.'
 
 $proofScript = Join-Path $root 'scripts/verify-no-execution.ps1'
 Invoke-Recorded "pwsh -NoProfile -File $proofScript" { Invoke-NestedPwsh -NoProfile -File $proofScript }
@@ -316,7 +331,7 @@ $restoreShapeEvidence = 'Admitted restore metadata is validated before graph clo
 $matrix.Add('# Phase 0 corpus matrix')
 $matrix.Add('')
 $matrix.Add('Each supported capability has direct and transitive active/inactive evidence. `ToolOrScriptPresent` is intentionally informational and inactive in every row. `BuildMultiTargeting` is project-level: the generated outer-target import is direct-only under this NuGet convention, so its transitive fixture is explicitly present/inactive.')
-$matrix.Add('Restore evidence coverage: coherent SDK-style `project.assets.json` formats 3 and 4 are supported and verified. One canonical restore-identity index and one direct/project-reference rooted package closure per applicable target graph reconcile framework keys, effective frameworks, target aliases, target/RID keys, dependency groups, and package identities before active filtering; disconnected package nodes or islands, same-ID multi-version target graphs, exact or case-variant duplicate restore-JSON properties, unknown or non-canonical spellings of consumed restore members, and incoherent or malformed identities remain PS007 evidence. Standard SDK restore metadata includes typed `fallbackFolders` and `SdkAnalysisLevel`; package XML keeps the consumed `Import`/`UsingTask`/`Exec`/`Code` contract strict while tolerating standard unconsumed MSBuild elements and attributes. Explicit `x-` JSON extension members and `urn:keelmatrix:packagesurface:extension` XML attributes remain available for unrelated metadata. The `NuGet.Versioning` 7.9.0 parser/comparer governs package keys, roots, imports, baseline provenance, dependency ranges, and format-4 requirements. Project, target-package, and format-4 dependency values use that NuGet-compatible grammar and exactly-one selected-version matching. Format 4 additionally requires matching key/effective/target-alias metadata across the project and restore framework maps, plus complete array-valued project dependency groups.')
+$matrix.Add('Restore evidence coverage: coherent SDK-style `project.assets.json` formats 3 and 4 are supported and verified. One canonical restore-identity index and one direct/project-reference rooted package closure per applicable target graph reconcile framework keys, effective frameworks, target aliases, target/RID keys, dependency groups, and package identities before active filtering; analyzer activation distinguishes reachable graph nodes, legitimate traversal roots, reachable package assets, and project-reference analyzer asset flow. Disconnected package nodes or islands, same-ID multi-version target graphs, exact or case-variant duplicate restore-JSON properties, unknown or non-canonical spellings of consumed restore members, and incoherent or malformed identities remain PS007 evidence. Standard SDK restore metadata includes typed `fallbackFolders` and `SdkAnalysisLevel`; package XML keeps the consumed `Import`/`UsingTask`/`Exec`/`Code` contract strict while tolerating standard unconsumed MSBuild elements and attributes. Explicit `x-` JSON extension members and `urn:keelmatrix:packagesurface:extension` XML attributes remain available for unrelated metadata. The `NuGet.Versioning` 7.9.0 parser/comparer governs package keys, roots, imports, baseline provenance, dependency ranges, and format-4 requirements. Project, target-package, and format-4 dependency values use that NuGet-compatible grammar and exactly-one selected-version matching. Format 4 additionally requires matching key/effective/target-alias metadata across the project and restore framework maps, plus complete array-valued project dependency groups.')
 $matrix.Add($restoreShapeEvidence)
 $matrix.Add('')
 $matrix.Add('| Capability | Relationship | State | Context | TFM/RID | Fixture |')
@@ -340,7 +355,7 @@ $report = [System.Collections.Generic.List[string]]::new()
 foreach ($line in @(
     '# Phase 0 feasibility evidence', '', '## Verdict', '', $verdict,
     '', 'The probe reads only reachable entries from `project.assets.json`; it does not restore, evaluate MSBuild, load dependency assemblies, start analysis processes, or query a feed.',
-    '', 'Supported restore evidence formats: coherent SDK-style assets formats 3 and 4, verified by the shipping fixture and gate. One canonical restore-identity index and one direct/project-reference rooted package closure per applicable target graph reconcile framework keys, effective frameworks, target aliases, target/RID, dependency-group, and package identities before active filtering; disconnected package nodes or islands, same-ID multi-version target graphs, exact or case-variant duplicate restore-JSON properties, unknown or non-canonical spellings of consumed restore members, incoherent, malformed, or duplicate identities remain `PS007` evidence. Standard SDK restore metadata includes typed `fallbackFolders` and `SdkAnalysisLevel`; package XML keeps the consumed `Import`/`UsingTask`/`Exec`/`Code` contract strict while tolerating standard unconsumed MSBuild elements and attributes. Explicit `x-` JSON extension members and `urn:keelmatrix:packagesurface:extension` XML attributes remain available for unrelated metadata. The `NuGet.Versioning` 7.9.0 parser/comparer governs package keys, roots, imports, baseline provenance, dependency ranges, and format-4 requirements. Format 4 framework aliases are mapped to their effective framework for surface entries, while mismatched or incomplete v4 metadata remains `PS007` evidence.',
+    '', 'Supported restore evidence formats: coherent SDK-style assets formats 3 and 4, verified by the shipping fixture and gate. One canonical restore-identity index and one direct/project-reference rooted package closure per applicable target graph reconcile framework keys, effective frameworks, target aliases, target/RID, dependency-group, and package identities before active filtering; analyzer activation distinguishes reachable graph nodes, legitimate traversal roots, reachable package assets, and project-reference analyzer asset flow. Disconnected package nodes or islands, same-ID multi-version target graphs, exact or case-variant duplicate restore-JSON properties, unknown or non-canonical spellings of consumed restore members, incoherent, malformed, or duplicate identities remain `PS007` evidence. Standard SDK restore metadata includes typed `fallbackFolders` and `SdkAnalysisLevel`; package XML keeps the consumed `Import`/`UsingTask`/`Exec`/`Code` contract strict while tolerating standard unconsumed MSBuild elements and attributes. Explicit `x-` JSON extension members and `urn:keelmatrix:packagesurface:extension` XML attributes remain available for unrelated metadata. The `NuGet.Versioning` 7.9.0 parser/comparer governs package keys, roots, imports, baseline provenance, dependency ranges, and format-4 requirements. Format 4 framework aliases are mapped to their effective framework for surface entries, while mismatched or incomplete v4 metadata remains `PS007` evidence.',
     '', '## Per-category comparison', '')) { $report.Add([string]$line) }
 $report.AddRange($rows)
 $report.Add('')
@@ -355,7 +370,7 @@ foreach ($line in @(
     'Controlled package source: `.phase0/feed`, configured by `NuGet.config`.',
     'The classifier receives already restored assets and generated import files. The phase script performs restore only to create fixture evidence.',
     '', '## Generated-import condition grammar', '',
-    'The classifier proves unconditional imports, `$(TargetFramework)` equality/inequality comparisons including empty and non-empty string values, and boolean `AND`/`OR` composition with parentheses.',
+    'The classifier proves unconditional imports, written-string `$(TargetFramework)` equality/inequality comparisons including literal monikers and property references, and boolean `AND`/`OR` composition with parentheses; unsupported expansions remain unknown and produce `PS007`.',
     'It proves the standard `$(ExcludeRestorePackageImports) != ''true''` restore guard and the standard `Exists(''$(NuGetPackageRoot)/<resolved-package-suffix>'')` package-file guard when the import path matches the reachable asset.',
     'Conditions on `ImportGroup` and `Import` elements, including nested groups, are combined as a conjunction and evaluated for each target framework or project context.',
     'Conditions on arbitrary properties such as `Configuration`, unsupported `Exists(...)` expressions, unknown functions, malformed expressions, and any other clause outside this grammar are unproven, carry a specific reason, and make analysis incomplete. Incomplete analysis exits 2 from the probe and cannot be a clean result.',

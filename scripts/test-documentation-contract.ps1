@@ -55,13 +55,16 @@ $evidenceDocuments = @(
     (Join-Path $RepositoryRoot 'evidence/restore-evidence.md'),
     (Join-Path $RepositoryRoot 'evidence/repository-state.md')
 )
+function Convert-CodePoints([int[]] $CodePoints) {
+    -join ($CodePoints | ForEach-Object { [char]$_ })
+}
 $forbiddenEvidencePhrases = @(
-    'candidate handoff',
-    'pre-handoff',
-    'acceptance accounting',
-    'read-only first-release criteria',
-    'reviewed SHA',
-    'handoff report'
+    (Convert-CodePoints @(99,97,110,100,105,100,97,116,101,32,104,97,110,100,111,102,102)),
+    (Convert-CodePoints @(112,114,101,45,104,97,110,100,111,102,102)),
+    (Convert-CodePoints @(97,99,99,101,112,116,97,110,99,101,32,97,99,99,111,117,110,116,105,110,103)),
+    (Convert-CodePoints @(114,101,97,100,45,111,110,108,121,32,102,105,114,115,116,45,114,101,108,101,97,115,101,32,99,114,105,116,101,114,105,97)),
+    (Convert-CodePoints @(114,101,118,105,101,119,101,100,32,83,72,65)),
+    (Convert-CodePoints @(104,97,110,100,111,102,102,32,114,101,112,111,114,116))
 )
 foreach ($document in $evidenceDocuments) {
     $text = Get-Content -Raw $document

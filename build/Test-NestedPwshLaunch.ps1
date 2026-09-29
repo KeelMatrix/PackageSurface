@@ -58,7 +58,7 @@ function Get-ParsedCommandRecords(
             $value = [string]$stringAst.Value
             $isHereString = $stringAst -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
                 ([string]$stringAst.StringConstantType -match 'HereString')
-            $isScriptLike = $value -match '(?i)(?:\r?\n|(?:^|\s)(?:Start-Process|pwsh(?:\.exe)?|powershell(?:\.exe)?|Invoke-Expression)\b\s+\S)'
+            $isScriptLike = $value -match '(?i)(?:\r?\n|(?:^|\s)(?:Start-Process|pwsh(?:\.exe)?|powershell(?:\.exe)?|Invoke-Expression|iex|start|saps)\b\s+\S|(?:\[)?(?:System\.Diagnostics\.)?Process\]?\s*::\s*Start\s*\()'
             if (-not ($isHereString -or ($item.Embedded -and $isScriptLike))) {
                 continue
             }
@@ -110,6 +110,108 @@ function Get-NormalizedPowerShellCommandName([string]$Name) {
     return $Name
 }
 
+function Get-PowerShellStaticStringValue([object]$Node) {
+    while ($Node -is [System.Management.Automation.Language.PipelineAst] -and $Node.PipelineElements.Count -eq 1) {
+        $Node = $Node.PipelineElements[0]
+    }
+    while ($Node -is [System.Management.Automation.Language.CommandExpressionAst]) {
+        $Node = $Node.Expression
+    }
+    if ($Node -is [System.Management.Automation.Language.StringConstantExpressionAst] -or
+        ($Node -is [System.Management.Automation.Language.ExpandableStringExpressionAst] -and $Node.NestedExpressions.Count -eq 0)) {
+        return [string]$Node.Value
+    }
+    return $null
+}
+
+function Test-NestedPowerShellExecutable([string]$Value) {
+    return -not [string]::IsNullOrWhiteSpace($Value) -and
+        $Value -match '(?i)(?:^|[\\/])(?:pwsh|powershell)(?:\.exe)?$'
+}
+
+function Get-PowerShellHashtablePropertyState(
+    [object]$Assignment,
+    [string]$PropertyName
+) {
+    if ($null -eq $Assignment) {
+        return [pscustomobject]@{ Found = $false; Value = $null; Known = $false }
+    }
+    $right = $Assignment.Right
+    if ($right -is [System.Management.Automation.Language.CommandExpressionAst]) {
+        $right = $right.Expression
+    }
+    if ($right -is [System.Management.Automation.Language.HashtableAst]) {
+        foreach ($pair in $right.KeyValuePairs) {
+            $key = Get-PowerShellStaticStringValue $pair.Item1
+            if ($key -ieq $PropertyName) {
+                $value = Get-PowerShellStaticStringValue $pair.Item2
+                return [pscustomobject]@{ Found = $true; Value = $value; Known = $null -ne $value }
+            }
+        }
+        return [pscustomobject]@{ Found = $false; Value = $null; Known = $false }
+    }
+    return [pscustomobject]@{ Found = $false; Value = $null; Known = $false }
+}
+
+function Get-PowerShellStartProcessFilePathState(
+    [System.Management.Automation.Language.CommandAst]$Command,
+    [object[]]$Assignments
+) {
+    $elements = @($Command.CommandElements | Select-Object -Skip 1)
+    foreach ($element in $elements) {
+        if ($element -is [System.Management.Automation.Language.VariableExpressionAst] -and $element.Splatted) {
+            $variableName = $element.VariablePath.UserPath
+            $latestBase = @($Assignments | Where-Object {
+                    $_.Extent.StartOffset -lt $Command.Extent.StartOffset -and
+                    $_.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                    $_.Left.VariablePath.UserPath -eq $variableName
+                } | Sort-Object { $_.Extent.StartOffset } | Select-Object -Last 1)
+            if ($latestBase.Count -eq 0) {
+                return [pscustomobject]@{ Known = $false; Value = $null; Reason = 'unknown splatted parameter set' }
+            }
+            $state = Get-PowerShellHashtablePropertyState -Assignment $latestBase[0] -PropertyName 'FilePath'
+            if (-not $state.Found) {
+                $propertyPattern = '^\$' + [regex]::Escape($variableName) + '(?:\.FilePath|\[[''\"]FilePath[''\"]\])$'
+                $latestProperty = @($Assignments | Where-Object {
+                        $_.Extent.StartOffset -lt $Command.Extent.StartOffset -and
+                        $_.Left.Extent.Text -match $propertyPattern
+                    } | Sort-Object { $_.Extent.StartOffset } | Select-Object -Last 1)
+                if ($latestProperty.Count -gt 0) {
+                    $value = Get-PowerShellStaticStringValue $latestProperty[0].Right
+                    return [pscustomobject]@{ Known = $null -ne $value; Value = $value; Reason = 'splat property assignment' }
+                }
+                return [pscustomobject]@{ Known = $false; Value = $null; Reason = 'splat has no statically known FilePath' }
+            }
+            return [pscustomobject]@{ Known = $state.Known; Value = $state.Value; Reason = 'splat FilePath' }
+        }
+    }
+
+    $positionalSeen = $false
+    for ($index = 0; $index -lt $elements.Count; $index++) {
+        $element = $elements[$index]
+        if ($element -is [System.Management.Automation.Language.CommandParameterAst]) {
+            if ($element.ParameterName -ieq 'FilePath') {
+                if ($null -ne $element.Argument) {
+                    $value = Get-PowerShellStaticStringValue $element.Argument
+                    return [pscustomobject]@{ Known = $null -ne $value; Value = $value; Reason = 'FilePath parameter' }
+                }
+                if ($index + 1 -ge $elements.Count) {
+                    return [pscustomobject]@{ Known = $false; Value = $null; Reason = 'FilePath parameter has no value' }
+                }
+                $value = Get-PowerShellStaticStringValue $elements[$index + 1]
+                return [pscustomobject]@{ Known = $null -ne $value; Value = $value; Reason = 'FilePath parameter' }
+            }
+            continue
+        }
+        if (-not $positionalSeen) {
+            $positionalSeen = $true
+            $value = Get-PowerShellStaticStringValue $element
+            return [pscustomobject]@{ Known = $null -ne $value; Value = $value; Reason = 'positional FilePath' }
+        }
+    }
+    return [pscustomobject]@{ Known = $false; Value = $null; Reason = 'no statically known FilePath' }
+}
+
 function Get-LaunchViolations([string]$Path) {
     $tokens = $null
     $parseErrors = $null
@@ -134,6 +236,18 @@ function Get-LaunchViolations([string]$Path) {
             [void]$scriptBlockParameters.Add($parameter.Name.VariablePath.UserPath)
         }
     }
+
+    foreach ($processApiCall in @($ast.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+                $node.Member.Value -match '^(?i:Start|NewAlias|SetAlias)$'
+            }, $true))) {
+        $lineNumber = $processApiCall.Extent.StartLineNumber
+        $memberName = [string]$processApiCall.Member.Value
+        $message = if ($memberName -ieq 'Start') { '.NET process Start calls cannot be audited' } else { 'PowerShell alias API calls cannot be audited' }
+        [void]$violations.Add("${Path}:$lineNumber`: $message")
+    }
+
     foreach ($record in $commands) {
         $command = $record.Command
         $lineNumber = $record.BaseLine + $command.Extent.StartLineNumber
@@ -172,12 +286,17 @@ function Get-LaunchViolations([string]$Path) {
         }
         $normalizedCommandName = Get-NormalizedPowerShellCommandName $commandName
 
+        if ($normalizedCommandName -match '^(?i:Set-Alias|New-Alias|sal|nal|sna|snp)$') {
+            [void]$violations.Add("${Path}:$lineNumber`: user-defined PowerShell aliases cannot be audited")
+            continue
+        }
+
         if ($normalizedCommandName -match '^(?i:pwsh|powershell)(?:\.exe)?$') {
             [void]$violations.Add("${Path}:$lineNumber`: direct nested PowerShell launch")
             continue
         }
 
-        if ($normalizedCommandName -match '^(?i:invoke-expression)$') {
+        if ($normalizedCommandName -match '^(?i:invoke-expression|iex)$') {
             [void]$violations.Add("${Path}:$lineNumber`: dynamic Invoke-Expression execution cannot be audited")
             continue
         }
@@ -192,6 +311,17 @@ function Get-LaunchViolations([string]$Path) {
 
         $hasHiddenContainment = $command.Extent.Text -match '(?i)(?:-\s*WindowStyle\s*(?:=|\s)\s*[''"]?Hidden[''"]?(?=\s|$)|(?<!\w)-NoNewWindow(?=\s|$))'
         $isStartProcess = $normalizedCommandName -match '^(?i:Start-Process|start|saps)$'
+        if ($isStartProcess) {
+            $filePathState = Get-PowerShellStartProcessFilePathState -Command $command -Assignments $assignments
+            if (-not $filePathState.Known) {
+                [void]$violations.Add("${Path}:$lineNumber`: Start-Process FilePath '$($filePathState.Reason)' cannot be audited")
+                continue
+            }
+            if (Test-NestedPowerShellExecutable $filePathState.Value) {
+                [void]$violations.Add("${Path}:$lineNumber`: nested PowerShell executable passed to '$commandName'")
+                continue
+            }
+        }
         if (-not $hasHiddenContainment -and $isStartProcess) {
             foreach ($splat in @($command.CommandElements | Where-Object {
                         $_ -is [System.Management.Automation.Language.VariableExpressionAst] -and $_.Splatted
@@ -500,21 +630,75 @@ function Normalize-CSharpIdentifierEscapes([string]$Code) {
         })
 }
 
-function Get-CSharpInitializerSpan([string]$Code, [int]$StartIndex, [int]$MatchLength) {
-    $openBrace = $Code.IndexOf('{', $StartIndex + $MatchLength)
-    $semicolon = $Code.IndexOf(';', $StartIndex + $MatchLength)
-    if ($openBrace -lt 0 -or ($semicolon -ge 0 -and $semicolon -lt $openBrace)) {
-        return [pscustomobject]@{ Body = $null; End = $StartIndex + $MatchLength }
-    }
+function Find-CSharpDelimiterEnd(
+    [string]$Code,
+    [int]$OpenIndex,
+    [char]$OpenCharacter,
+    [char]$CloseCharacter
+) {
     $depth = 0
-    for ($index = $openBrace; $index -lt $Code.Length; $index++) {
-        if ($Code[$index] -eq '{') { $depth++ }
-        elseif ($Code[$index] -eq '}') {
+    for ($index = $OpenIndex; $index -lt $Code.Length; $index++) {
+        if ($Code[$index] -eq $OpenCharacter) { $depth++ }
+        elseif ($Code[$index] -eq $CloseCharacter) {
             $depth--
-            if ($depth -eq 0) { return [pscustomobject]@{ Body = $Code.Substring($openBrace + 1, $index - $openBrace - 1); End = $index + 1 } }
+            if ($depth -eq 0) { return $index }
         }
     }
-    return [pscustomobject]@{ Body = $null; End = $StartIndex + $MatchLength }
+    return -1
+}
+
+function Get-CSharpInitializerSpan([string]$Code, [int]$StartIndex, [int]$MatchLength) {
+    $openParenthesis = $Code.IndexOf('(', $StartIndex + $MatchLength)
+    if ($openParenthesis -lt 0) {
+        return [pscustomobject]@{ Body = $null; End = $StartIndex + $MatchLength }
+    }
+    $closeParenthesis = Find-CSharpDelimiterEnd -Code $Code -OpenIndex $openParenthesis -OpenCharacter '(' -CloseCharacter ')'
+    if ($closeParenthesis -lt 0) {
+        return [pscustomobject]@{ Body = $null; End = $StartIndex + $MatchLength }
+    }
+    $openBrace = $closeParenthesis + 1
+    while ($openBrace -lt $Code.Length -and [char]::IsWhiteSpace($Code[$openBrace])) { $openBrace++ }
+    if ($openBrace -ge $Code.Length -or $Code[$openBrace] -ne '{') {
+        return [pscustomobject]@{ Body = $null; End = $closeParenthesis + 1 }
+    }
+    $closeBrace = Find-CSharpDelimiterEnd -Code $Code -OpenIndex $openBrace -OpenCharacter '{' -CloseCharacter '}'
+    if ($closeBrace -lt 0) {
+        return [pscustomobject]@{ Body = $null; End = $closeParenthesis + 1 }
+    }
+    return [pscustomobject]@{
+        Body = $Code.Substring($openBrace + 1, $closeBrace - $openBrace - 1)
+        End = $closeBrace + 1
+    }
+}
+
+function Get-CSharpNestingDepth([string]$Code, [int]$Index) {
+    $braceDepth = 0
+    $parenthesisDepth = 0
+    $bracketDepth = 0
+    for ($position = 0; $position -lt $Index; $position++) {
+        switch ($Code[$position]) {
+            '{' { $braceDepth++ }
+            '}' { $braceDepth-- }
+            '(' { $parenthesisDepth++ }
+            ')' { $parenthesisDepth-- }
+            '[' { $bracketDepth++ }
+            ']' { $bracketDepth-- }
+        }
+    }
+    return [pscustomobject]@{
+        Brace = $braceDepth
+        Parenthesis = $parenthesisDepth
+        Bracket = $bracketDepth
+    }
+}
+
+function Get-CSharpTopLevelInitializerProperties([string]$Body, [string]$PropertyName) {
+    foreach ($match in @([regex]::Matches($Body, '(?<![\w.])' + [regex]::Escape($PropertyName) + '\s*=\s*(?<value>[^,;}]*)'))) {
+        $depth = Get-CSharpNestingDepth -Code $Body -Index $match.Index
+        if ($depth.Brace -eq 0 -and $depth.Parenthesis -eq 0 -and $depth.Bracket -eq 0) {
+            $match
+        }
+    }
 }
 
 function Get-CSharpLineNumber([string]$Source, [int]$Index) {
@@ -552,8 +736,8 @@ function Get-CSharpLaunchAudit([string]$Path) {
         if (-not $seenConstructorIndexes.Add([int]$constructor.Index)) { continue }
         $span = Get-CSharpInitializerSpan -Code $code -StartIndex $constructor.Index -MatchLength $constructor.Length
         $body = $span.Body
-        $shell = if ($null -eq $body) { @() } else { @([regex]::Matches($body, '\bUseShellExecute\s*=\s*(?<value>[^,;}]*)')) }
-        $window = if ($null -eq $body) { @() } else { @([regex]::Matches($body, '\bCreateNoWindow\s*=\s*(?<value>[^,;}]*)')) }
+        $shell = if ($null -eq $body) { @() } else { @(Get-CSharpTopLevelInitializerProperties -Body $body -PropertyName 'UseShellExecute') }
+        $window = if ($null -eq $body) { @() } else { @(Get-CSharpTopLevelInitializerProperties -Body $body -PropertyName 'CreateNoWindow') }
         $hasSafeShell = $shell.Count -eq 1 -and $shell[0].Groups['value'].Value.Trim() -ceq 'false'
         $hasNoWindow = $window.Count -eq 1 -and $window[0].Groups['value'].Value.Trim() -ceq 'true'
         $assignment = [regex]::Match($code.Substring(0, $constructor.Index), '(?ms)(?:^|[;{}])\s*(?:var|' + $processStartInfoTypePattern + ')\s+(?<name>[A-Za-z_]\w*)\s*=\s*$')
@@ -656,6 +840,7 @@ if ($SelfTest) {
         $unsafeVerbatimInterpolatedCSharpPath = Join-Path $selfTestRoot 'unsafe-verbatim-interpolated.cs'
         $unsafeRawInterpolatedCSharpPath = Join-Path $selfTestRoot 'unsafe-raw-interpolated.cs'
         $unsafeCompoundCSharpPath = Join-Path $selfTestRoot 'unsafe-compound.cs'
+        $unsafeNestedInitializerCSharpPath = Join-Path $selfTestRoot 'unsafe-nested-initializer.cs'
         $unsafeDataflowCSharpPath = Join-Path $selfTestRoot 'unsafe-dataflow.cs'
         $unsafeTargetTypedCSharpPath = Join-Path $selfTestRoot 'unsafe-target-typed.cs'
         $unsafeMethodGroupCSharpPath = Join-Path $selfTestRoot 'unsafe-method-group.cs'
@@ -666,6 +851,11 @@ if ($SelfTest) {
         $subexpressionCommandPath = Join-Path $selfTestRoot 'subexpression-command.ps1'
         $qualifiedStartProcessPath = Join-Path $selfTestRoot 'qualified-start-process.ps1'
         $aliasStartProcessPath = Join-Path $selfTestRoot 'alias-start-process.ps1'
+        $userAliasPath = Join-Path $selfTestRoot 'user-alias.ps1'
+        $apiAliasPath = Join-Path $selfTestRoot 'api-alias.ps1'
+        $dotnetProcessPath = Join-Path $selfTestRoot 'dotnet-process.ps1'
+        $dynamicFilePath = Join-Path $selfTestRoot 'dynamic-file-path.ps1'
+        $dynamicSplatFilePath = Join-Path $selfTestRoot 'dynamic-splat-file-path.ps1'
         $safeQualifiedStartProcessPath = Join-Path $selfTestRoot 'safe-qualified-start-process.ps1'
         $invokeExpressionPath = Join-Path $selfTestRoot 'invoke-expression.ps1'
         $safeCSharpPath = Join-Path $selfTestRoot 'safe.cs'
@@ -803,6 +993,19 @@ var startInfo = new ProcessStartInfo("pwsh")
 };
 Process.Start(startInfo);
 '@)
+        [IO.File]::WriteAllText($unsafeNestedInitializerCSharpPath, @'
+using System.Diagnostics;
+var startInfo = new ProcessStartInfo("pwsh")
+{
+    Arguments = new Settings { UseShellExecute = false, CreateNoWindow = true }.ToString()
+};
+Process.Start(startInfo);
+sealed class Settings
+{
+    public bool UseShellExecute { get; set; }
+    public bool CreateNoWindow { get; set; }
+}
+'@)
         [IO.File]::WriteAllText($unsafeDataflowCSharpPath, @'
 using System.Diagnostics;
 var startInfo = new ProcessStartInfo("pwsh")
@@ -865,6 +1068,24 @@ Microsoft.PowerShell.Management\Start-Process -FilePath 'example.exe'
 start -FilePath 'example.exe'
 saps -FilePath 'example.exe'
 '@)
+        [IO.File]::WriteAllText($userAliasPath, @'
+Set-Alias launch pwsh
+launch -NoProfile
+'@)
+        [IO.File]::WriteAllText($apiAliasPath, @'
+$ExecutionContext.InvokeCommand.NewAlias('launch', 'pwsh')
+'@)
+        [IO.File]::WriteAllText($dotnetProcessPath, @'
+[System.Diagnostics.Process]::Start('pwsh')
+'@)
+        [IO.File]::WriteAllText($dynamicFilePath, @'
+$exe = 'pwsh'
+Start-Process -FilePath $exe -WindowStyle Hidden
+'@)
+        [IO.File]::WriteAllText($dynamicSplatFilePath, @'
+$parameters = @{ FilePath = 'pwsh'; WindowStyle = 'Hidden' }
+Start-Process @parameters
+'@)
         [IO.File]::WriteAllText($safeQualifiedStartProcessPath, @'
 Microsoft.PowerShell.Management\Start-Process -FilePath 'example.exe' -WindowStyle Hidden
 start -FilePath 'example.exe' -WindowStyle Hidden
@@ -913,6 +1134,11 @@ Process.Start(new System.Diagnostics.ProcessStartInfo("pwsh")
                     @{ Name = 'subexpression command'; Path = $subexpressionCommandPath },
                     @{ Name = 'module-qualified Start-Process command'; Path = $qualifiedStartProcessPath },
                     @{ Name = 'Start-Process aliases'; Path = $aliasStartProcessPath },
+                    @{ Name = 'user-defined alias'; Path = $userAliasPath },
+                    @{ Name = 'user-defined alias API'; Path = $apiAliasPath },
+                    @{ Name = '.NET process API'; Path = $dotnetProcessPath },
+                    @{ Name = 'dynamic Start-Process FilePath'; Path = $dynamicFilePath },
+                    @{ Name = 'dynamic splatted FilePath'; Path = $dynamicSplatFilePath },
                     @{ Name = 'Invoke-Expression command'; Path = $invokeExpressionPath }
                 )) {
             if (@(Get-LaunchViolations $dynamicCase.Path).Count -eq 0) {
@@ -971,6 +1197,7 @@ Process.Start(new System.Diagnostics.ProcessStartInfo("pwsh")
                     @{ Name = 'verbatim interpolated expression'; Path = $unsafeVerbatimInterpolatedCSharpPath; Count = 1 },
                     @{ Name = 'raw interpolated expression'; Path = $unsafeRawInterpolatedCSharpPath; Count = 1 },
                     @{ Name = 'compound containment expression'; Path = $unsafeCompoundCSharpPath; Count = 2 },
+                    @{ Name = 'nested initializer property collision'; Path = $unsafeNestedInitializerCSharpPath; Count = 2 },
                     @{ Name = 'ProcessStartInfo dataflow'; Path = $unsafeDataflowCSharpPath; Count = 2 },
                     @{ Name = 'target-typed ProcessStartInfo'; Path = $unsafeTargetTypedCSharpPath; Count = 2 },
                     @{ Name = 'method-group Process.Start'; Path = $unsafeMethodGroupCSharpPath; Count = 2 }

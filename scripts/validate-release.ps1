@@ -141,6 +141,10 @@ if ($RequireFinalized) {
     }
 
     if ($FirstRelease) {
+        if ($unreleasedSections.Count -ne 1) {
+            throw 'First-release changelog must contain exactly one ## [Unreleased] section.'
+        }
+
         $releaseHeadings = @(Get-MarkdownHeadings -Text $target.Body)
         if (@($releaseHeadings | Where-Object { $_.Level -eq 1 }).Count -gt 0) {
             throw 'First-release notes must use a release subsection heading, not a document heading.'

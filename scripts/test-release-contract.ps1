@@ -131,8 +131,23 @@ try {
     Assert-ValidationPass 'real pre-tag candidate' (Invoke-ReleaseValidation -Version $version -ChangelogPath $realChangelog)
     Assert-ValidationRejects 'real planned/unreleased tag gate' (Invoke-ReleaseValidation -Version $version -ChangelogPath $realChangelog -RequireFinalized)
 
+    $missingUnreleasedChangelog = Join-Path $scratch 'CHANGELOG.missing-unreleased.md'
+    $missingUnreleasedFirstRelease = "# Changelog`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Initial release capability review.`n"
+    [IO.File]::WriteAllText($missingUnreleasedChangelog, $missingUnreleasedFirstRelease, [Text.UTF8Encoding]::new($false))
+    Assert-ValidationRejects 'first-release missing Unreleased section' (Invoke-ReleaseValidation -Version $version -ChangelogPath $missingUnreleasedChangelog -RequireFinalized -FirstRelease)
+
+    $alternateUnreleasedChangelog = Join-Path $scratch 'CHANGELOG.alternate-unreleased.md'
+    $alternateUnreleasedFirstRelease = "# Changelog`n`n## [Next]`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Initial release capability review.`n"
+    [IO.File]::WriteAllText($alternateUnreleasedChangelog, $alternateUnreleasedFirstRelease, [Text.UTF8Encoding]::new($false))
+    Assert-ValidationRejects 'first-release alternate Unreleased heading' (Invoke-ReleaseValidation -Version $version -ChangelogPath $alternateUnreleasedChangelog -RequireFinalized -FirstRelease)
+
+    $nestedReleaseChangelog = Join-Path $scratch 'CHANGELOG.nested-release.md'
+    $nestedReleaseFirstRelease = "# Changelog`n`n## [Unreleased]`n`n### [$version] - 2026-09-22`n`n#### Added`n`n- Initial release capability review.`n"
+    [IO.File]::WriteAllText($nestedReleaseChangelog, $nestedReleaseFirstRelease, [Text.UTF8Encoding]::new($false))
+    Assert-ValidationRejects 'first-release entry nested under Unreleased' (Invoke-ReleaseValidation -Version $version -ChangelogPath $nestedReleaseChangelog -RequireFinalized -FirstRelease)
+
     $candidateChangelog = Join-Path $scratch 'CHANGELOG.finalized.md'
-    $candidateFirstRelease = "# Changelog`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Initial release capability review.`n"
+    $candidateFirstRelease = "# Changelog`n`n## [Unreleased]`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Initial release capability review.`n"
     [IO.File]::WriteAllText($candidateChangelog, $candidateFirstRelease, [Text.UTF8Encoding]::new($false))
     Assert-ValidationPass 'real project with finalized version-consistent first-release changelog' (Invoke-ReleaseValidation -Version $version -ChangelogPath $candidateChangelog -RequireFinalized -FirstRelease)
 
@@ -168,50 +183,50 @@ try {
     Assert-ValidationPass 'composed finalized first-release gate' (Invoke-ReleaseValidation -Version $version -ChangelogPath (Join-Path $composedRoot 'CHANGELOG.md') -RequireFinalized -FirstRelease)
 
     $wholeWordChangelog = Join-Path $scratch 'CHANGELOG.whole-word.md'
-    [IO.File]::WriteAllText($wholeWordChangelog, "# Changelog`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Adds package prefixes and nowhere-only documentation examples.`n", [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($wholeWordChangelog, "# Changelog`n`n## [Unreleased]`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Adds package prefixes and nowhere-only documentation examples.`n", [Text.UTF8Encoding]::new($false))
     Assert-ValidationPass 'first-release whole-word marker boundaries' (Invoke-ReleaseValidation -Version $version -ChangelogPath $wholeWordChangelog -RequireFinalized -FirstRelease)
 
     foreach ($marker in @('now', 'no longer', 'previously', 'formerly', 'used to', 'fixed', 'fixes', 'corrected', 'resolved', 'addressed', 'this removes', 'this fixes', 'changed from')) {
         $markerChangelog = Join-Path $scratch ('CHANGELOG.marker-' + ($marker -replace '[^A-Za-z0-9]+', '-') + '.md')
-        [IO.File]::WriteAllText($markerChangelog, "# Changelog`n`n## [$version] - 2026-09-22`n`n### Added`n`n- $marker release wording.`n", [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($markerChangelog, "# Changelog`n`n## [Unreleased]`n`n## [$version] - 2026-09-22`n`n### Added`n`n- $marker release wording.`n", [Text.UTF8Encoding]::new($false))
         Assert-ValidationRejects "first-release remediation marker '$marker'" (Invoke-ReleaseValidation -Version $version -ChangelogPath $markerChangelog -RequireFinalized -FirstRelease)
     }
 
     foreach ($category in @('Changed', 'Fixed', 'Deprecated', 'Removed', 'Security', 'Compatibility')) {
         $categoryChangelog = Join-Path $scratch ('CHANGELOG.category-' + $category + '.md')
-        [IO.File]::WriteAllText($categoryChangelog, "# Changelog`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Initial release capability review.`n`n### $category`n`n- Release note.`n", [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($categoryChangelog, "# Changelog`n`n## [Unreleased]`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Initial release capability review.`n`n### $category`n`n- Release note.`n", [Text.UTF8Encoding]::new($false))
         Assert-ValidationRejects "first-release category '$category'" (Invoke-ReleaseValidation -Version $version -ChangelogPath $categoryChangelog -RequireFinalized -FirstRelease)
     }
     foreach ($heading in @('Notes', 'Metadata')) {
         $headingChangelog = Join-Path $scratch ('CHANGELOG.heading-' + $heading + '.md')
-        [IO.File]::WriteAllText($headingChangelog, "# Changelog`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Initial release capability review.`n`n#### $heading`n`n- Release note.`n", [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($headingChangelog, "# Changelog`n`n## [Unreleased]`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Initial release capability review.`n`n#### $heading`n`n- Release note.`n", [Text.UTF8Encoding]::new($false))
         Assert-ValidationRejects "first-release unknown heading '$heading'" (Invoke-ReleaseValidation -Version $version -ChangelogPath $headingChangelog -RequireFinalized -FirstRelease)
     }
     $h1HeadingChangelog = Join-Path $scratch 'CHANGELOG.h1-heading.md'
-    [IO.File]::WriteAllText($h1HeadingChangelog, "# Changelog`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Initial release capability review.`n`n# Notes`n`n- Release note.`n", [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($h1HeadingChangelog, "# Changelog`n`n## [Unreleased]`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Initial release capability review.`n`n# Notes`n`n- Release note.`n", [Text.UTF8Encoding]::new($false))
     Assert-ValidationRejects 'first-release unknown level-one heading' (Invoke-ReleaseValidation -Version $version -ChangelogPath $h1HeadingChangelog -RequireFinalized -FirstRelease)
     $h1AddedChangelog = Join-Path $scratch 'CHANGELOG.h1-added.md'
-    [IO.File]::WriteAllText($h1AddedChangelog, "# Changelog`n`n## [$version] - 2026-09-22`n`n# Added`n`n- Initial release capability review.`n", [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($h1AddedChangelog, "# Changelog`n`n## [Unreleased]`n`n## [$version] - 2026-09-22`n`n# Added`n`n- Initial release capability review.`n", [Text.UTF8Encoding]::new($false))
     Assert-ValidationRejects 'first-release level-one Added heading' (Invoke-ReleaseValidation -Version $version -ChangelogPath $h1AddedChangelog -RequireFinalized -FirstRelease)
 
     $setextHeadingChangelog = Join-Path $scratch 'CHANGELOG.setext-heading.md'
-    [IO.File]::WriteAllText($setextHeadingChangelog, "# Changelog`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Initial release capability review.`n`nNotes`n-----`n`n- This heading must be rejected.`n", [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($setextHeadingChangelog, "# Changelog`n`n## [Unreleased]`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Initial release capability review.`n`nNotes`n-----`n`n- This heading must be rejected.`n", [Text.UTF8Encoding]::new($false))
     Assert-ValidationRejects 'first-release setext category heading' (Invoke-ReleaseValidation -Version $version -ChangelogPath $setextHeadingChangelog -RequireFinalized -FirstRelease)
 
     $setextDocumentHeadingChangelog = Join-Path $scratch 'CHANGELOG.setext-document-heading.md'
-    [IO.File]::WriteAllText($setextDocumentHeadingChangelog, "# Changelog`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Initial release capability review.`n`nNotes`n=====`n`n- This document heading must be rejected.`n", [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($setextDocumentHeadingChangelog, "# Changelog`n`n## [Unreleased]`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Initial release capability review.`n`nNotes`n=====`n`n- This document heading must be rejected.`n", [Text.UTF8Encoding]::new($false))
     Assert-ValidationRejects 'first-release setext document heading' (Invoke-ReleaseValidation -Version $version -ChangelogPath $setextDocumentHeadingChangelog -RequireFinalized -FirstRelease)
 
     $fencedHeadingChangelog = Join-Path $scratch 'CHANGELOG.fenced-heading.md'
-    [IO.File]::WriteAllText($fencedHeadingChangelog, "# Changelog`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Initial release capability review.`n`n~~~markdown`n# Notes`n`nNotes`n-----`n~~~`n", [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($fencedHeadingChangelog, "# Changelog`n`n## [Unreleased]`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Initial release capability review.`n`n~~~markdown`n# Notes`n`nNotes`n-----`n~~~`n", [Text.UTF8Encoding]::new($false))
     Assert-ValidationPass 'first-release fenced headings ignored' (Invoke-ReleaseValidation -Version $version -ChangelogPath $fencedHeadingChangelog -RequireFinalized -FirstRelease)
 
     $indentedHeadingChangelog = Join-Path $scratch 'CHANGELOG.indented-heading.md'
-    [IO.File]::WriteAllText($indentedHeadingChangelog, "# Changelog`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Initial release capability review.`n`n    # Notes`n    Notes`n    -----`n", [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($indentedHeadingChangelog, "# Changelog`n`n## [Unreleased]`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Initial release capability review.`n`n    # Notes`n    Notes`n    -----`n", [Text.UTF8Encoding]::new($false))
     Assert-ValidationPass 'first-release indented code headings ignored' (Invoke-ReleaseValidation -Version $version -ChangelogPath $indentedHeadingChangelog -RequireFinalized -FirstRelease)
 
     $mismatchedChangelog = Join-Path $scratch 'CHANGELOG.mismatched.md'
-    [IO.File]::WriteAllText($mismatchedChangelog, "# Changelog`n`n## [9.9.9] - 2026-09-22`n`n- Wrong version.`n", [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($mismatchedChangelog, "# Changelog`n`n## [Unreleased]`n`n## [9.9.9] - 2026-09-22`n`n- Wrong version.`n", [Text.UTF8Encoding]::new($false))
     Assert-ValidationRejects 'changelog/version disagreement' (Invoke-ReleaseValidation -Version $version -ChangelogPath $mismatchedChangelog -RequireFinalized -FirstRelease)
 
     Write-Output 'PASS: restored CI/release workflows use one shared fail-closed release contract; real candidate, finalized, and version-mismatch cases behave as required.'

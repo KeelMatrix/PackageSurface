@@ -233,7 +233,11 @@ exit 128
     Assert-ExpectedFailure 'historical-tree-marker' $treeRoot 'Restricted text found' ''
 
     $space = Convert-CodePoints @(32)
+    $doubleSpace = $space + $space
     $hyphen = Convert-CodePoints @(45)
+    $underscore = Convert-CodePoints @(95)
+    $slash = Convert-CodePoints @(47)
+    $dot = Convert-CodePoints @(46)
     $rejected = Convert-CodePoints @(114,101,106,101,99,116,101,100)
     $families = Convert-CodePoints @(102,97,109,105,108,105,101,115)
     $remediation = Convert-CodePoints @(114,101,109,101,100,105,97,116,105,111,110)
@@ -249,6 +253,8 @@ exit 128
     $remediations = Convert-CodePoints @(114,101,109,101,100,105,97,116,105,111,110,115)
     $founder = Convert-CodePoints @(102,111,117,110,100,101,114)
     $approvals = Convert-CodePoints @(97,112,112,114,111,118,97,108,115)
+    $mixedRejected = Convert-CodePoints @(82,101,106,101,99,116,101,100)
+    $mixedFamilies = Convert-CodePoints @(70,97,109,105,108,105,101,115)
 
     $pluralMarker = $rejected + $space + $families + $space + $remediation + $space + $waves
     $pluralSubjectRoot = Join-Path $scratch 'plural-subject'
@@ -264,23 +270,38 @@ exit 128
     Assert-ExpectedFailure 'plural-tree' $pluralTreeRoot 'Restricted text found' ''
 
     $variantMarkers = @(
-        ($rejected + $hyphen + $families),
-        ($remediation + $hyphen + $waves),
-        ($remediation + $hyphen + $rounds),
-        ($prior + $hyphen + $rejections),
-        ($closure + $space + $reviews),
-        ($review + $hyphen + $processes),
-        ($edge + $space + $reviews),
-        ($edge + $hyphen + $remediations),
-        ($founder + $space + $edge + 's'),
-        ($founder + $hyphen + $reviews),
-        ($founder + $space + $rejections),
-        ($founder + $hyphen + $approvals)
+        @{ Name = 'case-00'; Marker = $rejected + $underscore + $families },
+        @{ Name = 'case-01'; Marker = $review + $slash + $processes },
+        @{ Name = 'case-02'; Marker = $review + $dot + $processes },
+        @{ Name = 'case-03'; Marker = $rejected + $doubleSpace + $families },
+        @{ Name = 'case-04'; Marker = $rejected + $underscore + $hyphen + $underscore + $families },
+        @{ Name = 'case-05'; Marker = $mixedRejected + $underscore + $mixedFamilies },
+        @{ Name = 'case-06'; Marker = $rejected + $hyphen + $families },
+        @{ Name = 'case-07'; Marker = $remediation + $hyphen + $waves },
+        @{ Name = 'case-08'; Marker = $remediation + $hyphen + $rounds },
+        @{ Name = 'case-09'; Marker = $prior + $hyphen + $rejections },
+        @{ Name = 'case-10'; Marker = $closure + $space + $reviews },
+        @{ Name = 'case-11'; Marker = $edge + $space + $reviews },
+        @{ Name = 'case-12'; Marker = $edge + $hyphen + $remediations },
+        @{ Name = 'case-13'; Marker = $founder + $space + $edge + 's' },
+        @{ Name = 'case-14'; Marker = $founder + $hyphen + $reviews },
+        @{ Name = 'case-15'; Marker = $founder + $space + $rejections },
+        @{ Name = 'case-16'; Marker = $founder + $hyphen + $approvals }
     )
     for ($index = 0; $index -lt $variantMarkers.Count; $index++) {
-        $variantRoot = Join-Path $scratch ('variant-' + $index)
-        New-Repository $variantRoot -CommitSubject ('fixture ' + $variantMarkers[$index])
-        Assert-ExpectedFailure ('variant-' + $index) $variantRoot 'Restricted text found' ''
+        $variant = $variantMarkers[$index]
+
+        $subjectRoot = Join-Path $scratch ('variant-subject-' + $variant.Name)
+        New-Repository $subjectRoot -CommitSubject ('fixture ' + $variant.Marker)
+        Assert-ExpectedFailure ('variant-subject-' + $variant.Name) $subjectRoot 'Restricted text found' ''
+
+        $bodyRoot = Join-Path $scratch ('variant-body-' + $variant.Name)
+        New-Repository $bodyRoot -CommitBody ('fixture ' + $variant.Marker)
+        Assert-ExpectedFailure ('variant-body-' + $variant.Name) $bodyRoot 'Restricted text found' ''
+
+        $treeRoot = Join-Path $scratch ('variant-tree-' + $variant.Name)
+        New-Repository $treeRoot -TreeContentMarker $variant.Marker -TwoCommits
+        Assert-ExpectedFailure ('variant-tree-' + $variant.Name) $treeRoot 'Restricted text found' ''
     }
 
     $positiveRoot = Join-Path $scratch 'ordinary-engineering'

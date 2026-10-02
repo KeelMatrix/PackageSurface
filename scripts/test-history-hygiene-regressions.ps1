@@ -6,6 +6,10 @@ $gate = Join-Path $root 'scripts/test-history-hygiene.ps1'
 $scratchParent = [IO.Path]::GetTempPath()
 $scratch = Join-Path $scratchParent ('packagesurface-hygiene-' + [Guid]::NewGuid().ToString('N'))
 
+function Convert-CodePoints([int[]] $points) {
+    return -join ($points | ForEach-Object { [char]$_ })
+}
+
 function Invoke-External {
     param([string] $FilePath, [string[]] $Arguments)
 
@@ -20,23 +24,38 @@ function Invoke-External {
 }
 
 function New-Repository {
-    param([string] $Path, [switch] $WithMarker, [switch] $WithTaskId, [switch] $TwoCommits)
+    param(
+        [string] $Path,
+        [switch] $WithMarker,
+        [switch] $WithTaskId,
+        [switch] $TwoCommits,
+        [string] $CommitSubject = 'fixture',
+        [string] $CommitBody = '',
+        [string] $TreeContentMarker = ''
+    )
 
     New-Item -ItemType Directory -Force -Path $Path | Out-Null
     Invoke-External 'git' @('init', '--quiet', '--', $Path) | Out-Null
     Invoke-External 'git' @('-C', $Path, 'config', 'user.email', 'fixture@example.invalid') | Out-Null
     Invoke-External 'git' @('-C', $Path, 'config', 'user.name', 'Fixture') | Out-Null
     $content = if ($WithMarker) {
-        $marker = -join (@(80,97,112,101,114,99,108,105,112) | ForEach-Object { [char]$_ })
+        $marker = Convert-CodePoints @(80,97,112,101,114,99,108,105,112)
         "fixture $marker"
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($TreeContentMarker)) {
+        "fixture $TreeContentMarker"
     }
     else {
         'fixture content'
     }
     [IO.File]::WriteAllText((Join-Path $Path 'tracked.txt'), $content)
     Invoke-External 'git' @('-C', $Path, 'add', '--', 'tracked.txt') | Out-Null
-    $message = if ($WithTaskId) { 'fixture ' + ('A' + 'BC' + '-' + '1' + '234') } else { 'fixture' }
-    Invoke-External 'git' @('-C', $Path, 'commit', '--quiet', '-m', $message) | Out-Null
+    $message = if ($WithTaskId) { 'fixture ' + ('A' + 'BC' + '-' + '1' + '234') } else { $CommitSubject }
+    $commitArguments = @('-C', $Path, 'commit', '--quiet', '-m', $message)
+    if (-not [string]::IsNullOrWhiteSpace($CommitBody)) {
+        $commitArguments += @('-m', $CommitBody)
+    }
+    Invoke-External 'git' $commitArguments | Out-Null
     if ($TwoCommits) {
         [IO.File]::AppendAllText((Join-Path $Path 'tracked.txt'), [Environment]::NewLine + 'second')
         Invoke-External 'git' @('-C', $Path, 'add', '--', 'tracked.txt') | Out-Null
@@ -110,6 +129,18 @@ function Assert-ExpectedFailure {
         throw "$Name did not report '$ExpectedText'."
     }
     Write-Output "PASS: $Name rejected with the expected diagnostic class '$ExpectedText'."
+}
+
+function Assert-ExpectedPass {
+    param([string] $Name, [string] $Path)
+
+    $result = Invoke-Gate $Path '' $Name
+    Write-Output "CASE: $Name"
+    Write-Output "EXIT_CODE: $($result.ExitCode)"
+    if ($result.ExitCode -ne 0) {
+        throw "$Name unexpectedly failed: $($result.Output)"
+    }
+    Write-Output "PASS: $Name accepted the ordinary engineering history."
 }
 
 New-Item -ItemType Directory -Force -Path $scratch | Out-Null
@@ -188,11 +219,28 @@ exit 128
     New-Repository $markerRoot -WithMarker
     Assert-ExpectedFailure 'restricted-marker' $markerRoot 'Restricted text found' ''
 
+    $processMarker = Convert-CodePoints @(102,114,111,110,116,105,101,114)
+    $subjectRoot = Join-Path $scratch 'subject-marker'
+    New-Repository $subjectRoot -CommitSubject ('fixture ' + $processMarker)
+    Assert-ExpectedFailure 'subject-marker' $subjectRoot 'Restricted text found' ''
+
+    $bodyRoot = Join-Path $scratch 'body-marker'
+    New-Repository $bodyRoot -CommitBody ('fixture ' + $processMarker)
+    Assert-ExpectedFailure 'body-marker' $bodyRoot 'Restricted text found' ''
+
+    $treeRoot = Join-Path $scratch 'historical-tree-marker'
+    New-Repository $treeRoot -TreeContentMarker $processMarker -TwoCommits
+    Assert-ExpectedFailure 'historical-tree-marker' $treeRoot 'Restricted text found' ''
+
+    $positiveRoot = Join-Path $scratch 'ordinary-engineering'
+    New-Repository $positiveRoot -CommitSubject 'fix(restore): reject unknown consumed members' -CommitBody 'Keep schema validation fail-closed.'
+    Assert-ExpectedPass 'ordinary-engineering' $positiveRoot
+
     $taskIdRoot = Join-Path $scratch 'task-id'
     New-Repository $taskIdRoot -WithTaskId
     Assert-ExpectedFailure 'history-task-identifier' $taskIdRoot 'history task identifier' ''
 
-    Write-Output 'PASS: hygiene gate rejects command failure, shallow history, tracked restricted markers, and task identifiers in disposable repositories.'
+    Write-Output 'PASS: hygiene gate rejects command failure, shallow history, metadata markers, historical-tree markers, and task identifiers in disposable repositories.'
     exit 0
 }
 finally {

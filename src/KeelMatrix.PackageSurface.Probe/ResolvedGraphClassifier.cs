@@ -3331,7 +3331,7 @@ public static class ResolvedGraphClassifier
                                 .Append(new ConditionClause(elementName, condition))
                                 .Where(clause => !string.IsNullOrWhiteSpace(clause.Expression))
                                 .ToArray();
-                            var applicability = DetermineApplicability(conditions, project, out var reason);
+                            var applicability = DetermineApplicability(conditions, project, restoreIdentities, packageRoots, out var reason);
                             if (!applicability.IsKnown)
                             {
                                 incomplete.Add($"Generated import file {Path.GetFileName(file)} has an unsupported condition on {reason!.Owner}: {reason.Message}.");
@@ -3356,7 +3356,7 @@ public static class ResolvedGraphClassifier
                     incomplete.Add($"Generated import file {Path.GetFileName(file)} exceeds the supported XML depth.");
                 }
 
-                foreach (var directImport in result.Where(import => import.SourceFile.Equals(Path.GetFileName(file), StringComparison.OrdinalIgnoreCase) && !import.IsNested).ToArray())
+                foreach (var directImport in result.Where(import => string.Equals(import.SourceFile, Path.GetFileName(file), FileSystemComparison) && !import.IsNested).ToArray())
                 {
                     string? resolutionReason = null;
                     if (directImport.Applicability.IsKnown &&
@@ -3496,7 +3496,7 @@ public static class ResolvedGraphClassifier
                                 .Append(new ConditionClause(reader.LocalName, condition))
                                 .Where(clause => !string.IsNullOrWhiteSpace(clause.Expression))
                                 .ToArray();
-                            var applicability = DetermineApplicability(clauses, project, out var failure);
+                            var applicability = DetermineApplicability(clauses, project, restoreIdentities, packageRoots, out var failure);
                             if (!applicability.IsKnown)
                             {
                                 incomplete.Add($"Nested package import contains an unsupported condition on {failure!.Owner}: {failure.Message}.");
@@ -4266,8 +4266,7 @@ public static class ResolvedGraphClassifier
         }
 
         var importedRelativePath = suffix[(secondSlash + 1)..];
-        return string.Equals(importedRelativePath.Replace('\\', '/'), expectedRelativePath.Replace('\\', '/'),
-            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+        return string.Equals(importedRelativePath.Replace('\\', '/'), expectedRelativePath.Replace('\\', '/'), FileSystemComparison);
     }
 
     private static bool TryGetPropertyIgnoreCase(JsonElement objectElement, string propertyName, out JsonElement value)
@@ -4291,13 +4290,15 @@ public static class ResolvedGraphClassifier
     private static ImportApplicability DetermineApplicability(
         IReadOnlyList<ConditionClause> conditions,
         string importProject,
+        RestoreIdentityIndex restoreIdentities,
+        IReadOnlyDictionary<string, string> packageRoots,
         out ConditionFailure? failure)
     {
         failure = null;
         ConditionNode? combined = null;
         foreach (var condition in conditions)
         {
-            var parsed = ParseCondition(condition.Expression!, importProject);
+            var parsed = ParseCondition(condition.Expression!, importProject, restoreIdentities, packageRoots);
             if (!parsed.IsKnown)
             {
                 failure = new ConditionFailure(condition.Owner, parsed.Reason!);
@@ -4310,7 +4311,11 @@ public static class ResolvedGraphClassifier
         return ImportApplicability.Known(combined);
     }
 
-    private static ParsedCondition ParseCondition(string expression, string importProject)
+    private static ParsedCondition ParseCondition(
+        string expression,
+        string importProject,
+        RestoreIdentityIndex restoreIdentities,
+        IReadOnlyDictionary<string, string> packageRoots)
     {
         if (!IsConditionWithinLimits(expression))
         {
@@ -4325,12 +4330,12 @@ public static class ResolvedGraphClassifier
 
         if (TrySplitTopLevel(normalized, "OR", out var disjunction))
         {
-            return CombineConditions(disjunction, importProject, static (left, right) => new OrCondition(left, right));
+            return CombineConditions(disjunction, importProject, restoreIdentities, packageRoots, static (left, right) => new OrCondition(left, right));
         }
 
         if (TrySplitTopLevel(normalized, "AND", out var conjunction))
         {
-            return CombineConditions(conjunction, importProject, static (left, right) => new AndCondition(left, right));
+            return CombineConditions(conjunction, importProject, restoreIdentities, packageRoots, static (left, right) => new AndCondition(left, right));
         }
 
         var comparison = PropertyComparison.Match(normalized);
@@ -4362,7 +4367,7 @@ public static class ResolvedGraphClassifier
         var exists = ExistsCondition.Match(normalized);
         if (exists.Success)
         {
-            if (TryProveExists(exists.Groups["path"].Value, importProject, out var existsValue, out var reason))
+            if (TryProveExists(exists.Groups["path"].Value, importProject, restoreIdentities, packageRoots, out var existsValue, out var reason))
             {
                 return ParsedCondition.Known(new ConstantCondition(existsValue));
             }
@@ -4376,12 +4381,14 @@ public static class ResolvedGraphClassifier
     private static ParsedCondition CombineConditions(
         IReadOnlyList<string> expressions,
         string importProject,
+        RestoreIdentityIndex restoreIdentities,
+        IReadOnlyDictionary<string, string> packageRoots,
         Func<ConditionNode, ConditionNode, ConditionNode> combine)
     {
         ConditionNode? combined = null;
         foreach (var expression in expressions)
         {
-            var parsed = ParseCondition(expression, importProject);
+            var parsed = ParseCondition(expression, importProject, restoreIdentities, packageRoots);
             if (!parsed.IsKnown)
             {
                 return ParsedCondition.Unknown($"a subexpression is unproven: {parsed.Reason}");
@@ -4393,53 +4400,86 @@ public static class ResolvedGraphClassifier
         return ParsedCondition.Known(combined!);
     }
 
-    private static bool TryProveExists(string requestedPath, string importProject, out bool exists, out string? reason)
+    private static bool TryProveExists(
+        string requestedPath,
+        string importProject,
+        RestoreIdentityIndex restoreIdentities,
+        IReadOnlyDictionary<string, string> packageRoots,
+        out bool exists,
+        out string? reason)
     {
         exists = false;
         reason = null;
-        var requested = NormalizeText(requestedPath);
-        var project = NormalizeText(importProject);
-        if (requested.StartsWith("$(NuGetPackageRoot)/", StringComparison.OrdinalIgnoreCase))
+        try
         {
-            var suffix = requested["$(NuGetPackageRoot)/".Length..];
-            if (suffix.Contains("$(", StringComparison.Ordinal) ||
-                !project.EndsWith('/' + suffix, StringComparison.OrdinalIgnoreCase))
+            if (!TryResolveExistsPath(requestedPath, restoreIdentities, packageRoots, out var requested))
+            {
+                reason = "the Exists expression is not a resolvable filesystem path";
+                return false;
+            }
+
+            if (!TryResolveExistsPath(importProject, restoreIdentities, packageRoots, out var project))
             {
                 reason = "the Exists expression is not the standard resolved-package-file guard";
                 return false;
             }
 
-            // Generated NuGet imports retain $(NuGetPackageRoot) in both the
-            // Import and Exists expressions. The resolved package file is
-            // checked independently when the asset entry is created.
-            exists = true;
-            return true;
-        }
-
-        if (requested.StartsWith("$(NuGetPackageRoot)", StringComparison.OrdinalIgnoreCase))
-        {
-            var suffix = requested["$(NuGetPackageRoot)".Length..].TrimStart('/');
-            var importSuffix = project.StartsWith("$(NuGetPackageRoot)", StringComparison.OrdinalIgnoreCase)
-                ? project["$(NuGetPackageRoot)".Length..].TrimStart('/')
-                : string.Empty;
-            if (suffix.Length == 0 || !importSuffix.Equals(suffix, StringComparison.OrdinalIgnoreCase))
+            if (FileSystemPathsEqual(requested, project))
             {
-                reason = "the Exists expression is not the standard resolved-package-file guard";
+                exists = File.Exists(requested);
+                return true;
+            }
+
+            // On a case-sensitive host, a case-only spelling difference is a
+            // proven missing path when the requested spelling is absent. If
+            // the differently-cased file exists too, the pairing is ambiguous
+            // and must remain unknown rather than being called known-true.
+            if (!OperatingSystem.IsWindows() &&
+                string.Equals(CanonicalizePath(requested), CanonicalizePath(project), StringComparison.OrdinalIgnoreCase) &&
+                !File.Exists(requested))
+            {
+                exists = false;
+                return true;
+            }
+
+            reason = "the Exists expression does not match the resolved import under the host filesystem contract";
+            return false;
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException)
+        {
+            reason = "the Exists expression contains an invalid filesystem path";
+            return false;
+        }
+    }
+
+    private static bool TryResolveExistsPath(
+        string value,
+        RestoreIdentityIndex restoreIdentities,
+        IReadOnlyDictionary<string, string> packageRoots,
+        out string resolvedPath)
+    {
+        var normalized = NormalizeText(value);
+        if (TryGetNuGetPackageRootSuffix(normalized, out var suffix))
+        {
+            if (!restoreIdentities.TryGetPackageByImportSuffix(suffix, out var packageIdentity, out var relativePath) ||
+                !packageRoots.TryGetValue(packageIdentity.CanonicalKey, out var packageRoot) ||
+                !TryNormalizeRelativePath(relativePath, out var safeRelativePath))
+            {
+                resolvedPath = string.Empty;
                 return false;
             }
 
-            exists = true;
+            resolvedPath = Path.GetFullPath(Path.Combine(packageRoot, safeRelativePath.Replace('/', Path.DirectorySeparatorChar)));
             return true;
         }
 
-        if (Path.IsPathRooted(requestedPath) &&
-            string.Equals(requested, project, StringComparison.OrdinalIgnoreCase))
+        if (Path.IsPathRooted(normalized))
         {
-            exists = File.Exists(importProject);
+            resolvedPath = Path.GetFullPath(normalized);
             return true;
         }
 
-        reason = "the Exists expression is supported only for the standard resolved-package-file guard";
+        resolvedPath = string.Empty;
         return false;
     }
 
@@ -4907,9 +4947,11 @@ public static class ResolvedGraphClassifier
             !relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal);
     }
 
+    private static StringComparison FileSystemComparison =>
+        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
     private static bool FileSystemPathsEqual(string left, string right) =>
-        string.Equals(CanonicalizePath(left), CanonicalizePath(right),
-            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+        string.Equals(CanonicalizePath(left), CanonicalizePath(right), FileSystemComparison);
 
     private static string CanonicalizePath(string path) =>
         PathCanonicalizer.Value?.Invoke(path) ?? Path.GetFullPath(path);

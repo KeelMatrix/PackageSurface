@@ -21,6 +21,8 @@ PackageSurface release history.
 
 ### Changed
 
+- Generated-import `Exists(...)` guards now follow the host filesystem casing contract while NuGet package ID/version matching remains case-insensitive; unresolved or ambiguous path comparisons fail closed with `PS007`.
+
 - Restore metadata is now validated against the native shapes emitted by supported SDKs before graph closure. The admitted restore members reject wrong primitives, nulls, array elements, map values, and malformed nested metadata with `PS007` while preserving absent-member semantics and both native dependency-value forms; the regression matrix covers SDK 8.0.425, 9.0.121, and 10.0.401 formats 3 and 4.
 
 - Restore validation now fails closed for malformed typed metadata and shares structural, import-edge, and dependency-traversal budgets across the complete invocation.

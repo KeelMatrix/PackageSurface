@@ -41,9 +41,12 @@ EXPECTED: PASS for the workflow shape and shared fail-closed release-contract re
 The exact command output for the checkout, including `git rev-parse HEAD`, `git rev-parse origin/main`, and
 `git ls-remote origin refs/heads/main`, belongs in its validation record.
 
-The history hygiene contract is defined by `scripts/test-history-hygiene.ps1`, with disposable adversarial coverage in
-`scripts/test-history-hygiene-regressions.ps1`. It checks complete non-shallow history, KeelMatrix authorship, and the
-bounded developer-coordination vocabulary, treating every maximal run of non-alphanumeric separator characters as
-equivalent between phrase tokens, in tracked material, historical trees, and commit metadata.
+The history hygiene contract has one source of truth: `scripts/test-history-hygiene.ps1`, with disposable adversarial
+coverage in `scripts/test-history-hygiene-regressions.ps1`. It checks complete non-shallow history, KeelMatrix
+authorship, and the bounded developer-coordination vocabulary. Tracked working-tree files and every reachable
+historical blob are read as whole content strings rather than line-oriented matches; commit metadata is also matched
+as whole text. Every maximal run, including an empty run, of non-alphanumeric separator characters between phrase
+tokens is equivalent, including LF, CRLF, and repeated line boundaries. Git command failures, incomplete history,
+shallow history, and task identifiers fail closed.
 
 Pinned SDK: `8.0.425`, recorded in `global.json`.

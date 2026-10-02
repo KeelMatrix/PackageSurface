@@ -84,7 +84,7 @@ try {
         throw 'The complete-history result does not include HEAD.'
     }
 
-    $separatorPattern = Convert-CodePoints @(91,94,97,45,122,48,45,57,93,43)
+    $separatorPattern = Convert-CodePoints @(91,94,97,45,122,48,45,57,93,42)
     $restricted = @(
         (Convert-CodePoints @(80,97,112,101,114,99,108,105,112)),
         (Convert-CodePoints @(67,111,100,101,120)),
@@ -125,17 +125,84 @@ try {
     $pattern = (($restricted | ForEach-Object { [regex]::Escape($_) }) + $restrictedPatterns) -join '|'
     $violations = [System.Collections.Generic.List[string]]::new()
 
+    function Test-RestrictedText {
+        param([AllowNull()][string] $Text)
+
+        return -not [string]::IsNullOrEmpty($Text) -and $Text -match $pattern
+    }
+
     foreach ($path in $tracked) {
-        $match = Invoke-GitChecked -Arguments @('grep', '-n', '-I', '-i', '-E', $pattern, '--', [string]$path) -AllowNoMatch
-        if ($match.ExitCode -eq 0) {
+        $fullPath = Join-Path $RepositoryRoot ([string]$path)
+        if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
+            throw "Tracked file '$path' is not present in the working tree."
+        }
+
+        try {
+            $bytes = [IO.File]::ReadAllBytes($fullPath)
+        }
+        catch {
+            throw "Tracked file '$path' could not be read as one complete content string. $($_.Exception.Message)"
+        }
+
+        if ($bytes -contains 0) {
+            continue
+        }
+
+        $content = [Text.Encoding]::UTF8.GetString($bytes)
+        if (Test-RestrictedText $content) {
             $violations.Add("tracked file: $path")
         }
     }
 
-    foreach ($commit in $commits) {
-        $match = Invoke-GitChecked -Arguments @('grep', '-n', '-I', '-i', '-E', $pattern, [string]$commit, '--', '.') -AllowNoMatch
-        if ($match.ExitCode -eq 0) {
-            $violations.Add("history commit: $commit")
+    $archiveRoot = Join-Path ([IO.Path]::GetTempPath()) ('packagesurface-history-' + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $archiveRoot | Out-Null
+    try {
+        foreach ($commit in $commits) {
+            $archivePath = Join-Path $archiveRoot ($commit + '.zip')
+            [void](Invoke-GitChecked @('archive', '--format=zip', "--output=$archivePath", [string]$commit))
+            if (-not (Test-Path -LiteralPath $archivePath -PathType Leaf)) {
+                throw "The historical-tree archive for commit $commit was not created."
+            }
+
+            $archive = [IO.Compression.ZipFile]::OpenRead($archivePath)
+            try {
+                foreach ($entry in $archive.Entries) {
+                    if ([string]::IsNullOrEmpty($entry.Name)) {
+                        continue
+                    }
+
+                    $memory = [IO.MemoryStream]::new()
+                    try {
+                        $entryStream = $entry.Open()
+                        try {
+                            $entryStream.CopyTo($memory)
+                        }
+                        finally {
+                            $entryStream.Dispose()
+                        }
+
+                        $bytes = $memory.ToArray()
+                        if (($bytes -contains 0) -or $bytes.Length -eq 0) {
+                            continue
+                        }
+                        $content = [Text.Encoding]::UTF8.GetString($bytes)
+                        if (Test-RestrictedText $content) {
+                            $violations.Add("historical tree: ${commit}:$($entry.FullName)")
+                        }
+                    }
+                    finally {
+                        $memory.Dispose()
+                    }
+                }
+            }
+            finally {
+                $archive.Dispose()
+            }
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $archiveRoot) {
+            Remove-Item -LiteralPath $archiveRoot -Recurse -Force
         }
     }
 
@@ -145,7 +212,7 @@ try {
             throw "The history log result does not include commit $commit."
         }
     }
-    if ($historyText.Output -match $pattern) {
+    if (Test-RestrictedText $historyText.Output) {
         $violations.Add('history metadata')
     }
     $historyTaskIdPattern = '\b(?!SHA-)[A-Z]{2,8}-[0-9]{3,6}\b'

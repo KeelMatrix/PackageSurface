@@ -41,7 +41,9 @@ EXPECTED: PASS for the workflow shape and shared fail-closed release-contract re
 The exact command output for the checkout, including `git rev-parse HEAD`, `git rev-parse origin/main`, and
 `git ls-remote origin refs/heads/main`, belongs in its validation record.
 
-The history hygiene gate checks complete non-shallow history, KeelMatrix authorship, and restricted developer-facing
-coordination markers in tracked material and commit metadata.
+The history hygiene contract is defined by `scripts/test-history-hygiene.ps1`, with disposable adversarial coverage in
+`scripts/test-history-hygiene-regressions.ps1`. It checks complete non-shallow history, KeelMatrix authorship, and the
+bounded developer-coordination vocabulary, including separator and morphological variants, in tracked material and
+commit metadata.
 
 Pinned SDK: `8.0.425`, recorded in `global.json`.

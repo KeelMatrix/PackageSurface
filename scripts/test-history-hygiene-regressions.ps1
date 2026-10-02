@@ -232,6 +232,57 @@ exit 128
     New-Repository $treeRoot -TreeContentMarker $processMarker -TwoCommits
     Assert-ExpectedFailure 'historical-tree-marker' $treeRoot 'Restricted text found' ''
 
+    $space = Convert-CodePoints @(32)
+    $hyphen = Convert-CodePoints @(45)
+    $rejected = Convert-CodePoints @(114,101,106,101,99,116,101,100)
+    $families = Convert-CodePoints @(102,97,109,105,108,105,101,115)
+    $remediation = Convert-CodePoints @(114,101,109,101,100,105,97,116,105,111,110)
+    $waves = Convert-CodePoints @(119,97,118,101,115)
+    $rounds = Convert-CodePoints @(114,111,117,110,100,115)
+    $prior = Convert-CodePoints @(112,114,105,111,114)
+    $rejections = Convert-CodePoints @(114,101,106,101,99,116,105,111,110,115)
+    $closure = Convert-CodePoints @(99,108,111,115,117,114,101)
+    $review = Convert-CodePoints @(114,101,118,105,101,119)
+    $reviews = Convert-CodePoints @(114,101,118,105,101,119,115)
+    $processes = Convert-CodePoints @(112,114,111,99,101,115,115,101,115)
+    $edge = Convert-CodePoints @(102,114,111,110,116,105,101,114)
+    $remediations = Convert-CodePoints @(114,101,109,101,100,105,97,116,105,111,110,115)
+    $founder = Convert-CodePoints @(102,111,117,110,100,101,114)
+    $approvals = Convert-CodePoints @(97,112,112,114,111,118,97,108,115)
+
+    $pluralMarker = $rejected + $space + $families + $space + $remediation + $space + $waves
+    $pluralSubjectRoot = Join-Path $scratch 'plural-subject'
+    New-Repository $pluralSubjectRoot -CommitSubject ('fixture ' + $pluralMarker)
+    Assert-ExpectedFailure 'plural-subject' $pluralSubjectRoot 'Restricted text found' ''
+
+    $pluralBodyRoot = Join-Path $scratch 'plural-body'
+    New-Repository $pluralBodyRoot -CommitBody ('fixture ' + $pluralMarker)
+    Assert-ExpectedFailure 'plural-body' $pluralBodyRoot 'Restricted text found' ''
+
+    $pluralTreeRoot = Join-Path $scratch 'plural-tree'
+    New-Repository $pluralTreeRoot -TreeContentMarker $pluralMarker -TwoCommits
+    Assert-ExpectedFailure 'plural-tree' $pluralTreeRoot 'Restricted text found' ''
+
+    $variantMarkers = @(
+        ($rejected + $hyphen + $families),
+        ($remediation + $hyphen + $waves),
+        ($remediation + $hyphen + $rounds),
+        ($prior + $hyphen + $rejections),
+        ($closure + $space + $reviews),
+        ($review + $hyphen + $processes),
+        ($edge + $space + $reviews),
+        ($edge + $hyphen + $remediations),
+        ($founder + $space + $edge + 's'),
+        ($founder + $hyphen + $reviews),
+        ($founder + $space + $rejections),
+        ($founder + $hyphen + $approvals)
+    )
+    for ($index = 0; $index -lt $variantMarkers.Count; $index++) {
+        $variantRoot = Join-Path $scratch ('variant-' + $index)
+        New-Repository $variantRoot -CommitSubject ('fixture ' + $variantMarkers[$index])
+        Assert-ExpectedFailure ('variant-' + $index) $variantRoot 'Restricted text found' ''
+    }
+
     $positiveRoot = Join-Path $scratch 'ordinary-engineering'
     New-Repository $positiveRoot -CommitSubject 'fix(restore): reject unknown consumed members' -CommitBody 'Keep schema validation fail-closed.'
     Assert-ExpectedPass 'ordinary-engineering' $positiveRoot

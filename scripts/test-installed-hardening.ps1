@@ -117,39 +117,67 @@ try {
         Write-Output "EXISTS_CASE=$Label PASS active=$([bool]$entry.active)"
     }
 
+    function Assert-CaseUnknown([object] $Scenario, [string] $Label) {
+        $scan = Invoke-Tool @('scan', $Scenario.AssetsPath, '--format', 'json', '--no-telemetry')
+        Require ($scan.ExitCode -eq 2 -and $scan.Output.Contains('PS007', [StringComparison]::Ordinal)) "$Label was not rejected as an unknown Exists() comparison on this case-insensitive volume: $($scan.Output)"
+        Write-Output "EXISTS_CASE=$Label PASS unknown=PS007"
+    }
+
     $wrongRootCondition = '$(NuGetPackageRoot)/Case.Package/1.0.0/build/case.targets'
     $correctRootCondition = '$(NuGetPackageRoot)/Case.Package/1.0.0/build/Case.targets'
     $rootScenario = New-CaseScenario 'exists-root-slash' '$(NuGetPackageRoot)/Case.Package/1.0.0/build/Case.targets' $wrongRootCondition
-    $expectedWrongCaseActive = [bool]$IsWindows
-    Assert-CaseScan $rootScenario 'root-slash-wrong-case' $expectedWrongCaseActive
-
-    $normalBaseline = Join-Path $scratch 'exists-normal-baseline.json'
-    $normalBaselineResult = Invoke-Tool @('baseline', $rootScenario.AssetsPath, '--output', $normalBaseline, '--format', 'json', '--no-telemetry')
-    Require ($normalBaselineResult.ExitCode -eq 0) "Exists() normal baseline failed: $($normalBaselineResult.Output)"
-    Write-CaseImport $rootScenario.GeneratedTargets '$(NuGetPackageRoot)/Case.Package/1.0.0/build/Case.targets' $correctRootCondition
-    $normalTransition = Invoke-Tool @('check', $rootScenario.AssetsPath, '--baseline', $normalBaseline, '--format', 'text', '--no-telemetry')
+    $caseSensitiveVolume = -not (Test-Path -LiteralPath (Join-Path $rootScenario.PackageRoot 'build/case.targets'))
     if ($IsWindows) {
-        Require ($normalTransition.ExitCode -eq 0) "Windows Exists() condition casing changed the active surface unexpectedly: $($normalTransition.Output)"
+        Assert-CaseScan $rootScenario 'root-slash-wrong-case' $true
+    }
+    elseif ($caseSensitiveVolume) {
+        Assert-CaseScan $rootScenario 'root-slash-wrong-case' $false
     }
     else {
-        Require ($normalTransition.ExitCode -eq 1 -and $normalTransition.Output.Contains('PS003', [StringComparison]::Ordinal)) 'A case-only Exists() correction did not detect the newly active surface in normal mode.'
+        Assert-CaseUnknown $rootScenario 'root-slash-wrong-case'
     }
 
-    Write-CaseImport $rootScenario.GeneratedTargets '$(NuGetPackageRoot)/Case.Package/1.0.0/build/Case.targets' $wrongRootCondition
-    $strictBaseline = Join-Path $scratch 'exists-strict-baseline.json'
-    $strictBaselineResult = Invoke-Tool @('baseline', $rootScenario.AssetsPath, '--output', $strictBaseline, '--strict-content', '--format', 'json', '--no-telemetry')
-    Require ($strictBaselineResult.ExitCode -eq 0) "Exists() strict baseline failed: $($strictBaselineResult.Output)"
-    Write-CaseImport $rootScenario.GeneratedTargets '$(NuGetPackageRoot)/Case.Package/1.0.0/build/Case.targets' $correctRootCondition
-    $strictTransition = Invoke-Tool @('check', $rootScenario.AssetsPath, '--baseline', $strictBaseline, '--strict-content', '--format', 'text', '--no-telemetry')
-    if ($IsWindows) {
-        Require ($strictTransition.ExitCode -eq 0) "Windows strict Exists() condition casing changed the active surface unexpectedly: $($strictTransition.Output)"
+    if ($IsWindows -or $caseSensitiveVolume) {
+        $normalBaseline = Join-Path $scratch 'exists-normal-baseline.json'
+        $normalBaselineResult = Invoke-Tool @('baseline', $rootScenario.AssetsPath, '--output', $normalBaseline, '--format', 'json', '--no-telemetry')
+        Require ($normalBaselineResult.ExitCode -eq 0) "Exists() normal baseline failed: $($normalBaselineResult.Output)"
+        Write-CaseImport $rootScenario.GeneratedTargets '$(NuGetPackageRoot)/Case.Package/1.0.0/build/Case.targets' $correctRootCondition
+        $normalTransition = Invoke-Tool @('check', $rootScenario.AssetsPath, '--baseline', $normalBaseline, '--format', 'text', '--no-telemetry')
+        if ($IsWindows) {
+            Require ($normalTransition.ExitCode -eq 0) "Windows Exists() condition casing changed the active surface unexpectedly: $($normalTransition.Output)"
+        }
+        else {
+            Require ($normalTransition.ExitCode -eq 1 -and $normalTransition.Output.Contains('PS003', [StringComparison]::Ordinal)) 'A case-only Exists() correction did not detect the newly active surface in normal mode.'
+        }
+
+        Write-CaseImport $rootScenario.GeneratedTargets '$(NuGetPackageRoot)/Case.Package/1.0.0/build/Case.targets' $wrongRootCondition
+        $strictBaseline = Join-Path $scratch 'exists-strict-baseline.json'
+        $strictBaselineResult = Invoke-Tool @('baseline', $rootScenario.AssetsPath, '--output', $strictBaseline, '--strict-content', '--format', 'json', '--no-telemetry')
+        Require ($strictBaselineResult.ExitCode -eq 0) "Exists() strict baseline failed: $($strictBaselineResult.Output)"
+        Write-CaseImport $rootScenario.GeneratedTargets '$(NuGetPackageRoot)/Case.Package/1.0.0/build/Case.targets' $correctRootCondition
+        $strictTransition = Invoke-Tool @('check', $rootScenario.AssetsPath, '--baseline', $strictBaseline, '--strict-content', '--format', 'text', '--no-telemetry')
+        if ($IsWindows) {
+            Require ($strictTransition.ExitCode -eq 0) "Windows strict Exists() condition casing changed the active surface unexpectedly: $($strictTransition.Output)"
+        }
+        else {
+            Require ($strictTransition.ExitCode -eq 1 -and $strictTransition.Output.Contains('PS003', [StringComparison]::Ordinal)) 'A case-only Exists() correction did not detect the newly active surface in strict-content mode.'
+        }
     }
     else {
-        Require ($strictTransition.ExitCode -eq 1 -and $strictTransition.Output.Contains('PS003', [StringComparison]::Ordinal)) 'A case-only Exists() correction did not detect the newly active surface in strict-content mode.'
+        Write-Output 'EXISTS_CASE=normal-transition SKIP case-insensitive-volume'
+        Write-Output 'EXISTS_CASE=strict-transition SKIP case-insensitive-volume'
     }
 
     $separatorScenario = New-CaseScenario 'exists-root-no-slash' '$(NuGetPackageRoot)Case.Package\1.0.0\build\Case.targets' '$(NuGetPackageRoot)Case.Package\1.0.0\build\case.targets'
-    Assert-CaseScan $separatorScenario 'root-no-slash-separator-variant' $expectedWrongCaseActive
+    if ($IsWindows) {
+        Assert-CaseScan $separatorScenario 'root-no-slash-separator-variant' $true
+    }
+    elseif ($caseSensitiveVolume) {
+        Assert-CaseScan $separatorScenario 'root-no-slash-separator-variant' $false
+    }
+    else {
+        Assert-CaseUnknown $separatorScenario 'root-no-slash-separator-variant'
+    }
     Write-CaseImport $separatorScenario.GeneratedTargets '$(NuGetPackageRoot)Case.Package\1.0.0\build\Case.targets' '$(NuGetPackageRoot)Case.Package\1.0.0\build\Case.targets'
     Assert-CaseScan $separatorScenario 'root-no-slash-correct-case' $true
 
@@ -157,9 +185,17 @@ try {
     $absoluteProject = Join-Path $absoluteScenario.PackageRoot 'build/Case.targets'
     Write-CaseImport $absoluteScenario.GeneratedTargets $absoluteProject $absoluteProject
     Assert-CaseScan $absoluteScenario 'absolute-correct-case' $true
-    $absoluteWrong = $absoluteProject.ToLowerInvariant()
+    $absoluteWrong = Join-Path $absoluteScenario.PackageRoot 'build/case.targets'
     Write-CaseImport $absoluteScenario.GeneratedTargets $absoluteProject $absoluteWrong
-    Assert-CaseScan $absoluteScenario 'absolute-wrong-case' $expectedWrongCaseActive
+    if ($IsWindows) {
+        Assert-CaseScan $absoluteScenario 'absolute-wrong-case' $true
+    }
+    elseif ($caseSensitiveVolume) {
+        Assert-CaseScan $absoluteScenario 'absolute-wrong-case' $false
+    }
+    else {
+        Assert-CaseUnknown $absoluteScenario 'absolute-wrong-case'
+    }
 
     $oversized = Join-Path $scratch 'oversized.assets.json'
     $stream = [IO.File]::Open($oversized, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)

@@ -66,6 +66,101 @@ try {
     $dynamic = Invoke-Tool @('scan', $assetsPath, '--format', 'json', '--no-telemetry')
     Require ($dynamic.ExitCode -eq 2 -and $dynamic.Output.Contains('PS007', [StringComparison]::Ordinal) -and -not $dynamic.Output.Contains('SensitiveDynamicImportMarker', [StringComparison]::Ordinal)) 'Installed dynamic nested import did not fail closed without disclosure.'
 
+    function Write-CaseImport([string] $Path, [string] $Project, [string] $ConditionPath) {
+        $xml = "<Project><Import Project=`"$Project`" Condition=`"Exists('$ConditionPath')`" /></Project>"
+        [IO.File]::WriteAllText($Path, $xml, [Text.UTF8Encoding]::new($false))
+    }
+
+    function New-CaseScenario([string] $Name, [string] $Project, [string] $ConditionPath) {
+        $caseRoot = Join-Path $scratch $Name
+        $caseObj = Join-Path $caseRoot 'obj'
+        $caseCache = Join-Path $caseRoot 'packages'
+        $casePackageRoot = Join-Path $caseCache 'Case.Package/1.0.0'
+        New-Item -ItemType Directory -Force -Path $caseObj, (Join-Path $casePackageRoot 'build') | Out-Null
+        $caseProject = Join-Path $caseRoot 'Case.csproj'
+        [IO.File]::WriteAllText($caseProject, '<Project />', [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $casePackageRoot 'build/Case.targets'), '<Project><Target Name="CaseTarget" /></Project>', [Text.UTF8Encoding]::new($false))
+
+        $caseKey = 'Case.Package/1.0.0'
+        $caseAssets = @{
+            version = 3
+            targets = @{ 'net8.0' = @{ $caseKey = @{ build = @{ 'build/Case.targets' = @{} } } } }
+            libraries = @{ $caseKey = @{ type = 'package'; path = $caseKey; files = @('build/Case.targets') } }
+            packageFolders = @{ $caseCache = @{} }
+            project = @{
+                restore = @{ projectPath = $caseProject }
+                frameworks = @{ 'net8.0' = @{ dependencies = @{ 'Case.Package' = @{ target = 'Package'; version = '[1.0.0, )' } } } }
+            }
+        }
+        $caseAssetsPath = Join-Path $caseObj 'project.assets.json'
+        Write-JsonFile $caseAssetsPath $caseAssets
+        [IO.File]::WriteAllText((Join-Path $caseObj 'Case.csproj.nuget.g.props'), '<Project />', [Text.UTF8Encoding]::new($false))
+        $caseGeneratedTargets = Join-Path $caseObj 'Case.csproj.nuget.g.targets'
+        Write-CaseImport $caseGeneratedTargets $Project $ConditionPath
+        [pscustomobject]@{
+            AssetsPath = $caseAssetsPath
+            GeneratedTargets = $caseGeneratedTargets
+            PackageRoot = $casePackageRoot
+        }
+    }
+
+    function Get-CaseEntry([object] $ScanResult) {
+        if ($ScanResult.ExitCode -ne 0) { return $null }
+        $document = $ScanResult.Output | ConvertFrom-Json
+        return @($document.entries | Where-Object { $_.packageRelativePath -eq 'build/Case.targets' })[0]
+    }
+
+    function Assert-CaseScan([object] $Scenario, [string] $Label, [bool] $ExpectedActive) {
+        $scan = Invoke-Tool @('scan', $Scenario.AssetsPath, '--format', 'json', '--no-telemetry')
+        $entry = Get-CaseEntry $scan
+        Require ($scan.ExitCode -eq 0 -and $null -ne $entry -and [bool]$entry.active -eq $ExpectedActive) "$Label did not resolve Exists() with the expected host-filesystem result: $($scan.Output)"
+        Write-Output "EXISTS_CASE=$Label PASS active=$([bool]$entry.active)"
+    }
+
+    $wrongRootCondition = '$(NuGetPackageRoot)/Case.Package/1.0.0/build/case.targets'
+    $correctRootCondition = '$(NuGetPackageRoot)/Case.Package/1.0.0/build/Case.targets'
+    $rootScenario = New-CaseScenario 'exists-root-slash' '$(NuGetPackageRoot)/Case.Package/1.0.0/build/Case.targets' $wrongRootCondition
+    $expectedWrongCaseActive = [bool]$IsWindows
+    Assert-CaseScan $rootScenario 'root-slash-wrong-case' $expectedWrongCaseActive
+
+    $normalBaseline = Join-Path $scratch 'exists-normal-baseline.json'
+    $normalBaselineResult = Invoke-Tool @('baseline', $rootScenario.AssetsPath, '--output', $normalBaseline, '--format', 'json', '--no-telemetry')
+    Require ($normalBaselineResult.ExitCode -eq 0) "Exists() normal baseline failed: $($normalBaselineResult.Output)"
+    Write-CaseImport $rootScenario.GeneratedTargets '$(NuGetPackageRoot)/Case.Package/1.0.0/build/Case.targets' $correctRootCondition
+    $normalTransition = Invoke-Tool @('check', $rootScenario.AssetsPath, '--baseline', $normalBaseline, '--format', 'text', '--no-telemetry')
+    if ($IsWindows) {
+        Require ($normalTransition.ExitCode -eq 0) "Windows Exists() condition casing changed the active surface unexpectedly: $($normalTransition.Output)"
+    }
+    else {
+        Require ($normalTransition.ExitCode -eq 1 -and $normalTransition.Output.Contains('PS003', [StringComparison]::Ordinal)) 'A case-only Exists() correction did not detect the newly active surface in normal mode.'
+    }
+
+    Write-CaseImport $rootScenario.GeneratedTargets '$(NuGetPackageRoot)/Case.Package/1.0.0/build/Case.targets' $wrongRootCondition
+    $strictBaseline = Join-Path $scratch 'exists-strict-baseline.json'
+    $strictBaselineResult = Invoke-Tool @('baseline', $rootScenario.AssetsPath, '--output', $strictBaseline, '--strict-content', '--format', 'json', '--no-telemetry')
+    Require ($strictBaselineResult.ExitCode -eq 0) "Exists() strict baseline failed: $($strictBaselineResult.Output)"
+    Write-CaseImport $rootScenario.GeneratedTargets '$(NuGetPackageRoot)/Case.Package/1.0.0/build/Case.targets' $correctRootCondition
+    $strictTransition = Invoke-Tool @('check', $rootScenario.AssetsPath, '--baseline', $strictBaseline, '--strict-content', '--format', 'text', '--no-telemetry')
+    if ($IsWindows) {
+        Require ($strictTransition.ExitCode -eq 0) "Windows strict Exists() condition casing changed the active surface unexpectedly: $($strictTransition.Output)"
+    }
+    else {
+        Require ($strictTransition.ExitCode -eq 1 -and $strictTransition.Output.Contains('PS003', [StringComparison]::Ordinal)) 'A case-only Exists() correction did not detect the newly active surface in strict-content mode.'
+    }
+
+    $separatorScenario = New-CaseScenario 'exists-root-no-slash' '$(NuGetPackageRoot)Case.Package\1.0.0\build\Case.targets' '$(NuGetPackageRoot)Case.Package\1.0.0\build\case.targets'
+    Assert-CaseScan $separatorScenario 'root-no-slash-separator-variant' $expectedWrongCaseActive
+    Write-CaseImport $separatorScenario.GeneratedTargets '$(NuGetPackageRoot)Case.Package\1.0.0\build\Case.targets' '$(NuGetPackageRoot)Case.Package\1.0.0\build\Case.targets'
+    Assert-CaseScan $separatorScenario 'root-no-slash-correct-case' $true
+
+    $absoluteScenario = New-CaseScenario 'exists-absolute' '$(NuGetPackageRoot)/Case.Package/1.0.0/build/Case.targets' '$(NuGetPackageRoot)/Case.Package/1.0.0/build/Case.targets'
+    $absoluteProject = Join-Path $absoluteScenario.PackageRoot 'build/Case.targets'
+    Write-CaseImport $absoluteScenario.GeneratedTargets $absoluteProject $absoluteProject
+    Assert-CaseScan $absoluteScenario 'absolute-correct-case' $true
+    $absoluteWrong = $absoluteProject.ToLowerInvariant()
+    Write-CaseImport $absoluteScenario.GeneratedTargets $absoluteProject $absoluteWrong
+    Assert-CaseScan $absoluteScenario 'absolute-wrong-case' $expectedWrongCaseActive
+
     $oversized = Join-Path $scratch 'oversized.assets.json'
     $stream = [IO.File]::Open($oversized, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
     try { $stream.SetLength((16 * 1024 * 1024) + 1) } finally { $stream.Dispose() }

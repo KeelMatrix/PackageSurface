@@ -84,6 +84,7 @@ try {
         throw 'The complete-history result does not include HEAD.'
     }
 
+    $separatorPattern = Convert-CodePoints @(91,45,32,93)
     $restricted = @(
         (Convert-CodePoints @(80,97,112,101,114,99,108,105,112)),
         (Convert-CodePoints @(67,111,100,101,120)),
@@ -107,7 +108,21 @@ try {
         (Convert-CodePoints @(102,111,117,110,100,101,114,32,114,101,106,101,99,116,105,111,110)),
         (Convert-CodePoints @(102,111,117,110,100,101,114,32,97,112,112,114,111,118,97,108))
     )
-    $pattern = ($restricted | ForEach-Object { [regex]::Escape($_) }) -join '|'
+    $restrictedPatterns = @(
+        ((Convert-CodePoints @(114,101,106,101,99,116,101,100)) + $separatorPattern + (Convert-CodePoints @(102,97,109,105,108)) + '(y|ies)'),
+        ((Convert-CodePoints @(114,101,109,101,100,105,97,116,105,111,110)) + $separatorPattern + (Convert-CodePoints @(119,97,118,101)) + '(s)?'),
+        ((Convert-CodePoints @(114,101,109,101,100,105,97,116,105,111,110)) + $separatorPattern + (Convert-CodePoints @(114,111,117,110,100)) + '(s)?'),
+        ((Convert-CodePoints @(112,114,105,111,114)) + $separatorPattern + (Convert-CodePoints @(114,101,106,101,99,116,105,111,110)) + '(s)?'),
+        ((Convert-CodePoints @(99,108,111,115,117,114,101)) + $separatorPattern + (Convert-CodePoints @(114,101,118,105,101,119)) + '(s)?'),
+        ((Convert-CodePoints @(114,101,118,105,101,119)) + $separatorPattern + (Convert-CodePoints @(112,114,111,99,101,115,115)) + '(es)?'),
+        ((Convert-CodePoints @(102,114,111,110,116,105,101,114)) + $separatorPattern + (Convert-CodePoints @(114,101,118,105,101,119)) + '(s)?'),
+        ((Convert-CodePoints @(102,114,111,110,116,105,101,114)) + $separatorPattern + (Convert-CodePoints @(114,101,109,101,100,105,97,116,105,111,110)) + '(s)?'),
+        ((Convert-CodePoints @(102,111,117,110,100,101,114)) + $separatorPattern + (Convert-CodePoints @(102,114,111,110,116,105,101,114)) + '(s)?'),
+        ((Convert-CodePoints @(102,111,117,110,100,101,114)) + $separatorPattern + (Convert-CodePoints @(114,101,118,105,101,119)) + '(s)?'),
+        ((Convert-CodePoints @(102,111,117,110,100,101,114)) + $separatorPattern + (Convert-CodePoints @(114,101,106,101,99,116,105,111,110)) + '(s)?'),
+        ((Convert-CodePoints @(102,111,117,110,100,101,114)) + $separatorPattern + (Convert-CodePoints @(97,112,112,114,111,118,97,108)) + '(s)?')
+    )
+    $pattern = (($restricted | ForEach-Object { [regex]::Escape($_) }) + $restrictedPatterns) -join '|'
     $violations = [System.Collections.Generic.List[string]]::new()
 
     foreach ($path in $tracked) {

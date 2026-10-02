@@ -43,7 +43,7 @@ The exact command output for the checkout, including `git rev-parse HEAD`, `git 
 
 The history hygiene contract is defined by `scripts/test-history-hygiene.ps1`, with disposable adversarial coverage in
 `scripts/test-history-hygiene-regressions.ps1`. It checks complete non-shallow history, KeelMatrix authorship, and the
-bounded developer-coordination vocabulary, including separator and morphological variants, in tracked material and
-commit metadata.
+bounded developer-coordination vocabulary, treating every maximal run of non-alphanumeric separator characters as
+equivalent between phrase tokens, in tracked material, historical trees, and commit metadata.
 
 Pinned SDK: `8.0.425`, recorded in `global.json`.

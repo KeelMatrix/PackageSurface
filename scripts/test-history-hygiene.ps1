@@ -84,7 +84,7 @@ try {
         throw 'The complete-history result does not include HEAD.'
     }
 
-    $separatorPattern = Convert-CodePoints @(91,45,32,93)
+    $separatorPattern = Convert-CodePoints @(91,94,97,45,122,48,45,57,93,43)
     $restricted = @(
         (Convert-CodePoints @(80,97,112,101,114,99,108,105,112)),
         (Convert-CodePoints @(67,111,100,101,120)),

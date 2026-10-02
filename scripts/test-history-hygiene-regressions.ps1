@@ -126,7 +126,7 @@ function Assert-ExpectedFailure {
         throw "$Name unexpectedly passed."
     }
     if ($result.Output -notmatch [regex]::Escape($ExpectedText)) {
-        throw "$Name did not report '$ExpectedText'."
+        throw "$Name did not report '$ExpectedText'. Output: $($result.Output)"
     }
     Write-Output "PASS: $Name rejected with the expected diagnostic class '$ExpectedText'."
 }
@@ -182,9 +182,18 @@ switch ($Arguments[0]) {
         if ($scenario -eq 'incomplete-history') { Write-Output ('2' * 40); exit 0 }
         Write-Output ('1' * 40); exit 0
     }
-    'grep' {
-        if ($scenario -eq 'error-grep') { exit 128 }
-        exit 1
+    'archive' {
+        if ($scenario -eq 'error-archive') { exit 128 }
+        $outputArgument = @($Arguments | Where-Object { $_ -like '--output=*' })[0]
+        $outputPath = $outputArgument.Substring(9)
+        $zip = [IO.Compression.ZipFile]::Open($outputPath, [IO.Compression.ZipArchiveMode]::Create)
+        try {
+            $entry = $zip.CreateEntry('tracked.txt')
+            $writer = [IO.StreamWriter]::new($entry.Open())
+            try { $writer.Write('fixture content') } finally { $writer.Dispose() }
+        }
+        finally { $zip.Dispose() }
+        exit 0
     }
     'log' {
         if ($scenario -eq 'empty-log') { exit 0 }
@@ -200,7 +209,7 @@ exit 128
         @{ Name = 'empty-tracked-output'; Scenario = 'empty-tracked'; Expected = 'returned no required output' },
         @{ Name = 'empty-history-output'; Scenario = 'empty-history'; Expected = 'returned no required output' },
         @{ Name = 'incomplete-history-output'; Scenario = 'incomplete-history'; Expected = 'does not include HEAD' },
-        @{ Name = 'git-grep-failure'; Scenario = 'error-grep'; Expected = 'git grep' },
+        @{ Name = 'git-tree-read-failure'; Scenario = 'error-archive'; Expected = 'git archive' },
         @{ Name = 'empty-log-output'; Scenario = 'empty-log'; Expected = 'git log --all' },
         @{ Name = 'git-log-failure'; Scenario = 'error-log'; Expected = 'git log' }
     )
@@ -234,6 +243,9 @@ exit 128
 
     $space = Convert-CodePoints @(32)
     $doubleSpace = $space + $space
+    $tab = Convert-CodePoints @(9)
+    $lineFeed = Convert-CodePoints @(10)
+    $carriageReturn = Convert-CodePoints @(13)
     $hyphen = Convert-CodePoints @(45)
     $underscore = Convert-CodePoints @(95)
     $slash = Convert-CodePoints @(47)
@@ -255,57 +267,101 @@ exit 128
     $approvals = Convert-CodePoints @(97,112,112,114,111,118,97,108,115)
     $mixedRejected = Convert-CodePoints @(82,101,106,101,99,116,101,100)
     $mixedFamilies = Convert-CodePoints @(70,97,109,105,108,105,101,115)
+    $mixedRemediation = Convert-CodePoints @(82,101,109,101,100,105,97,116,105,111,110)
+    $mixedWaves = Convert-CodePoints @(87,97,118,101,115)
+    $mixedReview = Convert-CodePoints @(82,101,118,105,101,119)
+    $mixedProcesses = Convert-CodePoints @(80,114,111,99,101,115,115,101,115)
 
-    $pluralMarker = $rejected + $space + $families + $space + $remediation + $space + $waves
-    $pluralSubjectRoot = Join-Path $scratch 'plural-subject'
-    New-Repository $pluralSubjectRoot -CommitSubject ('fixture ' + $pluralMarker)
-    Assert-ExpectedFailure 'plural-subject' $pluralSubjectRoot 'Restricted text found' ''
-
-    $pluralBodyRoot = Join-Path $scratch 'plural-body'
-    New-Repository $pluralBodyRoot -CommitBody ('fixture ' + $pluralMarker)
-    Assert-ExpectedFailure 'plural-body' $pluralBodyRoot 'Restricted text found' ''
-
-    $pluralTreeRoot = Join-Path $scratch 'plural-tree'
-    New-Repository $pluralTreeRoot -TreeContentMarker $pluralMarker -TwoCommits
-    Assert-ExpectedFailure 'plural-tree' $pluralTreeRoot 'Restricted text found' ''
-
-    $variantMarkers = @(
-        @{ Name = 'case-00'; Marker = $rejected + $underscore + $families },
-        @{ Name = 'case-01'; Marker = $review + $slash + $processes },
-        @{ Name = 'case-02'; Marker = $review + $dot + $processes },
-        @{ Name = 'case-03'; Marker = $rejected + $doubleSpace + $families },
-        @{ Name = 'case-04'; Marker = $rejected + $underscore + $hyphen + $underscore + $families },
-        @{ Name = 'case-05'; Marker = $mixedRejected + $underscore + $mixedFamilies },
-        @{ Name = 'case-06'; Marker = $rejected + $hyphen + $families },
-        @{ Name = 'case-07'; Marker = $remediation + $hyphen + $waves },
-        @{ Name = 'case-08'; Marker = $remediation + $hyphen + $rounds },
-        @{ Name = 'case-09'; Marker = $prior + $hyphen + $rejections },
-        @{ Name = 'case-10'; Marker = $closure + $space + $reviews },
-        @{ Name = 'case-11'; Marker = $edge + $space + $reviews },
-        @{ Name = 'case-12'; Marker = $edge + $hyphen + $remediations },
-        @{ Name = 'case-13'; Marker = $founder + $space + $edge + 's' },
-        @{ Name = 'case-14'; Marker = $founder + $hyphen + $reviews },
-        @{ Name = 'case-15'; Marker = $founder + $space + $rejections },
-        @{ Name = 'case-16'; Marker = $founder + $hyphen + $approvals }
+    $phrasePairs = @(
+        @{ Name = 'pair-00'; Left = $rejected; Right = $families; MixedLeft = $mixedRejected; MixedRight = $mixedFamilies },
+        @{ Name = 'pair-01'; Left = $remediation; Right = $waves; MixedLeft = $mixedRemediation; MixedRight = $mixedWaves },
+        @{ Name = 'pair-02'; Left = $remediation; Right = $rounds },
+        @{ Name = 'pair-03'; Left = $prior; Right = $rejections },
+        @{ Name = 'pair-04'; Left = $closure; Right = $reviews },
+        @{ Name = 'pair-05'; Left = $review; Right = $processes; MixedLeft = $mixedReview; MixedRight = $mixedProcesses },
+        @{ Name = 'pair-06'; Left = $edge; Right = $reviews },
+        @{ Name = 'pair-07'; Left = $edge; Right = $remediations },
+        @{ Name = 'pair-08'; Left = $founder; Right = $edge + 's' },
+        @{ Name = 'pair-09'; Left = $founder; Right = $reviews },
+        @{ Name = 'pair-10'; Left = $founder; Right = $rejections },
+        @{ Name = 'pair-11'; Left = $founder; Right = $approvals }
     )
-    for ($index = 0; $index -lt $variantMarkers.Count; $index++) {
-        $variant = $variantMarkers[$index]
+    $separatorCases = @(
+        @{ Name = 'none'; Separator = '' },
+        @{ Name = 'single'; Separator = $space },
+        @{ Name = 'repeated'; Separator = $doubleSpace },
+        @{ Name = 'tab'; Separator = $tab },
+        @{ Name = 'underscore'; Separator = $underscore },
+        @{ Name = 'hyphen'; Separator = $hyphen },
+        @{ Name = 'slash'; Separator = $slash },
+        @{ Name = 'dot'; Separator = $dot },
+        @{ Name = 'mixed-punctuation'; Separator = $underscore + $hyphen + $slash + $dot },
+        @{ Name = 'lf'; Separator = $lineFeed },
+        @{ Name = 'crlf'; Separator = $carriageReturn + $lineFeed },
+        @{ Name = 'double-line'; Separator = $lineFeed + $lineFeed },
+        @{ Name = 'mixed-case'; Separator = $space; MixedCase = $true },
+        @{ Name = 'leading-trailing'; Separator = $space; LeadingTrailing = $true }
+    )
 
-        $subjectRoot = Join-Path $scratch ('variant-subject-' + $variant.Name)
-        New-Repository $subjectRoot -CommitSubject ('fixture ' + $variant.Marker)
-        Assert-ExpectedFailure ('variant-subject-' + $variant.Name) $subjectRoot 'Restricted text found' ''
+    function New-CaseMarker {
+        param([hashtable] $Pair, [hashtable] $SeparatorCase)
 
-        $bodyRoot = Join-Path $scratch ('variant-body-' + $variant.Name)
-        New-Repository $bodyRoot -CommitBody ('fixture ' + $variant.Marker)
-        Assert-ExpectedFailure ('variant-body-' + $variant.Name) $bodyRoot 'Restricted text found' ''
+        $left = $Pair.Left
+        $right = $Pair.Right
+        if ($SeparatorCase.MixedCase) {
+            if ($null -eq $Pair.MixedLeft -or $null -eq $Pair.MixedRight) {
+                throw "Missing mixed-case pair data for $($Pair.Name)."
+            }
+            $left = $Pair.MixedLeft
+            $right = $Pair.MixedRight
+        }
 
-        $treeRoot = Join-Path $scratch ('variant-tree-' + $variant.Name)
-        New-Repository $treeRoot -TreeContentMarker $variant.Marker -TwoCommits
-        Assert-ExpectedFailure ('variant-tree-' + $variant.Name) $treeRoot 'Restricted text found' ''
+        $marker = $left + $SeparatorCase.Separator + $right
+        if ($SeparatorCase.LeadingTrailing) {
+            $marker = $space + $marker + $space
+        }
+        return $marker
+    }
+
+    $matrixCases = [System.Collections.Generic.List[object]]::new()
+    $seenCases = [System.Collections.Generic.HashSet[string]]::new()
+    foreach ($pair in $phrasePairs[0..1]) {
+        foreach ($separatorCase in $separatorCases) {
+            foreach ($location in @('subject', 'body', 'tree')) {
+                $key = "$($pair.Name)|$location|$($separatorCase.Name)"
+                if ($seenCases.Add($key)) {
+                    $matrixCases.Add([pscustomobject]@{ Pair = $pair; SeparatorCase = $separatorCase; Location = $location })
+                }
+            }
+        }
+    }
+    foreach ($pair in $phrasePairs) {
+        foreach ($separatorName in @('lf', 'crlf')) {
+            $separatorCase = $separatorCases | Where-Object Name -eq $separatorName
+            $key = "$($pair.Name)|tree|$separatorName"
+            if ($seenCases.Add($key)) {
+                $matrixCases.Add([pscustomobject]@{ Pair = $pair; SeparatorCase = $separatorCase; Location = 'tree' })
+            }
+        }
+    }
+    if ($matrixCases.Count -ne 104) {
+        throw "Unexpected hygiene matrix size: $($matrixCases.Count)."
+    }
+
+    foreach ($matrixCase in $matrixCases) {
+        $marker = New-CaseMarker $matrixCase.Pair $matrixCase.SeparatorCase
+        $caseName = "matrix-$($matrixCase.Pair.Name)-$($matrixCase.Location)-$($matrixCase.SeparatorCase.Name)"
+        $caseRoot = Join-Path $scratch $caseName
+        switch ($matrixCase.Location) {
+            'subject' { New-Repository $caseRoot -CommitSubject ('fixture ' + $marker) }
+            'body' { New-Repository $caseRoot -CommitBody ('fixture ' + $marker) }
+            'tree' { New-Repository $caseRoot -TreeContentMarker $marker -TwoCommits }
+        }
+        Assert-ExpectedFailure $caseName $caseRoot 'Restricted text found' ''
     }
 
     $positiveRoot = Join-Path $scratch 'ordinary-engineering'
-    New-Repository $positiveRoot -CommitSubject 'fix(restore): reject unknown consumed members' -CommitBody 'Keep schema validation fail-closed.'
+    New-Repository $positiveRoot -CommitSubject 'fix(restore): reject unknown consumed members' -CommitBody 'review reject fix remediation' -TreeContentMarker 'review reject fix remediation'
     Assert-ExpectedPass 'ordinary-engineering' $positiveRoot
 
     $taskIdRoot = Join-Path $scratch 'task-id'

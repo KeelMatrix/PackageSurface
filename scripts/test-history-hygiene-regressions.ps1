@@ -607,7 +607,7 @@ exit 128
     }
 
     $positiveRoot = Join-Path $scratch 'ordinary-engineering'
-    New-Repository $positiveRoot -CommitSubject 'fix(restore): reject unknown consumed members' -CommitBody 'review reject fix remediation' -TreeContentMarker 'review reject fix remediation'
+    New-Repository $positiveRoot -CommitSubject 'fix(restore): reject unknown consumed members' -CommitBody 'review reject fix remediation candidate gaps' -TreeContentMarker 'review reject fix remediation candidate gaps'
     Assert-ExpectedPass 'ordinary-engineering' $positiveRoot
 
     $coAuthorTrailer = (Convert-CodePoints @(67,111,45,65,117,116,104,111,114,101,100,45,66,121)) +

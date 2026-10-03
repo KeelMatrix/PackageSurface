@@ -21,10 +21,10 @@ validation entrypoint; hosted CI supplies independent platform evidence for the 
 
 ```text
 COMMAND: git remote -v
-EXPECTED: the canonical PackageSurface remote is the only reviewed remote.
+EXPECTED: the canonical PackageSurface remote is the only configured remote.
 
 COMMAND: git status --short --branch
-EXPECTED: the candidate checkout is clean and equal to its reviewed remote branch.
+EXPECTED: the working checkout is clean and equal to the remote branch.
 
 COMMAND: git ls-tree -r --name-only HEAD | Select-String "^\.github/workflows/"
 EXPECTED:

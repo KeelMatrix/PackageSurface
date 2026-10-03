@@ -659,8 +659,10 @@ public static class ResolvedGraphClassifier
                         }
 
                         var physicalPath = Path.Combine(packageRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
-                        var safePath = IsSafeResolvedFile(packageRoot, physicalPath);
-                        var present = safePath && File.Exists(physicalPath);
+                        var resolved = TryResolveExistingFilePath(physicalPath, out var actualPath);
+                        var safePath = resolved && IsSafeResolvedFile(packageRoot, actualPath);
+                        var present = safePath;
+                        if (present) physicalPath = actualPath;
                         var reason = present ? null : safePath
                             ? $"Reachable asset is missing from resolved package contents: {relativePath}."
                             : $"Reachable asset resolves through an unsafe package path: {relativePath}.";
@@ -992,10 +994,17 @@ public static class ResolvedGraphClassifier
             var packageId = packageIdentity.Id;
             var version = packageIdentity.Version;
             var physicalPath = Path.Combine(import.PackageRoot!, import.PackageRelativePath!.Replace('/', Path.DirectorySeparatorChar));
-            if (!IsDeclaredPackageFile(import.PackageRoot!, import.PackageRelativePath, packageInventories) ||
-                !IsSafeResolvedFile(import.PackageRoot!, physicalPath) || !File.Exists(physicalPath))
+            if (!TryResolveExistingFilePath(physicalPath, out var actualPath) ||
+                !IsSafeResolvedFile(import.PackageRoot!, actualPath))
             {
                 incomplete.Add("A statically imported package build file is missing or outside its resolved package root.");
+                continue;
+            }
+            physicalPath = actualPath;
+            var actualRelativePath = Path.GetRelativePath(import.PackageRoot!, physicalPath).Replace(Path.DirectorySeparatorChar, '/');
+            if (!IsDeclaredPackageFile(import.PackageRoot!, actualRelativePath, packageInventories))
+            {
+                incomplete.Add("A statically imported package build file is absent from the resolved package inventory.");
                 continue;
             }
 
@@ -3272,11 +3281,11 @@ public static class ResolvedGraphClassifier
 
         var visitedImports = new HashSet<string>(FileSystemPathComparer);
 
-        foreach (var file in files.Distinct(FileSystemPathComparer).Order(StringComparer.Ordinal))
+        foreach (var requestedFile in files.Distinct(FileSystemPathComparer).Order(StringComparer.Ordinal))
         {
-            if (!File.Exists(file))
+            if (!TryResolveExistingFilePath(requestedFile, out var file))
             {
-                incomplete.Add($"Expected generated import file {Path.GetFileName(file)} is missing from the assets directory.");
+                incomplete.Add($"Expected generated import file {Path.GetFileName(requestedFile)} is missing from the assets directory.");
                 continue;
             }
 
@@ -3433,14 +3442,15 @@ public static class ResolvedGraphClassifier
             }
 
             budget.AddOperation("nested import");
-            if (!visited.Add(Path.GetFullPath(current.File) + "|" + current.Condition + "|" + rootCapability + "|" + rootAssetPath)) continue;
-            if (!IsSafeResolvedFile(current.PackageRoot, current.File) || !File.Exists(current.File))
+            if (!TryResolveExistingFilePath(current.File, out var currentFile) ||
+                !IsSafeResolvedFile(current.PackageRoot, currentFile))
             {
                 incomplete.Add("A statically imported package build file is missing or outside its resolved package root.");
                 continue;
             }
+            if (!visited.Add(Path.GetFullPath(currentFile) + "|" + current.Condition + "|" + rootCapability + "|" + rootAssetPath)) continue;
 
-            var currentRelativePath = Path.GetRelativePath(current.PackageRoot, current.File).Replace(Path.DirectorySeparatorChar, '/');
+            var currentRelativePath = Path.GetRelativePath(current.PackageRoot, currentFile).Replace(Path.DirectorySeparatorChar, '/');
             if (!IsDeclaredPackageFile(current.PackageRoot, currentRelativePath, packageInventories))
             {
                 incomplete.Add("A statically imported package build file is absent from the resolved package inventory.");
@@ -3450,8 +3460,8 @@ public static class ResolvedGraphClassifier
             try
             {
                 budget.AddImportedFile();
-                EnsureFileWithinLimit(current.File, MaxMetadataFileBytes, "nested package import");
-                budget.Add(FileLength(current.File), "nested-import metadata");
+                EnsureFileWithinLimit(currentFile, MaxMetadataFileBytes, "nested package import");
+                budget.Add(FileLength(currentFile), "nested-import metadata");
                 var settings = new XmlReaderSettings
                 {
                     DtdProcessing = DtdProcessing.Prohibit,
@@ -3461,7 +3471,7 @@ public static class ResolvedGraphClassifier
                     IgnoreComments = true,
                     IgnoreWhitespace = true
                 };
-                using var reader = XmlReader.Create(current.File, settings);
+                using var reader = XmlReader.Create(currentFile, settings);
                 var conditionStack = new List<ConditionClause>();
                 var nestedWork = new List<(string File, string PackageRoot, string SourceFile, ConditionNode? Condition, int Depth)>();
                 while (reader.Read())
@@ -3506,7 +3516,7 @@ public static class ResolvedGraphClassifier
                             }
 
                             string? resolutionReason = null;
-                            var resolved = TryResolveStaticPackageImport(project, current.File, restoreIdentities, packageRoots, out var nestedPath, out var nestedRoot, out resolutionReason);
+                            var resolved = TryResolveStaticPackageImport(project, currentFile, restoreIdentities, packageRoots, out var nestedPath, out var nestedRoot, out resolutionReason);
                             var combined = applicability.IsKnown
                                 ? ImportApplicability.Known(CombineConditionNodes(current.Condition, applicability.Condition))
                                 : applicability;
@@ -3542,7 +3552,7 @@ public static class ResolvedGraphClassifier
                             else if (resolutionReason is "not a package import" &&
                                      (Path.IsPathRooted(project) ||
                                       (!project.Contains("$(", StringComparison.Ordinal) &&
-                                       !IsRelativeImportUnderAnyPackageRoot(current.File, project, packageRoots.Values))))
+                                       !IsRelativeImportUnderAnyPackageRoot(currentFile, project, packageRoots.Values))))
                             {
                                 incomplete.Add("Nested package import is outside the resolved package root or is missing from the package inventory.");
                             }
@@ -3641,19 +3651,24 @@ public static class ResolvedGraphClassifier
             }
 
             var candidatePath = Path.GetFullPath(Path.Combine(candidateRoot, relative.Replace('/', Path.DirectorySeparatorChar)));
-            if (!IsSafeResolvedFile(candidateRoot, candidatePath))
+            if (!IsWithinDirectory(candidateRoot, candidatePath, allowRoot: false))
             {
                 reason = "unsafe package import target";
                 return false;
             }
 
-            if (!File.Exists(candidatePath))
+            if (!TryResolveExistingFilePath(candidatePath, out var actualPath))
             {
                 reason = "missing package import (package-root reference)";
                 return false;
             }
+            if (!IsSafeResolvedFile(candidateRoot, actualPath))
+            {
+                reason = "unsafe package import target";
+                return false;
+            }
 
-            resolvedPath = candidatePath;
+            resolvedPath = actualPath;
             packageRoot = candidateRoot;
             return true;
         }
@@ -3663,13 +3678,14 @@ public static class ResolvedGraphClassifier
             var absolute = Path.GetFullPath(requested);
             foreach (var candidate in packageRoots.Values.Distinct(FileSystemPathComparer))
             {
-                if (!IsSafeResolvedFile(candidate, absolute)) continue;
-                if (!File.Exists(absolute))
+                if (!IsWithinDirectory(candidate, absolute, allowRoot: false)) continue;
+                if (!TryResolveExistingFilePath(absolute, out var actualPath))
                 {
                     reason = "missing package import (absolute reference)";
                     return false;
                 }
-                resolvedPath = absolute;
+                if (!IsSafeResolvedFile(candidate, actualPath)) continue;
+                resolvedPath = actualPath;
                 packageRoot = candidate;
                 return true;
             }
@@ -3683,14 +3699,15 @@ public static class ResolvedGraphClassifier
         var sawSafeRoot = false;
         foreach (var candidate in packageRoots.Values.Distinct(FileSystemPathComparer))
         {
-            if (!IsSafeResolvedFile(candidate, relativePath)) continue;
+            if (!IsWithinDirectory(candidate, relativePath, allowRoot: false)) continue;
             sawSafeRoot = true;
-            if (!File.Exists(relativePath))
+            if (!TryResolveExistingFilePath(relativePath, out var actualPath))
             {
                 reason = "missing package import (relative reference)";
                 return false;
             }
-            resolvedPath = relativePath;
+            if (!IsSafeResolvedFile(candidate, actualPath)) continue;
+            resolvedPath = actualPath;
             packageRoot = candidate;
             return true;
         }
@@ -4942,18 +4959,32 @@ public static class ResolvedGraphClassifier
     {
         var fullRoot = CanonicalizePath(root);
         var fullCandidate = CanonicalizePath(candidate);
-        var relative = Path.GetRelativePath(fullRoot, fullCandidate);
-        if (allowRoot && relative == ".") return true;
-        return !Path.IsPathRooted(relative) &&
-            relative != ".." &&
-            !relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) &&
-            !relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal);
+        var fileSystem = FileSystemComparisonContext.Current;
+        if (fileSystem.TryPathsEqual(fullRoot, fullCandidate, out var samePath) && samePath) return allowRoot;
+
+        var rootPrefix = Path.EndsInDirectorySeparator(fullRoot)
+            ? fullRoot
+            : fullRoot + Path.DirectorySeparatorChar;
+        return fullCandidate.Length > rootPrefix.Length &&
+            fileSystem.TryPathsEqual(rootPrefix, fullCandidate[..rootPrefix.Length], out var hasRootPrefix) &&
+            hasRootPrefix;
     }
 
     private static StringComparison FileSystemComparison => FileSystemComparisonContext.Current.StringComparison;
 
     private static bool FileSystemPathsEqual(string left, string right) =>
         FileSystemComparisonContext.Current.TryPathsEqual(CanonicalizePath(left), CanonicalizePath(right), out var equal) && equal;
+
+    private static bool TryResolveExistingFilePath(string path, out string resolvedPath)
+    {
+        if (FileSystemComparisonContext.Current.TryResolveFilePath(path, out resolvedPath, out var exists) && exists)
+        {
+            return true;
+        }
+
+        resolvedPath = string.Empty;
+        return false;
+    }
 
     private static string CanonicalizePath(string path) =>
         PathCanonicalizer.Value?.Invoke(path) ?? Path.GetFullPath(path);

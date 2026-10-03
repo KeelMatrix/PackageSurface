@@ -720,7 +720,7 @@ static void RunPackageIdentityAndPathRegression()
         caseDocument["targets"]!["net8.0"]!["Case.Package/1.0.0"]!["build"] = new JsonObject { ["build/Case.targets"] = new JsonObject() };
         File.WriteAllText(caseAssets, caseDocument.ToJsonString());
         File.WriteAllText(Path.Combine(caseCache, "Case.Package", "1.0.0", "build", "Case.targets"), "<Project />");
-        File.WriteAllText(Path.Combine(caseObj, "Test.csproj.nuget.g.targets"), "<Project><Import Project=\"$(NuGetPackageRoot)/Case.Package/1.0.0/build/case.targets\" /></Project>");
+        File.WriteAllText(Path.Combine(caseObj, "Test.csproj.nuget.g.targets"), "<Project><Import Project=\"$(NuGetPackageRoot)/case.package/1.0.0/BUILD/case.targets\" /></Project>");
         using (FileSystemComparisonScope.Push(caseRoot, FileSystemCaseSensitivity.Sensitive))
         {
             var caseResult = ResolvedGraphClassifier.Analyze(caseAssets, caseRoot, strictContent: false, fileSystemCaseSensitivity: FileSystemCaseSensitivity.Sensitive);

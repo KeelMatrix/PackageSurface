@@ -88,6 +88,25 @@ sealed class FileSystemComparisonContext
         }
     }
 
+    public bool TryResolveFilePath(string path, out string resolvedPath, out bool exists)
+    {
+        resolvedPath = string.Empty;
+        exists = false;
+        switch (requestedMode)
+        {
+            case FileSystemCaseSensitivity.Host:
+                if (!TryHostFileExists(path, out exists)) return false;
+                if (exists) resolvedPath = path;
+                return true;
+            case FileSystemCaseSensitivity.Sensitive:
+                return TryResolveFilePathBySpelling(path, System.StringComparison.Ordinal, out resolvedPath, out exists);
+            case FileSystemCaseSensitivity.Insensitive:
+                return TryResolveFilePathBySpelling(path, System.StringComparison.OrdinalIgnoreCase, out resolvedPath, out exists);
+            default:
+                return false;
+        }
+    }
+
     public int GetStringHashCode(string? value)
     {
         if (value is null) return 0;
@@ -259,34 +278,28 @@ sealed class FileSystemComparisonContext
 
     private static bool PathExistsWithExactSpelling(string path)
     {
-        try
-        {
-            var fullPath = Path.GetFullPath(path);
-            var root = Path.GetPathRoot(fullPath);
-            if (string.IsNullOrEmpty(root)) return false;
-            var current = root;
-            var remaining = fullPath[root.Length..];
-            foreach (var component in remaining.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries))
-            {
-                if (!Directory.Exists(current)) return false;
-                var match = Directory.EnumerateFileSystemEntries(current)
-                    .Select(Path.GetFileName)
-                    .FirstOrDefault(name => string.Equals(name, component, System.StringComparison.Ordinal));
-                if (match is null) return false;
-                current = Path.Combine(current, match);
-            }
-
-            return File.Exists(current);
-        }
-        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException or NotSupportedException)
-        {
-            return false;
-        }
+        return TryResolveFilePathBySpelling(path, System.StringComparison.Ordinal, out _, out var exists) && exists;
     }
 
     private static bool PathExistsIgnoringCase(string path)
     {
-        if (File.Exists(path)) return true;
+        return TryResolveFilePathBySpelling(path, System.StringComparison.OrdinalIgnoreCase, out _, out var exists) && exists;
+    }
+
+    private static bool TryResolveFilePathBySpelling(
+        string path,
+        System.StringComparison comparison,
+        out string resolvedPath,
+        out bool exists)
+    {
+        resolvedPath = string.Empty;
+        exists = false;
+        if (comparison == System.StringComparison.OrdinalIgnoreCase && File.Exists(path))
+        {
+            resolvedPath = path;
+            exists = true;
+            return true;
+        }
 
         try
         {
@@ -295,17 +308,36 @@ sealed class FileSystemComparisonContext
             if (string.IsNullOrEmpty(root)) return false;
             var current = root;
             var remaining = fullPath[root.Length..];
-            foreach (var component in remaining.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries))
+            var components = remaining.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries);
+            for (var index = 0; index < components.Length; index++)
             {
-                if (!Directory.Exists(current)) return false;
-                var match = Directory.EnumerateFileSystemEntries(current)
+                var component = components[index];
+                var matches = Directory.EnumerateFileSystemEntries(current)
                     .Select(Path.GetFileName)
-                    .FirstOrDefault(name => string.Equals(name, component, System.StringComparison.OrdinalIgnoreCase));
-                if (match is null) return false;
-                current = Path.Combine(current, match);
+                    .Where(name => name is not null && string.Equals(name, component, comparison))
+                    .Take(2)
+                    .ToArray();
+                if (matches.Length == 0) return true;
+                if (matches.Length != 1) return false;
+                current = Path.Combine(current, matches[0]!);
+                if (index < components.Length - 1)
+                {
+                    var attributes = File.GetAttributes(current);
+                    if ((attributes & FileAttributes.Directory) == 0) return true;
+                }
             }
 
-            return File.Exists(current);
+            resolvedPath = current;
+            exists = File.Exists(current);
+            return true;
+        }
+        catch (FileNotFoundException)
+        {
+            return true;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return true;
         }
         catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException or NotSupportedException)
         {

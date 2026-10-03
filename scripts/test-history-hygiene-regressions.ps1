@@ -511,12 +511,6 @@ exit 128
     Assert-ExpectedFailure 'binary-task-identifier' $binaryTaskRoot $binaryDiagnostic ''
 
     $resourceLimit = 512
-    $resourceWideLimits = @{
-        MaxTrackedFileBytes = 65536
-        MaxArchiveEntryBytes = 65536
-        MaxHistoryScannedBytes = 65536
-        MaxTotalDecompressedBytes = 65536
-    }
     $trackedAtLimitRoot = Join-Path $scratch 'tracked-file-at-limit'
     New-ByteRepository $trackedAtLimitRoot (New-FillerBytes $resourceLimit)
     Assert-ExpectedPass 'tracked-file-at-limit' $trackedAtLimitRoot @{

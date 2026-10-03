@@ -328,7 +328,7 @@ try {
             throw "Tracked file '$path' is not present in the working tree."
         }
 
-        $fileInfo = Get-Item -LiteralPath $fullPath
+        $fileInfo = Get-Item -Force -LiteralPath $fullPath
         if ($fileInfo.Length -gt $MaxTrackedFileBytes) {
             throw "Tracked file '$path' exceeds the per-file limit of $MaxTrackedFileBytes bytes."
         }

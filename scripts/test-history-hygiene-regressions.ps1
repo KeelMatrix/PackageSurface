@@ -579,7 +579,7 @@ exit 128
         (Convert-CodePoints @(32,60,110,111,114,101,112,108,121,64,112,97,112,101,114,99,108,105,112,46,105,110,103,62))
     $coAuthorRoot = Join-Path $scratch 'required-coauthor-trailer'
     New-Repository $coAuthorRoot -CommitBody $coAuthorTrailer
-    Assert-ExpectedPass 'required-coauthor-trailer' $coAuthorRoot
+    Assert-ExpectedFailure 'coauthor-trailer' $coAuthorRoot 'Restricted text found' ''
 
     $taskIdRoot = Join-Path $scratch 'task-id'
     New-Repository $taskIdRoot -WithTaskId

@@ -308,18 +308,32 @@ try {
         ((Convert-CodePoints @(102,111,117,110,100,101,114)) + $separatorPattern + (Convert-CodePoints @(102,114,111,110,116,105,101,114)) + '(s)?'),
         ((Convert-CodePoints @(102,111,117,110,100,101,114)) + $separatorPattern + (Convert-CodePoints @(114,101,118,105,101,119)) + '(s)?'),
         ((Convert-CodePoints @(102,111,117,110,100,101,114)) + $separatorPattern + (Convert-CodePoints @(114,101,106,101,99,116,105,111,110)) + '(s)?'),
-        ((Convert-CodePoints @(102,111,117,110,100,101,114)) + $separatorPattern + (Convert-CodePoints @(97,112,112,114,111,118,97,108)) + '(s)?')
+        ((Convert-CodePoints @(102,111,117,110,100,101,114)) + $separatorPattern + (Convert-CodePoints @(97,112,112,114,111,118,97,108)) + '(s)?'),
+        ((Convert-CodePoints @(99,97,110,100,105,100,97,116,101)) + $separatorPattern + (Convert-CodePoints @(114,101,109,101,100,105,97,116,105,111,110)) + '(s)?'),
+        ((Convert-CodePoints @(114,101,109,101,100,105,97,116,105,111,110)) + $separatorPattern + (Convert-CodePoints @(103,97,112)) + '(s)?'),
+        ((Convert-CodePoints @(114,101,118,105,101,119)) + $separatorPattern + (Convert-CodePoints @(103,97,112)) + '(s)?'),
+        ((Convert-CodePoints @(99,97,110,100,105,100,97,116,101)) + $separatorPattern + (Convert-CodePoints @(101,118,105,100,101,110,99,101))),
+        ((Convert-CodePoints @(105,100,101,110,116,105,102,105,101,100)) + $separatorPattern + (Convert-CodePoints @(99,97,115,101)) + '(s)?')
     )
     $pattern = (($restricted | ForEach-Object { [regex]::Escape($_) }) + $restrictedPatterns) -join '|'
+    $historyOnlyPattern = (Convert-CodePoints @(112,104,97,115,101)) + '[0-9]'
+    $historyPattern = $pattern + '|' + $historyOnlyPattern
     $violations = [System.Collections.Generic.List[string]]::new()
     $totalHistoryScannedBytes = [long]0
     $totalDecompressedBytes = [long]0
     $utf8ForAccounting = [Text.UTF8Encoding]::new($false)
 
     function Test-RestrictedText {
-        param([AllowNull()][string] $Text)
+        param(
+            [AllowNull()][string] $Text,
+            [switch] $IncludeHistoryOnly
+        )
 
-        return -not [string]::IsNullOrEmpty($Text) -and $Text -match $pattern
+        $effectivePattern = if ($IncludeHistoryOnly) { $historyPattern } else { $pattern }
+        if ([string]::IsNullOrEmpty($Text)) { return $false }
+        if ($Text -match $effectivePattern) { return $true }
+        $separatorNormalized = [regex]::Replace($Text, '[^A-Za-z0-9]+', ' ')
+        return $separatorNormalized -match $effectivePattern
     }
 
     foreach ($path in $tracked) {
@@ -459,7 +473,7 @@ try {
             throw "The history log result does not include commit $commit."
         }
     }
-    if (Test-RestrictedText $historyText.Output) {
+    if (Test-RestrictedText $historyText.Output -IncludeHistoryOnly) {
         $violations.Add('history metadata')
     }
     $historyTaskIdPattern = '\b(?!SHA-)[A-Z]{2,8}-[0-9]{3,6}\b'

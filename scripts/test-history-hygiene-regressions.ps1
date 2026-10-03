@@ -380,6 +380,12 @@ exit 128
     $mixedWaves = Convert-CodePoints @(87,97,118,101,115)
     $mixedReview = Convert-CodePoints @(82,101,118,105,101,119)
     $mixedProcesses = Convert-CodePoints @(80,114,111,99,101,115,115,101,115)
+    $candidateWord = Convert-CodePoints @(99,97,110,100,105,100,97,116,101)
+    $evidenceWord = Convert-CodePoints @(101,118,105,100,101,110,99,101)
+    $identifiedWord = Convert-CodePoints @(105,100,101,110,116,105,102,105,101,100)
+    $caseWord = Convert-CodePoints @(99,97,115,101)
+    $gapWord = Convert-CodePoints @(103,97,112)
+    $phaseWord = Convert-CodePoints @(112,104,97,115,101)
 
     $phrasePairs = @(
         @{ Name = 'pair-00'; Left = $rejected; Right = $families; MixedLeft = $mixedRejected; MixedRight = $mixedFamilies },
@@ -467,6 +473,32 @@ exit 128
             'tree' { New-Repository $caseRoot -TreeContentMarker $marker -TwoCommits }
         }
         Assert-ExpectedFailure $caseName $caseRoot 'Restricted text found' ''
+    }
+
+    $survivingPhrasePairs = @(
+        @{ Name = 'surviving-01'; Marker = $candidateWord + $space + $remediation },
+        @{ Name = 'surviving-02'; Marker = $remediation + $space + $gapWord },
+        @{ Name = 'surviving-03'; Marker = $review + $space + $gapWord },
+        @{ Name = 'surviving-04'; Marker = $candidateWord + $space + $evidenceWord },
+        @{ Name = 'surviving-05'; Marker = $identifiedWord + $space + $caseWord },
+        @{ Name = 'phase-zero'; Marker = $phaseWord + '0' }
+    )
+    foreach ($phraseCase in $survivingPhrasePairs) {
+        foreach ($location in @('subject', 'body', 'tree')) {
+            $caseName = "surviving-$($phraseCase.Name)-$location"
+            $caseRoot = Join-Path $scratch $caseName
+            switch ($location) {
+                'subject' { New-Repository $caseRoot -CommitSubject ('fixture ' + $phraseCase.Marker) }
+                'body' { New-Repository $caseRoot -CommitBody ('fixture ' + $phraseCase.Marker) }
+                'tree' { New-Repository $caseRoot -TreeContentMarker $phraseCase.Marker -TwoCommits }
+            }
+            if ($phraseCase.Name -eq 'phase-zero' -and $location -eq 'tree') {
+                Assert-ExpectedPass $caseName $caseRoot @{}
+            }
+            else {
+                Assert-ExpectedFailure $caseName $caseRoot 'Restricted text found' ''
+            }
+        }
     }
 
     $encodingCases = @(

@@ -373,8 +373,9 @@ public static class ResolvedGraphClassifier
         string? projectContext = null,
         string? selectedProjectPath = null,
         AnalysisBudget? budget = null,
-        string? compilerApiVersion = null) =>
-        AnalyzeCore(assetsFile, projectRoot, strictContent, projectContext, selectedProjectPath, budget, compilerApiVersion);
+        string? compilerApiVersion = null,
+        FileSystemCaseSensitivity fileSystemCaseSensitivity = FileSystemCaseSensitivity.Host) =>
+        AnalyzeCore(assetsFile, projectRoot, strictContent, projectContext, selectedProjectPath, budget, compilerApiVersion, fileSystemCaseSensitivity);
 
     public static string? ReadRestoreProjectPath(string assetsFile)
     {
@@ -478,9 +479,11 @@ public static class ResolvedGraphClassifier
         string? projectContext,
         string? selectedProjectPath,
         AnalysisBudget? budget,
-        string? compilerApiVersion)
+        string? compilerApiVersion,
+        FileSystemCaseSensitivity fileSystemCaseSensitivity)
     {
         var incomplete = new List<string>();
+        using var fileSystemScope = FileSystemComparisonContext.Push(projectRoot, fileSystemCaseSensitivity);
         try
         {
             EnsureFileWithinLimit(assetsFile, MaxMetadataFileBytes, "project.assets.json");
@@ -1224,7 +1227,7 @@ public static class ResolvedGraphClassifier
             foreach (var node in projectNodes)
             {
                 var nodePath = NormalizeProjectReferencePath(node.Path!, projectRoot);
-                if (string.Equals(requestedPath, nodePath, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+                if (FileSystemPathsEqual(requestedPath, nodePath))
                 {
                     result[node.Package] = included;
                 }
@@ -3172,7 +3175,7 @@ public static class ResolvedGraphClassifier
                 continue;
             }
 
-            if (result.Any(existing => string.Equals(existing, normalized, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)))
+            if (result.Any(existing => string.Equals(existing, normalized, FileSystemComparison)))
             {
                 incomplete.Add($"{libraryKey} contains a duplicate asset path: {normalized}.");
                 continue;
@@ -3851,8 +3854,7 @@ public static class ResolvedGraphClassifier
                 continue;
             }
 
-            if (string.Equals(property.Name.Replace('\\', '/'), assetName,
-                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+            if (string.Equals(property.Name.Replace('\\', '/'), assetName, FileSystemComparison))
             {
                 return true;
             }
@@ -4065,8 +4067,7 @@ public static class ResolvedGraphClassifier
 
         foreach (var contentFile in contentFiles.EnumerateObject())
         {
-            if (!string.Equals(contentFile.Name.Replace('\\', '/'), assetName,
-                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)) continue;
+            if (!string.Equals(contentFile.Name.Replace('\\', '/'), assetName, FileSystemComparison)) continue;
             if (contentFile.Value.ValueKind != JsonValueKind.Object)
             {
                 incomplete.Add($"{libraryKey}: content file metadata is missing for {assetName}.");
@@ -4424,25 +4425,27 @@ public static class ResolvedGraphClassifier
                 return false;
             }
 
-            if (FileSystemPathsEqual(requested, project))
+            var requestedCanonical = CanonicalizePath(requested);
+            var projectCanonical = CanonicalizePath(project);
+            if (FileSystemComparisonContext.Current.TryPathsEqual(requestedCanonical, projectCanonical, out var pathsEqual))
             {
-                exists = File.Exists(requested);
-                return true;
+                if (pathsEqual)
+                {
+                    if (FileSystemComparisonContext.Current.TryFileExists(requested, out exists)) return true;
+                    reason = "the Exists expression's filesystem result is indeterminate";
+                    return false;
+                }
+
+                if (string.Equals(requestedCanonical, projectCanonical, StringComparison.OrdinalIgnoreCase))
+                {
+                    exists = false;
+                    return true;
+                }
             }
 
-            // On a case-sensitive host, a case-only spelling difference is a
-            // proven missing path when the requested spelling is absent. If
-            // the differently-cased file exists too, the pairing is ambiguous
-            // and must remain unknown rather than being called known-true.
-            if (!OperatingSystem.IsWindows() &&
-                string.Equals(CanonicalizePath(requested), CanonicalizePath(project), StringComparison.OrdinalIgnoreCase) &&
-                !File.Exists(requested))
-            {
-                exists = false;
-                return true;
-            }
-
-            reason = "the Exists expression does not match the resolved import under the host filesystem contract";
+            reason = string.Equals(requestedCanonical, projectCanonical, StringComparison.OrdinalIgnoreCase)
+                ? "the Exists expression's filesystem casing semantics are indeterminate"
+                : "the Exists expression does not match the resolved import under the host filesystem contract";
             return false;
         }
         catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException)
@@ -4947,17 +4950,15 @@ public static class ResolvedGraphClassifier
             !relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal);
     }
 
-    private static StringComparison FileSystemComparison =>
-        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+    private static StringComparison FileSystemComparison => FileSystemComparisonContext.Current.StringComparison;
 
     private static bool FileSystemPathsEqual(string left, string right) =>
-        string.Equals(CanonicalizePath(left), CanonicalizePath(right), FileSystemComparison);
+        FileSystemComparisonContext.Current.TryPathsEqual(CanonicalizePath(left), CanonicalizePath(right), out var equal) && equal;
 
     private static string CanonicalizePath(string path) =>
         PathCanonicalizer.Value?.Invoke(path) ?? Path.GetFullPath(path);
 
-    private static StringComparer FileSystemPathComparer =>
-        OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+    private static IEqualityComparer<string> FileSystemPathComparer => FileSystemComparisonContext.Current.PathComparer;
 
     private static bool HasReparsePoint(string root, string path, bool includeLeaf)
     {

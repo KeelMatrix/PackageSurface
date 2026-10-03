@@ -61,6 +61,7 @@ public static class CommandLine
                 strictContent |= baseline.StrictContent;
             }
 
+            using var fileSystemScope = FileSystemComparisonScope.Push(options.InputPath!);
             var selection = ProjectSelection.Resolve(options.InputPath!, options.ProjectPath);
             var baselineTransaction = baselinePath is null
                 ? null
@@ -279,8 +280,7 @@ public sealed class BaselineFileTransaction
             candidates.AddRange(ResolvedGraphClassifier.GetReachablePackageInputPaths(project.AssetsPath));
         }
 
-        var candidateComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
-        foreach (var candidate in candidates.Distinct(candidateComparer))
+        foreach (var candidate in candidates.Distinct(FileSystemComparisonScope.PathComparer))
         {
             if (PathsReferToSameFile(fullPath, candidate))
             {
@@ -345,7 +345,7 @@ public sealed class BaselineFileTransaction
 
     private static bool PathsReferToSameFile(string left, string right)
     {
-        if (string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)) return true;
+        if (FileSystemComparisonScope.PathsEqual(left, right)) return true;
         if (HasReparsePoint(left) || HasReparsePoint(right)) throw new InvalidDataException("The baseline output or an analysis input uses a symlink or reparse-point path.");
         if (!File.Exists(left) || !File.Exists(right)) return false;
 
@@ -848,9 +848,7 @@ public sealed record ProjectSelection(IReadOnlyList<SelectedProject> Projects)
         return paths;
     }
 
-    private static bool PathsEqual(string left, string right) =>
-        string.Equals(Path.GetFullPath(left), Path.GetFullPath(right),
-            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+    private static bool PathsEqual(string left, string right) => FileSystemComparisonScope.PathsEqual(left, right);
 
     private static void EnsureMembershipLimit(int count)
     {

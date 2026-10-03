@@ -20,12 +20,14 @@ sealed class FileSystemComparisonContext
     private static readonly Lazy<FileSystemComparisonContext> Default = new(() => new(FileSystemCaseSensitivity.Host, Directory.GetCurrentDirectory()));
     private readonly FileSystemCaseSensitivity requestedMode;
     private readonly string seedPath;
+    private readonly string? seedProbeKey;
     private readonly Dictionary<string, ResolvedFileSystemCaseSensitivity> probeModes = new(StringComparer.Ordinal);
 
     private FileSystemComparisonContext(FileSystemCaseSensitivity requestedMode, string seedPath)
     {
         this.requestedMode = requestedMode;
         this.seedPath = seedPath;
+        seedProbeKey = requestedMode == FileSystemCaseSensitivity.Host ? GetProbeKey(seedPath) : null;
     }
 
     public static FileSystemComparisonContext Current => CurrentSlot.Value ?? Default.Value;
@@ -108,7 +110,9 @@ sealed class FileSystemComparisonContext
 
         foreach (var path in paths.Append(seedPath))
         {
-            var probeKey = GetProbeKey(path);
+            var probeKey = string.Equals(path, seedPath, System.StringComparison.Ordinal)
+                ? seedProbeKey ?? GetProbeKey(path)
+                : GetProbeKey(path);
             if (probeModes.TryGetValue(probeKey, out var cached)) return cached;
 
             var detected = Detect(path);

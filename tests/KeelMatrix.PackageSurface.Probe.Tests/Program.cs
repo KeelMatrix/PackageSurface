@@ -75,6 +75,7 @@ if (result.Entries.Any(entry => entry.Capability == CapabilityKind.ToolOrScriptP
     return 1;
 }
 
+RunFilesystemComparisonCacheRegression(projectRoot);
 RunGeneratedImportConditionRegression(assets);
 RunGeneratedImportFileIdentityRegression(assets);
 RunGeneratedImportPhaseCrossWireRegression(assets);
@@ -101,6 +102,30 @@ finally
 
 Console.WriteLine(JsonSerializer.Serialize(new { entries = result.Entries.Count, complete = result.IsComplete }));
 return 0;
+
+static void RunFilesystemComparisonCacheRegression(string projectRoot)
+{
+    const int iterations = 250_000;
+    var path = projectRoot;
+    using var scope = FileSystemComparisonScope.Push(projectRoot, FileSystemCaseSensitivity.Host);
+    var comparer = FileSystemComparisonScope.PathComparer;
+    _ = comparer.GetHashCode(path);
+
+    var watch = Stopwatch.StartNew();
+    var checksum = 0;
+    for (var index = 0; index < iterations; index++)
+    {
+        checksum += comparer.GetHashCode(path);
+    }
+    watch.Stop();
+
+    if (watch.Elapsed >= TimeSpan.FromSeconds(2))
+    {
+        throw new InvalidOperationException($"Repeated filesystem path comparison exceeded its cached-probe budget: {watch.Elapsed}.");
+    }
+
+    Console.WriteLine($"filesystem-comparer repeated path lookup: {iterations} calls in {watch.ElapsedMilliseconds}ms (checksum {checksum}).");
+}
 
 static void RunGeneratedImportConditionRegression(string baselineAssets)
 {

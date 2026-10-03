@@ -1,6 +1,10 @@
 param(
     [string] $RepositoryRoot,
-    [string] $GitCommandPath = 'git'
+    [string] $GitCommandPath = 'git',
+    [long] $MaxTrackedFileBytes = 4194304,
+    [long] $MaxArchiveEntryBytes = 4194304,
+    [long] $MaxHistoryScannedBytes = 134217728,
+    [long] $MaxTotalDecompressedBytes = 134217728
 )
 
 $ErrorActionPreference = 'Stop'
@@ -22,12 +26,14 @@ function Invoke-GitChecked {
     param(
         [string[]] $Arguments,
         [switch] $AllowNoMatch,
-        [switch] $RequireOutput
+        [switch] $RequireOutput,
+        [long] $MaxOutputBytes = 0
     )
 
     $outputItems = @(& $GitCommandPath @Arguments 2>&1)
     $exitCode = $LASTEXITCODE
     $output = ($outputItems | ForEach-Object { [string]$_ }) -join [Environment]::NewLine
+    $normalizedOutput = $output.Trim()
     if ($exitCode -eq 1 -and $AllowNoMatch) {
         if (-not [string]::IsNullOrWhiteSpace($output)) {
             throw "git $($Arguments -join ' ') reported no-match status with unexpected output."
@@ -40,14 +46,196 @@ function Invoke-GitChecked {
         throw "git $($Arguments -join ' ') failed with exit code $exitCode."
     }
 
-    if ($RequireOutput -and [string]::IsNullOrWhiteSpace($output)) {
+    if ($RequireOutput -and [string]::IsNullOrWhiteSpace($normalizedOutput)) {
         throw "git $($Arguments -join ' ') returned no required output."
     }
 
-    return [pscustomobject]@{ Output = $output.Trim(); ExitCode = $exitCode }
+    if ($MaxOutputBytes -gt 0) {
+        $outputBytes = [Text.UTF8Encoding]::new($false).GetByteCount($normalizedOutput)
+        if ($outputBytes -gt $MaxOutputBytes) {
+            throw "history scan byte budget exceeded while reading git $($Arguments -join ' ')."
+        }
+    }
+
+    return [pscustomobject]@{ Output = $normalizedOutput; ExitCode = $exitCode }
+}
+
+function Add-LimitedBytes {
+    param(
+        [ref] $Current,
+        [long] $Amount,
+        [long] $Limit,
+        [string] $Label
+    )
+
+    if ($Amount -lt 0 -or [long]::MaxValue - $Current.Value -lt $Amount) {
+        throw "$Label exceeded its byte limit."
+    }
+
+    $candidate = $Current.Value + $Amount
+    if ($candidate -gt $Limit) {
+        throw "$Label exceeded its byte limit of $Limit bytes."
+    }
+    $Current.Value = $candidate
+}
+
+function Test-BytePrefix {
+    param([byte[]] $Bytes, [byte[]] $Prefix)
+
+    if ($Bytes.Length -lt $Prefix.Length) {
+        return $false
+    }
+    for ($i = 0; $i -lt $Prefix.Length; $i++) {
+        if ($Bytes[$i] -ne $Prefix[$i]) {
+            return $false
+        }
+    }
+    return $true
+}
+
+function Get-ByteSlice {
+    param([byte[]] $Bytes, [int] $Offset)
+
+    if ($Offset -ge $Bytes.Length) {
+        return [byte[]]::new(0)
+    }
+    $result = [byte[]]::new($Bytes.Length - $Offset)
+    [Array]::Copy($Bytes, $Offset, $result, 0, $result.Length)
+    return $result
+}
+
+function Test-ZeroLayout {
+    param(
+        [byte[]] $Bytes,
+        [int] $Stride,
+        [int[]] $ZeroIndexes
+    )
+
+    if ($Bytes.Length -lt (2 * $Stride) -or ($Bytes.Length % $Stride) -ne 0) {
+        return $false
+    }
+
+    for ($unit = 0; $unit -lt $Bytes.Length; $unit += $Stride) {
+        foreach ($zeroIndex in $ZeroIndexes) {
+            if ($Bytes[$unit + $zeroIndex] -ne 0) {
+                return $false
+            }
+        }
+    }
+    return $true
+}
+
+function Test-TextControls {
+    param([string] $Text)
+
+    foreach ($character in $Text.ToCharArray()) {
+        $code = [int][char]$character
+        if ($code -lt 32 -and $code -notin @(0, 9, 10, 13)) {
+            return $false
+        }
+    }
+    return $true
+}
+
+function Try-DecodeText {
+    param(
+        [byte[]] $Bytes,
+        [Text.Encoding] $Encoding,
+        [string] $Name
+    )
+
+    try {
+        $text = $Encoding.GetString($Bytes)
+        if (-not (Test-TextControls $text)) {
+            return $null
+        }
+        return [pscustomobject]@{ Name = $Name; Text = $text }
+    }
+    catch {
+        return $null
+    }
+}
+
+function Get-TextCandidates {
+    param([byte[]] $Bytes)
+
+    if ($Bytes.Length -eq 0) {
+        return @([pscustomobject]@{ Name = 'utf8'; Text = '' })
+    }
+
+    $utf8 = [Text.UTF8Encoding]::new($false, $true)
+    $utf16Le = [Text.UnicodeEncoding]::new($false, $false, $true)
+    $utf16Be = [Text.UnicodeEncoding]::new($true, $false, $true)
+    $utf32Le = [Text.UTF32Encoding]::new($false, $false, $true)
+    $utf32Be = [Text.UTF32Encoding]::new($true, $false, $true)
+
+    $bomCases = @(
+        @{ Prefix = [byte[]]@(0xFF, 0xFE, 0x00, 0x00); Encoding = $utf32Le; Name = 'utf32-le' },
+        @{ Prefix = [byte[]]@(0x00, 0x00, 0xFE, 0xFF); Encoding = $utf32Be; Name = 'utf32-be' },
+        @{ Prefix = [byte[]]@(0xEF, 0xBB, 0xBF); Encoding = $utf8; Name = 'utf8' },
+        @{ Prefix = [byte[]]@(0xFF, 0xFE); Encoding = $utf16Le; Name = 'utf16-le' },
+        @{ Prefix = [byte[]]@(0xFE, 0xFF); Encoding = $utf16Be; Name = 'utf16-be' }
+    )
+    foreach ($bomCase in $bomCases) {
+        if (Test-BytePrefix $Bytes $bomCase.Prefix) {
+            $decoded = Try-DecodeText (Get-ByteSlice $Bytes $bomCase.Prefix.Length) $bomCase.Encoding $bomCase.Name
+            if ($null -eq $decoded) {
+                throw "content has an invalid $($bomCase.Name) encoding."
+            }
+            return @($decoded)
+        }
+    }
+
+    $candidates = [System.Collections.Generic.List[object]]::new()
+    $utf8Decoded = Try-DecodeText $Bytes $utf8 'utf8'
+    if ($null -ne $utf8Decoded) {
+        $candidates.Add($utf8Decoded)
+    }
+
+    $layoutCases = @(
+        @{ Stride = 4; ZeroIndexes = [int[]]@(1, 2, 3); Encoding = $utf32Le; Name = 'utf32-le' },
+        @{ Stride = 4; ZeroIndexes = [int[]]@(0, 1, 2); Encoding = $utf32Be; Name = 'utf32-be' },
+        @{ Stride = 2; ZeroIndexes = [int[]]@(1); Encoding = $utf16Le; Name = 'utf16-le' },
+        @{ Stride = 2; ZeroIndexes = [int[]]@(0); Encoding = $utf16Be; Name = 'utf16-be' }
+    )
+    foreach ($layoutCase in $layoutCases) {
+        if (Test-ZeroLayout $Bytes $layoutCase.Stride $layoutCase.ZeroIndexes) {
+            $decoded = Try-DecodeText $Bytes $layoutCase.Encoding $layoutCase.Name
+            if ($null -ne $decoded) {
+                $candidates.Add($decoded)
+            }
+        }
+    }
+
+    if ($candidates.Count -eq 0) {
+        throw 'content is unsupported binary or unrecognized encoding.'
+    }
+    return @($candidates)
+}
+
+function Test-KnownSafeBinaryPath {
+    param([string] $Path)
+
+    return $Path.Replace('\', '/') -eq 'icon.png'
 }
 
 try {
+    $defaultTrackedFileBytes = 4194304
+    $defaultArchiveEntryBytes = 4194304
+    $defaultHistoryScannedBytes = 134217728
+    $defaultTotalDecompressedBytes = 134217728
+    foreach ($limit in @($MaxTrackedFileBytes, $MaxArchiveEntryBytes, $MaxHistoryScannedBytes, $MaxTotalDecompressedBytes)) {
+        if ($limit -le 0) {
+            throw 'History hygiene byte limits must be positive.'
+        }
+    }
+    if ($MaxTrackedFileBytes -gt $defaultTrackedFileBytes -or
+        $MaxArchiveEntryBytes -gt $defaultArchiveEntryBytes -or
+        $MaxHistoryScannedBytes -gt $defaultHistoryScannedBytes -or
+        $MaxTotalDecompressedBytes -gt $defaultTotalDecompressedBytes) {
+        throw 'History hygiene byte limits cannot exceed the production bounds.'
+    }
+
     $insideWorkTree = Invoke-GitChecked @('rev-parse', '--is-inside-work-tree') -RequireOutput
     if ($insideWorkTree.Output -ne 'true') {
         throw 'The checkout is not proven to be a work tree.'
@@ -124,6 +312,9 @@ try {
     )
     $pattern = (($restricted | ForEach-Object { [regex]::Escape($_) }) + $restrictedPatterns) -join '|'
     $violations = [System.Collections.Generic.List[string]]::new()
+    $totalHistoryScannedBytes = [long]0
+    $totalDecompressedBytes = [long]0
+    $utf8ForAccounting = [Text.UTF8Encoding]::new($false)
 
     function Test-RestrictedText {
         param([AllowNull()][string] $Text)
@@ -137,6 +328,11 @@ try {
             throw "Tracked file '$path' is not present in the working tree."
         }
 
+        $fileInfo = Get-Item -LiteralPath $fullPath
+        if ($fileInfo.Length -gt $MaxTrackedFileBytes) {
+            throw "Tracked file '$path' exceeds the per-file limit of $MaxTrackedFileBytes bytes."
+        }
+
         try {
             $bytes = [IO.File]::ReadAllBytes($fullPath)
         }
@@ -144,13 +340,28 @@ try {
             throw "Tracked file '$path' could not be read as one complete content string. $($_.Exception.Message)"
         }
 
-        if ($bytes -contains 0) {
-            continue
+        if ($bytes.Length -ne $fileInfo.Length) {
+            throw "Tracked file '$path' changed while it was being read."
         }
+        Add-LimitedBytes ([ref]$totalHistoryScannedBytes) $bytes.Length $MaxHistoryScannedBytes 'history scan byte budget'
 
-        $content = [Text.Encoding]::UTF8.GetString($bytes)
-        if (Test-RestrictedText $content) {
-            $violations.Add("tracked file: $path")
+        if (-not (Test-KnownSafeBinaryPath $path)) {
+            try {
+                if (Test-RestrictedText ([Text.Encoding]::UTF8.GetString($bytes))) {
+                    $violations.Add("tracked file: $path")
+                }
+                foreach ($candidate in @(Get-TextCandidates $bytes)) {
+                    if (Test-RestrictedText $candidate.Text) {
+                        if ($violations -notcontains "tracked file: $path") {
+                            $violations.Add("tracked file: $path")
+                        }
+                        break
+                    }
+                }
+            }
+            catch {
+                throw "Tracked file '$path' failed closed. $($_.Exception.Message)"
+            }
         }
     }
 
@@ -171,23 +382,56 @@ try {
                         continue
                     }
 
+                    if ($entry.Length -gt $MaxArchiveEntryBytes) {
+                        throw "Historical tree '${commit}:$($entry.FullName)' declared size exceeds the per-entry limit of $MaxArchiveEntryBytes bytes."
+                    }
+
                     $memory = [IO.MemoryStream]::new()
                     try {
                         $entryStream = $entry.Open()
                         try {
-                            $entryStream.CopyTo($memory)
+                            $buffer = [byte[]]::new(81920)
+                            $actualLength = [long]0
+                            while (($read = $entryStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                                Add-LimitedBytes ([ref]$actualLength) $read $MaxArchiveEntryBytes "Historical tree '${commit}:$($entry.FullName)' actual size"
+                                $projectedHistory = $totalHistoryScannedBytes + $actualLength
+                                if ($projectedHistory -gt $MaxHistoryScannedBytes) {
+                                    throw "history scan byte budget exceeded while reading '${commit}:$($entry.FullName)'."
+                                }
+                                $projectedDecompressed = $totalDecompressedBytes + $actualLength
+                                if ($projectedDecompressed -gt $MaxTotalDecompressedBytes) {
+                                    throw "decompressed history byte budget exceeded while reading '${commit}:$($entry.FullName)'."
+                                }
+                                $memory.Write($buffer, 0, $read)
+                            }
                         }
                         finally {
                             $entryStream.Dispose()
                         }
 
-                        $bytes = $memory.ToArray()
-                        if (($bytes -contains 0) -or $bytes.Length -eq 0) {
-                            continue
+                        if ($actualLength -ne $entry.Length) {
+                            throw "Historical tree '${commit}:$($entry.FullName)' declared $($entry.Length) bytes but yielded $actualLength bytes."
                         }
-                        $content = [Text.Encoding]::UTF8.GetString($bytes)
-                        if (Test-RestrictedText $content) {
-                            $violations.Add("historical tree: ${commit}:$($entry.FullName)")
+                        $totalHistoryScannedBytes += $actualLength
+                        $totalDecompressedBytes += $actualLength
+                        $bytes = $memory.ToArray()
+                        if (-not (Test-KnownSafeBinaryPath $entry.FullName)) {
+                            try {
+                                if (Test-RestrictedText ([Text.Encoding]::UTF8.GetString($bytes))) {
+                                    $violations.Add("historical tree: ${commit}:$($entry.FullName)")
+                                }
+                                foreach ($candidate in @(Get-TextCandidates $bytes)) {
+                                    if (Test-RestrictedText $candidate.Text) {
+                                        if ($violations -notcontains "historical tree: ${commit}:$($entry.FullName)") {
+                                            $violations.Add("historical tree: ${commit}:$($entry.FullName)")
+                                        }
+                                        break
+                                    }
+                                }
+                            }
+                            catch {
+                                throw "Historical tree '${commit}:$($entry.FullName)' failed closed. $($_.Exception.Message)"
+                            }
                         }
                     }
                     finally {
@@ -206,17 +450,29 @@ try {
         }
     }
 
-    $historyText = Invoke-GitChecked @('log', '--all', '--format=%H%n%an%n%ae%n%cn%n%ce%n%B') -RequireOutput
+    $historyRemaining = $MaxHistoryScannedBytes - $totalHistoryScannedBytes
+    $historyText = Invoke-GitChecked @('log', '--all', '--format=%H%n%an%n%ae%n%cn%n%ce%n%B') -RequireOutput -MaxOutputBytes ([Math]::Max(1, $historyRemaining))
+    $historyBytes = $utf8ForAccounting.GetByteCount($historyText.Output)
+    Add-LimitedBytes ([ref]$totalHistoryScannedBytes) $historyBytes $MaxHistoryScannedBytes 'history scan byte budget'
     foreach ($commit in $commits) {
         if ($historyText.Output -notmatch [regex]::Escape($commit)) {
             throw "The history log result does not include commit $commit."
         }
     }
-    if (Test-RestrictedText $historyText.Output) {
+    $coAuthorTrailer = (Convert-CodePoints @(67,111,45,65,117,116,104,111,114,101,100,45,66,121)) +
+        (Convert-CodePoints @(58,32)) +
+        (Convert-CodePoints @(80,97,112,101,114,99,108,105,112)) +
+        (Convert-CodePoints @(32,60,110,111,114,101,112,108,121,64,112,97,112,101,114,99,108,105,112,46,105,110,103,62))
+    $historyScanText = [regex]::Replace(
+        $historyText.Output,
+        '(?m)^' + [regex]::Escape($coAuthorTrailer) + '(?:\r?\n|$)',
+        ''
+    )
+    if (Test-RestrictedText $historyScanText) {
         $violations.Add('history metadata')
     }
     $historyTaskIdPattern = '\b(?!SHA-)[A-Z]{2,8}-[0-9]{3,6}\b'
-    if ($historyText.Output -match $historyTaskIdPattern) {
+    if ($historyScanText -match $historyTaskIdPattern) {
         $violations.Add('history task identifier')
     }
 

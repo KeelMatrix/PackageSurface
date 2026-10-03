@@ -63,8 +63,110 @@ function New-Repository {
     }
 }
 
+function New-ByteRepository {
+    param(
+        [string] $Path,
+        [byte[]] $Bytes,
+        [switch] $HistoricalOnly
+    )
+
+    New-Item -ItemType Directory -Force -Path $Path | Out-Null
+    Invoke-External 'git' @('init', '--quiet', '--', $Path) | Out-Null
+    Invoke-External 'git' @('-C', $Path, 'config', 'user.email', 'fixture@example.invalid') | Out-Null
+    Invoke-External 'git' @('-C', $Path, 'config', 'user.name', 'Fixture') | Out-Null
+    [IO.File]::WriteAllBytes((Join-Path $Path 'tracked.bin'), $Bytes)
+    Invoke-External 'git' @('-C', $Path, 'add', '--', 'tracked.bin') | Out-Null
+    Invoke-External 'git' @('-C', $Path, 'commit', '--quiet', '-m', 'fixture') | Out-Null
+    if ($HistoricalOnly) {
+        [IO.File]::WriteAllText((Join-Path $Path 'tracked.bin'), 'fixture content')
+        Invoke-External 'git' @('-C', $Path, 'add', '--', 'tracked.bin') | Out-Null
+        Invoke-External 'git' @('-C', $Path, 'commit', '--quiet', '-m', 'fixture-safe') | Out-Null
+    }
+}
+
+function Join-ByteArrays {
+    param([byte[][]] $Arrays)
+
+    $length = 0
+    foreach ($array in $Arrays) {
+        $length += $array.Length
+    }
+
+    $result = [byte[]]::new($length)
+    $offset = 0
+    foreach ($array in $Arrays) {
+        [Array]::Copy($array, 0, $result, $offset, $array.Length)
+        $offset += $array.Length
+    }
+    return $result
+}
+
+function Get-EncodedBytes {
+    param(
+        [Text.Encoding] $Encoding,
+        [string] $Text
+    )
+
+    return Join-ByteArrays @($Encoding.GetPreamble(), $Encoding.GetBytes($Text))
+}
+
+function New-FillerBytes {
+    param([int] $Length)
+
+    $result = [byte[]]::new($Length)
+    for ($i = 0; $i -lt $Length; $i++) {
+        $result[$i] = 97
+    }
+    return $result
+}
+
+function Get-HistoryScanTotals {
+    param([string] $Path)
+
+    $tracked = Invoke-External 'git' @('-C', $Path, 'ls-files')
+    $currentBytes = [long]0
+    foreach ($relativePath in @($tracked -split "`r?`n")) {
+        $currentBytes += (Get-Item -LiteralPath (Join-Path $Path $relativePath)).Length
+    }
+
+    $archiveBytes = [long]0
+    $decompressedBytes = [long]0
+    $commits = Invoke-External 'git' @('-C', $Path, 'rev-list', '--all')
+    foreach ($commit in @($commits -split "`r?`n")) {
+        $archivePath = Join-Path $scratch ('measure-' + [Guid]::NewGuid().ToString('N') + '.zip')
+        try {
+            Invoke-External 'git' @('-C', $Path, 'archive', '--format=zip', "--output=$archivePath", $commit) | Out-Null
+            $archive = [IO.Compression.ZipFile]::OpenRead($archivePath)
+            try {
+                foreach ($entry in $archive.Entries) {
+                    if ([string]::IsNullOrEmpty($entry.Name)) {
+                        continue
+                    }
+                    $archiveBytes += $entry.Length
+                    $decompressedBytes += $entry.Length
+                }
+            }
+            finally {
+                $archive.Dispose()
+            }
+        }
+        finally {
+            if (Test-Path -LiteralPath $archivePath) {
+                Remove-Item -LiteralPath $archivePath -Force
+            }
+        }
+    }
+
+    $historyText = Invoke-External 'git' @('-C', $Path, 'log', '--all', '--format=%H%n%an%n%ae%n%cn%n%ce%n%B')
+    $metadataBytes = [Text.UTF8Encoding]::new($false).GetByteCount($historyText)
+    return [pscustomobject]@{
+        History = $currentBytes + $archiveBytes + $metadataBytes
+        Decompressed = $decompressedBytes
+    }
+}
+
 function Invoke-Gate {
-    param([string] $Path, [string] $PathPrefix, [string] $Scenario)
+    param([string] $Path, [string] $PathPrefix, [string] $Scenario, [hashtable] $Limits)
 
     $oldPath = $env:PATH
     $oldScenario = $env:HISTORY_HYGIENE_SCENARIO
@@ -87,7 +189,14 @@ function Invoke-Gate {
                 Join-Path $PathPrefix $legacyShimName
             }
         }
-        $outputItems = @(Invoke-NestedPwsh '-NoLogo' '-NoProfile' '-File' $gate '-RepositoryRoot' $Path '-GitCommandPath' $gitCommand 2>&1)
+        $gateArguments = @('-NoLogo', '-NoProfile', '-File', $gate, '-RepositoryRoot', $Path, '-GitCommandPath', $gitCommand)
+        if ($null -ne $Limits) {
+            foreach ($key in $Limits.Keys) {
+                $gateArguments += '-' + $key
+                $gateArguments += [string]$Limits[$key]
+            }
+        }
+        $outputItems = @(Invoke-NestedPwsh @gateArguments 2>&1)
         $restricted = @(
             (-join (@(80,97,112,101,114,99,108,105,112) | ForEach-Object { [char]$_ })),
             (-join (@(67,111,100,101,120) | ForEach-Object { [char]$_ })),
@@ -114,10 +223,10 @@ function Invoke-Gate {
 }
 
 function Assert-ExpectedFailure {
-    param([string] $Name, [string] $Path, [string] $ExpectedText, [string] $PathPrefix, [string] $Scenario)
+    param([string] $Name, [string] $Path, [string] $ExpectedText, [string] $PathPrefix, [string] $Scenario, [hashtable] $Limits)
 
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
-    $result = Invoke-Gate $Path $PathPrefix $Scenario
+    $result = Invoke-Gate $Path $PathPrefix $Scenario $Limits
     $stopwatch.Stop()
     Write-Output "CASE: $Name"
     Write-Output "EXIT_CODE: $($result.ExitCode)"
@@ -132,9 +241,9 @@ function Assert-ExpectedFailure {
 }
 
 function Assert-ExpectedPass {
-    param([string] $Name, [string] $Path)
+    param([string] $Name, [string] $Path, [hashtable] $Limits)
 
-    $result = Invoke-Gate $Path '' $Name
+    $result = Invoke-Gate $Path '' $Name $Limits
     Write-Output "CASE: $Name"
     Write-Output "EXIT_CODE: $($result.ExitCode)"
     if ($result.ExitCode -ne 0) {
@@ -360,9 +469,123 @@ exit 128
         Assert-ExpectedFailure $caseName $caseRoot 'Restricted text found' ''
     }
 
+    $encodingCases = @(
+        @{ Name = 'utf16-le-bom'; Encoding = [Text.UnicodeEncoding]::new($false, $true, $true) },
+        @{ Name = 'utf16-le-no-bom'; Encoding = [Text.UnicodeEncoding]::new($false, $false, $true) },
+        @{ Name = 'utf16-be-bom'; Encoding = [Text.UnicodeEncoding]::new($true, $true, $true) },
+        @{ Name = 'utf16-be-no-bom'; Encoding = [Text.UnicodeEncoding]::new($true, $false, $true) },
+        @{ Name = 'utf32-le-bom'; Encoding = [Text.UTF32Encoding]::new($false, $true, $true) },
+        @{ Name = 'utf32-le-no-bom'; Encoding = [Text.UTF32Encoding]::new($false, $false, $true) },
+        @{ Name = 'utf32-be-bom'; Encoding = [Text.UTF32Encoding]::new($true, $true, $true) },
+        @{ Name = 'utf32-be-no-bom'; Encoding = [Text.UTF32Encoding]::new($true, $false, $true) }
+    )
+    foreach ($encodingCase in $encodingCases) {
+        $encodingRoot = Join-Path $scratch $encodingCase.Name
+        $encodedMarker = Get-EncodedBytes $encodingCase.Encoding ('fixture ' + $processMarker)
+        New-ByteRepository $encodingRoot $encodedMarker
+        Assert-ExpectedFailure $encodingCase.Name $encodingRoot 'Restricted text found' ''
+    }
+
+    $utf8 = [Text.UTF8Encoding]::new($false, $true)
+    $nulRichRoot = Join-Path $scratch 'nul-rich-utf8'
+    $nulRichBytes = $utf8.GetBytes(('fixture' + [char]0 + $processMarker + [char]0 + 'tail'))
+    New-ByteRepository $nulRichRoot $nulRichBytes
+    Assert-ExpectedFailure 'nul-rich-utf8' $nulRichRoot 'Restricted text found' ''
+
+    $invalidPrefix = [byte[]]@(0, 255, 0)
+    $binaryMarker = $utf8.GetBytes(('fixture ' + $processMarker))
+    $binaryBytes = Join-ByteArrays @($invalidPrefix, $binaryMarker)
+    $binaryRoot = Join-Path $scratch 'binary-current-marker'
+    New-ByteRepository $binaryRoot $binaryBytes
+    $binaryDiagnostic = 'unsupported binary or unrecognized encoding'
+    Assert-ExpectedFailure 'binary-current-marker' $binaryRoot $binaryDiagnostic ''
+
+    $historicalBinaryRoot = Join-Path $scratch 'binary-deleted-historical-marker'
+    New-ByteRepository $historicalBinaryRoot $binaryBytes -HistoricalOnly
+    Assert-ExpectedFailure 'binary-deleted-historical-marker' $historicalBinaryRoot $binaryDiagnostic ''
+
+    $taskIdentifier = Convert-CodePoints @(65,66,67,45,49,50,51,52)
+    $binaryTaskRoot = Join-Path $scratch 'binary-task-identifier'
+    $binaryTaskBytes = Join-ByteArrays @($invalidPrefix, $utf8.GetBytes(('fixture ' + $taskIdentifier)))
+    New-ByteRepository $binaryTaskRoot $binaryTaskBytes
+    Assert-ExpectedFailure 'binary-task-identifier' $binaryTaskRoot $binaryDiagnostic ''
+
+    $resourceLimit = 512
+    $resourceWideLimits = @{
+        MaxTrackedFileBytes = 65536
+        MaxArchiveEntryBytes = 65536
+        MaxHistoryScannedBytes = 65536
+        MaxTotalDecompressedBytes = 65536
+    }
+    $trackedAtLimitRoot = Join-Path $scratch 'tracked-file-at-limit'
+    New-ByteRepository $trackedAtLimitRoot (New-FillerBytes $resourceLimit)
+    Assert-ExpectedPass 'tracked-file-at-limit' $trackedAtLimitRoot @{
+        MaxTrackedFileBytes = $resourceLimit
+        MaxArchiveEntryBytes = 65536
+        MaxHistoryScannedBytes = 65536
+        MaxTotalDecompressedBytes = 65536
+    }
+
+    $trackedOverLimitRoot = Join-Path $scratch 'tracked-file-over-limit'
+    New-ByteRepository $trackedOverLimitRoot (New-FillerBytes ($resourceLimit + 1))
+    Assert-ExpectedFailure 'tracked-file-over-limit' $trackedOverLimitRoot 'per-file limit' '' '' @{
+        MaxTrackedFileBytes = $resourceLimit
+        MaxArchiveEntryBytes = 65536
+        MaxHistoryScannedBytes = 65536
+        MaxTotalDecompressedBytes = 65536
+    }
+
+    $archiveAtLimitRoot = Join-Path $scratch 'archive-entry-at-limit'
+    New-ByteRepository $archiveAtLimitRoot (New-FillerBytes $resourceLimit) -HistoricalOnly
+    Assert-ExpectedPass 'archive-entry-at-limit' $archiveAtLimitRoot @{
+        MaxTrackedFileBytes = 65536
+        MaxArchiveEntryBytes = $resourceLimit
+        MaxHistoryScannedBytes = 65536
+        MaxTotalDecompressedBytes = 65536
+    }
+
+    $archiveOverLimitRoot = Join-Path $scratch 'archive-entry-over-limit'
+    New-ByteRepository $archiveOverLimitRoot (New-FillerBytes ($resourceLimit + 1)) -HistoricalOnly
+    Assert-ExpectedFailure 'archive-entry-over-limit' $archiveOverLimitRoot 'declared size exceeds' '' '' @{
+        MaxTrackedFileBytes = 65536
+        MaxArchiveEntryBytes = $resourceLimit
+        MaxHistoryScannedBytes = 65536
+        MaxTotalDecompressedBytes = 65536
+    }
+
+    $totalRoot = Join-Path $scratch 'total-history-boundary'
+    New-Repository $totalRoot -TwoCommits
+    $totals = Get-HistoryScanTotals $totalRoot
+    Assert-ExpectedPass 'total-history-at-limit' $totalRoot @{
+        MaxTrackedFileBytes = 65536
+        MaxArchiveEntryBytes = 65536
+        MaxHistoryScannedBytes = $totals.History
+        MaxTotalDecompressedBytes = $totals.Decompressed
+    }
+    Assert-ExpectedFailure 'total-history-over-limit' $totalRoot 'history scan byte budget' '' '' @{
+        MaxTrackedFileBytes = 65536
+        MaxArchiveEntryBytes = 65536
+        MaxHistoryScannedBytes = $totals.History - 1
+        MaxTotalDecompressedBytes = 65536
+    }
+    Assert-ExpectedFailure 'total-decompressed-over-limit' $totalRoot 'decompressed history byte budget' '' '' @{
+        MaxTrackedFileBytes = 65536
+        MaxArchiveEntryBytes = 65536
+        MaxHistoryScannedBytes = 65536
+        MaxTotalDecompressedBytes = $totals.Decompressed - 1
+    }
+
     $positiveRoot = Join-Path $scratch 'ordinary-engineering'
     New-Repository $positiveRoot -CommitSubject 'fix(restore): reject unknown consumed members' -CommitBody 'review reject fix remediation' -TreeContentMarker 'review reject fix remediation'
     Assert-ExpectedPass 'ordinary-engineering' $positiveRoot
+
+    $coAuthorTrailer = (Convert-CodePoints @(67,111,45,65,117,116,104,111,114,101,100,45,66,121)) +
+        (Convert-CodePoints @(58,32)) +
+        (Convert-CodePoints @(80,97,112,101,114,99,108,105,112)) +
+        (Convert-CodePoints @(32,60,110,111,114,101,112,108,121,64,112,97,112,101,114,99,108,105,112,46,105,110,103,62))
+    $coAuthorRoot = Join-Path $scratch 'required-coauthor-trailer'
+    New-Repository $coAuthorRoot -CommitBody $coAuthorTrailer
+    Assert-ExpectedPass 'required-coauthor-trailer' $coAuthorRoot
 
     $taskIdRoot = Join-Path $scratch 'task-id'
     New-Repository $taskIdRoot -WithTaskId

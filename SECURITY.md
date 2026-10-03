@@ -14,6 +14,8 @@ Analysis fails closed on incomplete evidence. A `PS007` caused by a cumulative b
 
 Filesystem-bearing `Exists(...)` guards use the host filesystem's casing contract: Windows comparisons are case-insensitive, while Linux/macOS comparisons are case-sensitive. NuGet package ID/version identity remains case-insensitive, and unresolved or ambiguous path comparisons fail closed as `PS007`.
 
+The repository history-hygiene implementation source of truth is `scripts/test-history-hygiene.ps1`, with `scripts/test-history-hygiene-regressions.ps1` defining its regression contract. Every tracked file and reachable historical blob is decoded as strict UTF-8, UTF-16, or UTF-32 text; unsupported or binary content fails closed except for the confirmed root `icon.png` allowlist entry. Per-file and per-archive-entry inputs are limited to 4 MiB, and cumulative scanned/decompressed history is limited to 128 MiB. The mandatory repository co-author trailer is the only history-metadata allowlist. This gate is independent of package analysis and protects the repository from incomplete provenance evidence.
+
 ## Telemetry boundary
 
 The `compilerApiVersion` restore member is required to be a string when present; a wrong primitive is `PS007`, never an absent-value fallback.

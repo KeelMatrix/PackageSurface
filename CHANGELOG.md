@@ -28,7 +28,7 @@ PackageSurface release history.
   under the same restricted vocabulary; no co-author trailer is allowlisted. Incomplete or shallow history and Git
   read failures remain fail-closed.
 
-- Generated-import `Exists(...)` guards follow actual resolved filesystem semantics per path/volume while NuGet package ID/version matching remains case-insensitive and separate; inaccessible or ambiguous path resolution fails closed with `PS007`.
+- Filesystem path identity follows the filesystem containing the resolved path: project-path identities use the project/assets filesystem, while package-relative asset identities and package-file `Exists(...)` checks use the NuGet package-root filesystem. Those roots can differ in case sensitivity, including across volumes. NuGet package ID/version identity remains case-insensitive. Inaccessible or ambiguous resolution fails closed with `PS007`.
 
 - Restore metadata is now validated against the native shapes emitted by supported SDKs before graph closure. The admitted restore members reject wrong primitives, nulls, array elements, map values, and malformed nested metadata with `PS007` while preserving absent-member semantics and both native dependency-value forms; the regression matrix covers SDK 8.0.425, 9.0.121, and 10.0.401 formats 3 and 4.
 

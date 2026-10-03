@@ -84,6 +84,7 @@ RunParserMessageRegression();
 RunParserTokenPrivacyRegression();
 RunBaselineContractRegression();
 RunPackageIdentityAndPathRegression();
+RunMixedFilesystemIdentityRegression();
 RunBaselineJsonBoundaryRegression();
 RunMacOsRootAliasPredicateRegression();
 
@@ -748,6 +749,163 @@ static void RunPackageIdentityAndPathRegression()
     finally
     {
         if (Directory.Exists(scratch)) Directory.Delete(scratch, recursive: true);
+    }
+}
+
+static void RunMixedFilesystemIdentityRegression()
+{
+    var singleBuildAsset = new List<string> { "build/Case.targets" };
+    var scratch = Path.Combine(Path.GetTempPath(), "packagesurface-mixed-filesystem-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(scratch);
+    var previousCurrentDirectory = Environment.CurrentDirectory;
+    try
+    {
+        var configuredModes = Enum.GetValues<FileSystemCaseSensitivity>().Where(mode => mode != FileSystemCaseSensitivity.Host).ToArray();
+        var modePairs = from processMode in configuredModes
+                        from projectMode in configuredModes
+                        from packageMode in configuredModes
+                        select (processMode, projectMode, packageMode);
+
+        foreach (var (processMode, projectMode, packageMode) in modePairs)
+        {
+            var scenario = $"cwd-{processMode}-project-{projectMode}-cache-{packageMode}";
+            var root = Path.Combine(scratch, scenario);
+            var workingRoot = Path.Combine(root, "working");
+            var projectRoot = Path.Combine(root, "project");
+            var packageCache = Path.Combine(root, "packages");
+            var obj = Path.Combine(projectRoot, "obj");
+            Directory.CreateDirectory(workingRoot);
+            Directory.CreateDirectory(obj);
+
+            var assets = Path.Combine(obj, "project.assets.json");
+            WriteAssets(assets, packageCache, "Case.Package", singleBuildAsset, createFiles: true);
+            var assetDocument = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
+            assetDocument["targets"]!["net8.0"]!["Case.Package/1.0.0"]!["build"] = new JsonObject
+            {
+                ["build/Case.targets"] = new JsonObject()
+            };
+            File.WriteAllText(assets, assetDocument.ToJsonString());
+
+            var packageAsset = Path.Combine(packageCache, "Case.Package", "1.0.0", "build", "Case.targets");
+            File.WriteAllText(packageAsset, "<Project />");
+            var generatedTargets = Path.Combine(obj, "Test.csproj.nuget.g.targets");
+            var rootOverrides = new Dictionary<string, FileSystemCaseSensitivity>(StringComparer.Ordinal)
+            {
+                [workingRoot] = processMode,
+                [projectRoot] = projectMode,
+                [packageCache] = packageMode
+            };
+
+            using (FileSystemComparisonScope.Push(workingRoot, FileSystemCaseSensitivity.Host, rootOverrides))
+            {
+                var variants = new (string Name, string WrongCase, string CorrectCase)[]
+                {
+                    ("root-slash", "$(NuGetPackageRoot)/Case.Package/1.0.0/build/case.targets", "$(NuGetPackageRoot)/Case.Package/1.0.0/build/Case.targets"),
+                    ("root-no-slash-backslashes", "$(NuGetPackageRoot)Case.Package\\1.0.0\\build\\case.targets", "$(NuGetPackageRoot)Case.Package\\1.0.0\\build\\Case.targets"),
+                    ("absolute-native", packageAsset.Replace("Case.targets", "case.targets", StringComparison.Ordinal), packageAsset),
+                    ("absolute-forward-slashes", packageAsset.Replace("Case.targets", "case.targets", StringComparison.Ordinal).Replace('\\', '/'), packageAsset.Replace('\\', '/'))
+                };
+
+                foreach (var variant in variants)
+                {
+                    WriteCaseImport(generatedTargets, variant.WrongCase);
+                    var before = ResolvedGraphClassifier.Analyze(
+                        assets,
+                        projectRoot,
+                        strictContent: true,
+                        projectContext: "Test.csproj",
+                        selectedProjectPath: Path.Combine(projectRoot, "Test.csproj"));
+                    Require(before.IsComplete, $"{scenario}/{variant.Name}: wrong-case pre-transition scan was incomplete: {string.Join(" | ", before.IncompleteReasons)}");
+                    var beforeAsset = before.Entries.Single(entry => entry.PackageRelativePath == "build/Case.targets");
+                    var expectedBefore = packageMode == FileSystemCaseSensitivity.Insensitive;
+                    Require(beforeAsset.Active == expectedBefore,
+                        $"{scenario}/{variant.Name}: package-root casing used the process or project volume instead of the package cache.");
+
+                    WriteCaseImport(generatedTargets, variant.CorrectCase);
+                    var after = ResolvedGraphClassifier.Analyze(
+                        assets,
+                        projectRoot,
+                        strictContent: true,
+                        projectContext: "Test.csproj",
+                        selectedProjectPath: Path.Combine(projectRoot, "Test.csproj"));
+                    Require(after.IsComplete && after.Entries.Single(entry => entry.PackageRelativePath == "build/Case.targets").Active,
+                        $"{scenario}/{variant.Name}: correct-case package import was not active.");
+
+                    var expectedDifference = packageMode == FileSystemCaseSensitivity.Sensitive;
+                    var normalTransition = DiffEngine.Compare(before.Entries.Select(BaselineEntry.From).ToArray(), after.Entries, strictContent: false);
+                    var strictTransition = DiffEngine.Compare(before.Entries.Select(BaselineEntry.From).ToArray(), after.Entries, strictContent: true);
+                    Require((normalTransition.Count > 0) == expectedDifference && (strictTransition.Count > 0) == expectedDifference,
+                        $"{scenario}/{variant.Name}: normal and strict transitions did not follow package-cache casing.");
+
+                    var baseEntry = Entry(CapabilityKind.BuildTargets, "build/Case.targets", new string('a', 64)) with { PackageId = "Case.Package", Project = "Test.csproj" };
+                    var caseDistinctAsset = baseEntry with { PackageRelativePath = "build/case.targets" };
+                    var deduplicated = new HashSet<SurfaceIdentity>(SurfaceIdentityComparer.Instance)
+                    {
+                        SurfaceIdentity.From(baseEntry),
+                        SurfaceIdentity.From(caseDistinctAsset)
+                    };
+                    Require(deduplicated.Count == (packageMode == FileSystemCaseSensitivity.Sensitive ? 2 : 1),
+                        $"{scenario}/{variant.Name}: classifier identity grouping used the wrong root's casing rules.");
+
+                    var caseDistinctProject = baseEntry with { Project = "test.csproj" };
+                    var projectIdentities = new HashSet<SurfaceIdentity>(SurfaceIdentityComparer.Instance)
+                    {
+                        SurfaceIdentity.From(baseEntry),
+                        SurfaceIdentity.From(caseDistinctProject)
+                    };
+                    Require(projectIdentities.Count == (projectMode == FileSystemCaseSensitivity.Sensitive ? 2 : 1),
+                        $"{scenario}/{variant.Name}: project identity used package-cache or process-directory casing.");
+                }
+
+                Require(PackageIdentity.TryCreate("Case.Package", "1.0.0-Alpha.1", out var packageA) &&
+                        PackageIdentity.TryCreate("case.package", "1.0.0-alpha.1", out var packageB) && packageA.Equals(packageB),
+                    $"{scenario}: NuGet package ID/version identity stopped being case-insensitive.");
+            }
+
+            Environment.CurrentDirectory = workingRoot;
+            foreach (var (name, duplicateChange, expectedDuplicate) in new[]
+            {
+                ("asset-path", (Action<JsonObject>)(entry => entry["packageRelativePath"] = "build/case.targets"), packageMode == FileSystemCaseSensitivity.Insensitive),
+                ("project-path", (Action<JsonObject>)(entry => entry["project"] = "test.csproj"), projectMode == FileSystemCaseSensitivity.Insensitive),
+                ("nuget-identity", (Action<JsonObject>)(entry => { entry["packageId"] = "case.package"; entry["version"] = "1.0.0-ALPHA.1"; }), true)
+            })
+            {
+                var duplicateBaseline = Path.Combine(root, $"{name}-duplicate.json");
+                WriteDuplicateBaseline(duplicateBaseline, duplicateChange);
+                using var commandScope = FileSystemComparisonScope.Push(workingRoot, FileSystemCaseSensitivity.Host, rootOverrides);
+                var check = CaptureCommand("check", assets, "--baseline", duplicateBaseline, "--format", "json", "--no-telemetry");
+                Require(check.ExitCode == (expectedDuplicate ? 2 : 1),
+                    $"{scenario}/{name}: baseline duplicate validation used working-directory semantics or disagreed with scan/check (exit {check.ExitCode}). Output: {check.Output}");
+            }
+        }
+
+        Console.WriteLine("filesystem identity matrix: 8 process/project/cache root combinations; 4 Exists path forms; no skips.");
+    }
+    finally
+    {
+        Environment.CurrentDirectory = previousCurrentDirectory;
+        if (Directory.Exists(scratch)) Directory.Delete(scratch, recursive: true);
+    }
+
+    static void WriteCaseImport(string path, string existsPath)
+    {
+        File.WriteAllText(path,
+            $"<Project><Import Project=\"$(NuGetPackageRoot)/Case.Package/1.0.0/build/Case.targets\" Condition=\"Exists('{existsPath}')\" /></Project>");
+    }
+
+    static void WriteDuplicateBaseline(string path, Action<JsonObject> alterDuplicate)
+    {
+        var entry = Entry(CapabilityKind.BuildTargets, "build/Case.targets", new string('a', 64)) with
+        {
+            PackageId = "Case.Package",
+            Project = "Test.csproj"
+        };
+        BaselineDocument.Write(path, new SurfaceSnapshot(new[] { entry }, Array.Empty<string>(), false, 1));
+        var document = JsonNode.Parse(File.ReadAllText(path))!.AsObject();
+        var duplicate = document["entries"]!.AsArray()[0]!.DeepClone()!.AsObject();
+        alterDuplicate(duplicate);
+        document["entries"]!.AsArray().Add(duplicate);
+        File.WriteAllText(path, document.ToJsonString());
     }
 }
 

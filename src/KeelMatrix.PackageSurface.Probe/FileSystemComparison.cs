@@ -14,6 +14,10 @@ enum ResolvedFileSystemCaseSensitivity
     Insensitive
 }
 
+/// <summary>
+/// Canonical filesystem-identity source for project paths and package-relative assets.
+/// Comparisons are resolved against the filesystem containing each registered path root.
+/// </summary>
 sealed class FileSystemComparisonContext
 {
     private static readonly AsyncLocal<FileSystemComparisonContext?> CurrentSlot = new();
@@ -21,13 +25,38 @@ sealed class FileSystemComparisonContext
     private readonly FileSystemCaseSensitivity requestedMode;
     private readonly string seedPath;
     private readonly string? seedProbeKey;
+    private readonly Dictionary<string, FileSystemCaseSensitivity> rootOverrides;
     private readonly Dictionary<string, ResolvedFileSystemCaseSensitivity> probeModes = new(StringComparer.Ordinal);
+    private readonly List<ProjectPathBinding> projectPaths = new();
+    private readonly List<PackageRootBinding> packageRoots = new();
+    private string? activeProjectIdentity;
 
-    private FileSystemComparisonContext(FileSystemCaseSensitivity requestedMode, string seedPath)
+    private FileSystemComparisonContext(
+        FileSystemCaseSensitivity requestedMode,
+        string seedPath,
+        IReadOnlyDictionary<string, FileSystemCaseSensitivity>? rootOverrides = null,
+        FileSystemComparisonContext? inherited = null)
     {
         this.requestedMode = requestedMode;
-        this.seedPath = seedPath;
-        seedProbeKey = requestedMode == FileSystemCaseSensitivity.Host ? GetProbeKey(seedPath) : null;
+        this.seedPath = Path.GetFullPath(seedPath);
+        seedProbeKey = requestedMode == FileSystemCaseSensitivity.Host ? GetProbeKey(this.seedPath) : null;
+        this.rootOverrides = inherited is null
+            ? new Dictionary<string, FileSystemCaseSensitivity>(StringComparer.Ordinal)
+            : new Dictionary<string, FileSystemCaseSensitivity>(inherited.rootOverrides, StringComparer.Ordinal);
+        if (inherited is not null)
+        {
+            projectPaths.AddRange(inherited.projectPaths);
+            packageRoots.AddRange(inherited.packageRoots);
+        }
+
+        if (rootOverrides is not null)
+        {
+            foreach (var (path, mode) in rootOverrides)
+            {
+                if (mode == FileSystemCaseSensitivity.Host) continue;
+                this.rootOverrides[Path.GetFullPath(path)] = mode;
+            }
+        }
     }
 
     public static FileSystemComparisonContext Current => CurrentSlot.Value ?? Default.Value;
@@ -35,15 +64,21 @@ sealed class FileSystemComparisonContext
     public static IDisposable Push(string seedPath, FileSystemCaseSensitivity requestedMode)
     {
         var previous = CurrentSlot.Value;
-        CurrentSlot.Value = new FileSystemComparisonContext(requestedMode, seedPath);
-        return new Scope(previous);
+        var current = new FileSystemComparisonContext(requestedMode, seedPath, inherited: previous);
+        CurrentSlot.Value = current;
+        return new Scope(previous, current);
     }
 
-    public StringComparison StringComparison => GetComparison(seedPath);
-
-    public StringComparer StringComparer => GetCaseSensitivity(seedPath) == ResolvedFileSystemCaseSensitivity.Insensitive
-        ? System.StringComparer.OrdinalIgnoreCase
-        : System.StringComparer.Ordinal;
+    public static IDisposable Push(
+        string seedPath,
+        FileSystemCaseSensitivity requestedMode,
+        IReadOnlyDictionary<string, FileSystemCaseSensitivity> rootOverrides)
+    {
+        var previous = CurrentSlot.Value;
+        var current = new FileSystemComparisonContext(requestedMode, seedPath, rootOverrides, previous);
+        CurrentSlot.Value = current;
+        return new Scope(previous, current);
+    }
 
     public bool TryPathsEqual(string left, string right, out bool equal)
     {
@@ -75,6 +110,13 @@ sealed class FileSystemComparisonContext
         switch (requestedMode)
         {
             case FileSystemCaseSensitivity.Host:
+                if (TryGetRootOverride(path, out var hostOverride))
+                {
+                    var hostComparison = hostOverride == ResolvedFileSystemCaseSensitivity.Insensitive
+                        ? System.StringComparison.OrdinalIgnoreCase
+                        : System.StringComparison.Ordinal;
+                    return TryResolveFilePathBySpelling(path, hostComparison, out _, out exists);
+                }
                 return TryHostFileExists(path, out exists);
             case FileSystemCaseSensitivity.Sensitive:
                 exists = PathExistsWithExactSpelling(path);
@@ -95,6 +137,13 @@ sealed class FileSystemComparisonContext
         switch (requestedMode)
         {
             case FileSystemCaseSensitivity.Host:
+                if (TryGetRootOverride(path, out var hostOverride))
+                {
+                    var hostComparison = hostOverride == ResolvedFileSystemCaseSensitivity.Insensitive
+                        ? System.StringComparison.OrdinalIgnoreCase
+                        : System.StringComparison.Ordinal;
+                    return TryResolveFilePathBySpelling(path, hostComparison, out resolvedPath, out exists);
+                }
                 if (!TryHostFileExists(path, out exists)) return false;
                 if (exists) resolvedPath = path;
                 return true;
@@ -115,20 +164,166 @@ sealed class FileSystemComparisonContext
             : System.StringComparer.Ordinal.GetHashCode(value);
     }
 
-    public IEqualityComparer<string> PathComparer => new FileSystemPathEqualityComparer(this);
+    public bool ProjectPathsEqual(string? left, string? right)
+    {
+        if (string.Equals(left, right, System.StringComparison.Ordinal)) return true;
+        if (!string.Equals(left, right, System.StringComparison.OrdinalIgnoreCase)) return false;
+        return GetProjectIdentityMode(left, right) == ResolvedFileSystemCaseSensitivity.Insensitive;
+    }
 
-    private StringComparison GetComparison(string path) =>
-        GetCaseSensitivity(path) == ResolvedFileSystemCaseSensitivity.Insensitive
+    public int GetProjectPathHashCode(string? projectPath)
+    {
+        if (projectPath is null) return 0;
+        return GetProjectIdentityMode(projectPath) == ResolvedFileSystemCaseSensitivity.Insensitive
+            ? System.StringComparer.OrdinalIgnoreCase.GetHashCode(projectPath)
+            : System.StringComparer.Ordinal.GetHashCode(projectPath);
+    }
+
+    public bool PackageAssetPathsEqual(
+        string? leftProject,
+        PackageIdentity leftPackage,
+        string? leftPath,
+        string? rightProject,
+        PackageIdentity rightPackage,
+        string? rightPath)
+    {
+        if (string.Equals(leftPath, rightPath, System.StringComparison.Ordinal)) return true;
+        if (!string.Equals(leftPath, rightPath, System.StringComparison.OrdinalIgnoreCase)) return false;
+        return GetPackageAssetMode(leftProject, leftPackage, rightProject, rightPackage) == ResolvedFileSystemCaseSensitivity.Insensitive;
+    }
+
+    public static int GetPackageAssetPathHashCode(string? assetPath)
+    {
+        if (assetPath is null) return 0;
+        // Exact asset paths compare equal across package versions and roots, even when those roots
+        // have different case behavior. A case-folded hash preserves that equality contract; the
+        // comparer still keeps case-distinct assets separate on sensitive roots.
+        return System.StringComparer.OrdinalIgnoreCase.GetHashCode(assetPath);
+    }
+
+    public StringComparison ProjectStringComparison =>
+        GetProjectIdentityMode(activeProjectIdentity) == ResolvedFileSystemCaseSensitivity.Insensitive
             ? System.StringComparison.OrdinalIgnoreCase
             : System.StringComparison.Ordinal;
 
+    public StringComparison GetPackageAssetStringComparison(PackageIdentity package) =>
+        GetPackageAssetMode(activeProjectIdentity, package, activeProjectIdentity, package) == ResolvedFileSystemCaseSensitivity.Insensitive
+            ? System.StringComparison.OrdinalIgnoreCase
+            : System.StringComparison.Ordinal;
+
+    public void RegisterProjectPath(string? projectIdentity, string projectPath)
+    {
+        if (string.IsNullOrEmpty(projectIdentity))
+        {
+            activeProjectIdentity = null;
+            return;
+        }
+
+        var normalizedIdentity = NormalizeIdentityPath(projectIdentity);
+        activeProjectIdentity = normalizedIdentity;
+        var fullPath = Path.GetFullPath(projectPath);
+        if (!projectPaths.Any(binding => binding.Identity.Equals(normalizedIdentity, System.StringComparison.Ordinal) &&
+                binding.Path.Equals(fullPath, System.StringComparison.Ordinal)))
+        {
+            projectPaths.Add(new ProjectPathBinding(normalizedIdentity, fullPath));
+        }
+    }
+
+    public void RegisterPackageRoots(string? projectIdentity, IReadOnlyDictionary<string, string> roots)
+    {
+        var normalizedIdentity = string.IsNullOrEmpty(projectIdentity) ? null : NormalizeIdentityPath(projectIdentity);
+        foreach (var (key, path) in roots)
+        {
+            var slash = key.IndexOf('/');
+            if (slash <= 0 || !PackageIdentity.TryCreate(key[..slash], key[(slash + 1)..], out var package)) continue;
+            var fullPath = Path.GetFullPath(path);
+            if (!packageRoots.Any(binding => binding.ProjectIdentity == normalizedIdentity &&
+                    binding.Package.Equals(package) &&
+                    binding.Path.Equals(fullPath, System.StringComparison.Ordinal)))
+            {
+                packageRoots.Add(new PackageRootBinding(normalizedIdentity, package, fullPath));
+            }
+        }
+    }
+
+    public IEqualityComparer<string> PathComparer => new FileSystemPathEqualityComparer(this);
+
+    private ResolvedFileSystemCaseSensitivity GetProjectIdentityMode(params string?[] identities)
+    {
+        var matchedModes = new List<ResolvedFileSystemCaseSensitivity>();
+        foreach (var identity in identities.Where(value => value is not null).Select(value => NormalizeIdentityPath(value!)))
+        {
+            foreach (var binding in projectPaths)
+            {
+                var mode = GetCaseSensitivity(binding.Path);
+                if (NamesEqual(identity, binding.Identity, mode)) matchedModes.Add(mode);
+            }
+        }
+
+        return ConservativeMode(matchedModes, GetCaseSensitivity(seedPath));
+    }
+
+    private ResolvedFileSystemCaseSensitivity GetPackageAssetMode(
+        string? leftProject,
+        PackageIdentity leftPackage,
+        string? rightProject,
+        PackageIdentity rightPackage)
+    {
+        var matchedModes = new List<ResolvedFileSystemCaseSensitivity>();
+        AddPackageModes(leftProject, leftPackage, matchedModes);
+        AddPackageModes(rightProject, rightPackage, matchedModes);
+        return ConservativeMode(matchedModes, GetCaseSensitivity(seedPath));
+    }
+
+    private void AddPackageModes(string? projectIdentity, PackageIdentity package, List<ResolvedFileSystemCaseSensitivity> modes)
+    {
+        var normalizedProject = projectIdentity is null ? null : NormalizeIdentityPath(projectIdentity);
+        foreach (var binding in packageRoots)
+        {
+            if (!binding.Package.Equals(package)) continue;
+            if (normalizedProject is null)
+            {
+                if (binding.ProjectIdentity is not null) continue;
+            }
+            else
+            {
+                if (binding.ProjectIdentity is null) continue;
+                var projectPath = projectPaths.FirstOrDefault(project =>
+                    project.Identity.Equals(binding.ProjectIdentity, System.StringComparison.Ordinal))?.Path;
+                var projectMode = projectPath is null ? ResolvedFileSystemCaseSensitivity.Unknown : GetCaseSensitivity(projectPath);
+                if (!NamesEqual(normalizedProject, binding.ProjectIdentity, projectMode)) continue;
+            }
+
+            modes.Add(GetCaseSensitivity(binding.Path));
+        }
+    }
+
+    private static ResolvedFileSystemCaseSensitivity ConservativeMode(
+        IReadOnlyCollection<ResolvedFileSystemCaseSensitivity> modes,
+        ResolvedFileSystemCaseSensitivity fallback)
+    {
+        if (modes.Count == 0) return fallback;
+        return modes.All(mode => mode == ResolvedFileSystemCaseSensitivity.Insensitive)
+            ? ResolvedFileSystemCaseSensitivity.Insensitive
+            : ResolvedFileSystemCaseSensitivity.Sensitive;
+    }
+
+    private static bool NamesEqual(string left, string right, ResolvedFileSystemCaseSensitivity mode) =>
+        string.Equals(left, right, mode == ResolvedFileSystemCaseSensitivity.Insensitive
+            ? System.StringComparison.OrdinalIgnoreCase
+            : System.StringComparison.Ordinal);
+
+    private static string NormalizeIdentityPath(string path) => path.Replace('\\', '/');
+
     private ResolvedFileSystemCaseSensitivity GetCaseSensitivity(params string[] paths)
     {
-        if (requestedMode == FileSystemCaseSensitivity.Sensitive) return ResolvedFileSystemCaseSensitivity.Sensitive;
-        if (requestedMode == FileSystemCaseSensitivity.Insensitive) return ResolvedFileSystemCaseSensitivity.Insensitive;
-
-        foreach (var path in paths.Append(seedPath))
+        var pathsToProbe = paths.Length == 0 ? new[] { seedPath } : paths;
+        foreach (var path in pathsToProbe)
         {
+            if (TryGetRootOverride(path, out var overridden)) return overridden;
+            if (requestedMode == FileSystemCaseSensitivity.Sensitive) return ResolvedFileSystemCaseSensitivity.Sensitive;
+            if (requestedMode == FileSystemCaseSensitivity.Insensitive) return ResolvedFileSystemCaseSensitivity.Insensitive;
+
             var probeKey = string.Equals(path, seedPath, System.StringComparison.Ordinal)
                 ? seedProbeKey ?? GetProbeKey(path)
                 : GetProbeKey(path);
@@ -144,6 +339,40 @@ sealed class FileSystemComparisonContext
 
         return ResolvedFileSystemCaseSensitivity.Unknown;
     }
+
+    private bool TryGetRootOverride(string path, out ResolvedFileSystemCaseSensitivity mode)
+    {
+        mode = ResolvedFileSystemCaseSensitivity.Unknown;
+        string fullPath;
+        try
+        {
+            fullPath = Path.GetFullPath(path);
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException)
+        {
+            return false;
+        }
+
+        string? selectedRoot = null;
+        foreach (var root in rootOverrides.Keys)
+        {
+            var relative = Path.GetRelativePath(root, fullPath);
+            if (Path.IsPathRooted(relative) || relative == ".." ||
+                relative.StartsWith(".." + Path.DirectorySeparatorChar, PlatformPathComparison) ||
+                relative.StartsWith(".." + Path.AltDirectorySeparatorChar, PlatformPathComparison)) continue;
+            if (selectedRoot is null || root.Length > selectedRoot.Length) selectedRoot = root;
+        }
+
+        if (selectedRoot is null) return false;
+        mode = rootOverrides[selectedRoot] == FileSystemCaseSensitivity.Insensitive
+            ? ResolvedFileSystemCaseSensitivity.Insensitive
+            : ResolvedFileSystemCaseSensitivity.Sensitive;
+        return true;
+    }
+
+    private static System.StringComparison PlatformPathComparison => OperatingSystem.IsWindows()
+        ? System.StringComparison.OrdinalIgnoreCase
+        : System.StringComparison.Ordinal;
 
     private static ResolvedFileSystemCaseSensitivity Detect(string path)
     {
@@ -345,9 +574,34 @@ sealed class FileSystemComparisonContext
         }
     }
 
-    private sealed class Scope(FileSystemComparisonContext? previous) : IDisposable
+    private void MergeBindingsFrom(FileSystemComparisonContext child)
     {
-        public void Dispose() => CurrentSlot.Value = previous;
+        foreach (var binding in child.projectPaths)
+        {
+            if (!projectPaths.Contains(binding)) projectPaths.Add(binding);
+        }
+
+        foreach (var binding in child.packageRoots)
+        {
+            if (!packageRoots.Contains(binding)) packageRoots.Add(binding);
+        }
+    }
+
+    private sealed record ProjectPathBinding(string Identity, string Path);
+
+    private sealed record PackageRootBinding(string? ProjectIdentity, PackageIdentity Package, string Path);
+
+    private sealed class Scope(FileSystemComparisonContext? previous, FileSystemComparisonContext current) : IDisposable
+    {
+        private bool disposed;
+
+        public void Dispose()
+        {
+            if (disposed) return;
+            disposed = true;
+            previous?.MergeBindingsFrom(current);
+            CurrentSlot.Value = previous;
+        }
     }
 }
 

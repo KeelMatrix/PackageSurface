@@ -23,6 +23,14 @@ $parityDocuments = @(
     (Join-Path $root 'docs/DEV.md'),
     (Join-Path $root 'SECURITY.md')
 )
+$filesystemContractDocuments = @(
+    (Join-Path $root 'README.md'),
+    (Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/README.md'),
+    (Join-Path $root 'CHANGELOG.md'),
+    (Join-Path $root 'SECURITY.md'),
+    (Join-Path $root 'docs/DEV.md')
+)
+$filesystemContract = 'Filesystem path identity follows the filesystem containing the resolved path: project-path identities use the project/assets filesystem, while package-relative asset identities and package-file `Exists(...)` checks use the NuGet package-root filesystem. Those roots can differ in case sensitivity, including across volumes. NuGet package ID/version identity remains case-insensitive. Inaccessible or ambiguous resolution fails closed with `PS007`.'
 $required = @(
     'package-surface scan <path>',
     'package-surface baseline <path> --output <baseline>',
@@ -94,6 +102,16 @@ function Assert-BaselineAliasClauses([string] $Surface, [string] $Text) {
     }
 }
 
+foreach ($document in $filesystemContractDocuments) {
+    $normalized = Normalize-ContractText (Get-Content -Raw $document)
+    if (-not $normalized.Contains((Normalize-ContractText $filesystemContract), [StringComparison]::Ordinal)) {
+        throw "Documentation surface '$document' is missing the filesystem-identity contract."
+    }
+}
+if (-not (Normalize-ContractText $cliSource).Contains((Normalize-ContractText $filesystemContract), [StringComparison]::Ordinal)) {
+    throw 'Built --help source is missing the filesystem-identity contract.'
+}
+
 foreach ($document in $parityDocuments) {
     Assert-BaselineAliasClauses $document (Get-Content -Raw $document)
 }
@@ -121,6 +139,9 @@ if ($builtHelpExitCode -ne 0) {
     throw "Built CLI --help invocation failed with exit code $builtHelpExitCode."
 }
 Assert-BaselineAliasClauses 'built --help' ($builtHelp -join [Environment]::NewLine)
+if (-not (Normalize-ContractText ($builtHelp -join [Environment]::NewLine)).Contains((Normalize-ContractText $filesystemContract), [StringComparison]::Ordinal)) {
+    throw 'Built --help is missing the filesystem-identity contract.'
+}
 
 foreach ($requiredText in @('package-surface scan <path>', '--format text|json|sarif', '--strict-content', '--project <path>', '--telemetry on|off', '--no-telemetry', 'Exit codes:', 'effective-moniker canonicalization', 'malformed package', 'ID/version', 'both directions', 'package versions', 'direct/project-reference rooted', 'disconnected package nodes', 'duplicate or case-variant', 'unknown members', 'standard unconsumed MSBuild elements and attributes', 'native SDK shape', 'malformed nested', 'compilerApiVersion', 'non-canonical spellings of consumed JSON/XML members', 'x- prefix', 'urn:keelmatrix:packagesurface:extension', 'NuGet.Versioning 7.9.0 parser/comparer')) {
     if (-not $cliSource.Contains($requiredText, [StringComparison]::Ordinal)) { throw "CLI help is missing '$requiredText'." }

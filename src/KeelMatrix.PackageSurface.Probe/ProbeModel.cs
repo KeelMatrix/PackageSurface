@@ -177,29 +177,29 @@ public sealed class SurfaceIdentityComparer : IEqualityComparer<SurfaceIdentity>
     public bool Equals(SurfaceIdentity? x, SurfaceIdentity? y)
     {
         if (x is null || y is null) return x is null && y is null;
-        var fileSystemComparer = FileSystemComparisonContext.Current.StringComparer;
-        return fileSystemComparer.Equals(x.Project, y.Project) &&
+        var fileSystem = FileSystemComparisonContext.Current;
+        return fileSystem.ProjectPathsEqual(x.Project, y.Project) &&
             x.Context == y.Context &&
             string.Equals(x.TargetFramework, y.TargetFramework, StringComparison.OrdinalIgnoreCase) &&
             string.Equals(x.RuntimeIdentifier, y.RuntimeIdentifier, StringComparison.OrdinalIgnoreCase) &&
             string.Equals(x.Package.Id, y.Package.Id, StringComparison.OrdinalIgnoreCase) &&
             string.Equals(x.Relationship, y.Relationship, StringComparison.OrdinalIgnoreCase) &&
             x.Capability == y.Capability &&
-            fileSystemComparer.Equals(x.PackageRelativePath, y.PackageRelativePath);
+            fileSystem.PackageAssetPathsEqual(x.Project, x.Package, x.PackageRelativePath, y.Project, y.Package, y.PackageRelativePath);
     }
 
     public int GetHashCode(SurfaceIdentity obj)
     {
         var hash = new HashCode();
-        var fileSystemComparer = FileSystemComparisonContext.Current.StringComparer;
-        hash.Add(obj.Project, fileSystemComparer);
+        var fileSystem = FileSystemComparisonContext.Current;
+        hash.Add(fileSystem.GetProjectPathHashCode(obj.Project));
         hash.Add(obj.Context);
         hash.Add(obj.TargetFramework, StringComparer.OrdinalIgnoreCase);
         hash.Add(obj.RuntimeIdentifier, StringComparer.OrdinalIgnoreCase);
         hash.Add(obj.Package.Id, StringComparer.OrdinalIgnoreCase);
         hash.Add(obj.Relationship, StringComparer.OrdinalIgnoreCase);
         hash.Add(obj.Capability);
-        hash.Add(obj.PackageRelativePath, fileSystemComparer);
+        hash.Add(FileSystemComparisonContext.GetPackageAssetPathHashCode(obj.PackageRelativePath));
         return hash.ToHashCode();
     }
 }

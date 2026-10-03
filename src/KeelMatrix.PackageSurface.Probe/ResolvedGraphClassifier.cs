@@ -437,6 +437,7 @@ public static class ResolvedGraphClassifier
                 .SelectMany(value => value.ReachablePackageKeys)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var packageRoots = ResolvePackageRoots(restoreIdentities, libraries, packageFolders, incomplete, reachablePackageKeys);
+            FileSystemComparisonContext.Current.RegisterPackageRoots(null, packageRoots);
             var packageInventories = BuildPackageInventories(packageRoots, restoreIdentities, libraries, incomplete, budget);
             if (incomplete.Count > 0) return Array.Empty<string>();
 
@@ -539,6 +540,9 @@ public static class ResolvedGraphClassifier
                 return new ProbeResult(Array.Empty<SurfaceEntry>(), NormalizeIncompleteReasons(incomplete));
             }
             compilerApiVersion ??= ReadCompilerApiVersion(root);
+            FileSystemComparisonContext.Current.RegisterProjectPath(
+                projectContext,
+                selectedProjectPath ?? ReadProjectPath(root) ?? projectRoot);
             var entries = new List<SurfaceEntry>();
             var projectEntries = new Dictionary<SurfaceIdentity, List<SurfaceEntry>>(SurfaceIdentityComparer.Instance);
             var resolvedPackages = new HashSet<PackageIdentity>(PackageIdentityComparer.Instance);
@@ -547,6 +551,7 @@ public static class ResolvedGraphClassifier
                 .SelectMany(value => value.ReachablePackageKeys)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var packageRoots = ResolvePackageRoots(restoreIdentities, libraries, packageFolders, incomplete, reachablePackageKeys);
+            FileSystemComparisonContext.Current.RegisterPackageRoots(projectContext, packageRoots);
             var packageInventories = BuildPackageInventories(packageRoots, restoreIdentities, libraries, incomplete, budget);
             ValidateRestoreEvidence(root, libraries, targets, restoreIdentities, packageFolders, packageRoots, packageInventories, incomplete, budget);
             if (incomplete.Count > 0)
@@ -555,7 +560,7 @@ public static class ResolvedGraphClassifier
             }
 
             var targetFrameworkContexts = restoreIdentities.FrameworkContexts;
-            var expectedGeneratedImportSources = new HashSet<string>(FileSystemPathComparer);
+            var expectedGeneratedImportSources = new HashSet<string>(ProjectPathStringComparer);
             var generatedImports = ReadGeneratedImports(root, assetsFile, projectRoot, selectedProjectPath, restoreIdentities, packageRoots, packageInventories, libraries, targetFrameworkContexts, incomplete, budget, expectedGeneratedImportSources);
             ValidateGeneratedImportEvidence(generatedImports, targets, restoreIdentities, reachablePackagesByTarget, packageRoots, packageInventories, libraries, incomplete, budget);
             if (incomplete.Count > 0)
@@ -2031,6 +2036,18 @@ public static class ResolvedGraphClassifier
         return active;
     }
 
+    private static string? ReadProjectPath(JsonElement root)
+    {
+        if (root.TryGetProperty("project", out var project) && project.ValueKind == JsonValueKind.Object &&
+            project.TryGetProperty("restore", out var restore) && restore.ValueKind == JsonValueKind.Object &&
+            restore.TryGetProperty("projectPath", out var projectPath) && projectPath.ValueKind == JsonValueKind.String)
+        {
+            return projectPath.GetString();
+        }
+
+        return null;
+    }
+
     private static ProjectLanguage ReadProjectLanguage(JsonElement root, string projectRoot, string? selectedProjectPath, List<string> incomplete)
     {
         string? projectPath = null;
@@ -2741,7 +2758,7 @@ public static class ResolvedGraphClassifier
                     packageInventories.TryGetValue(Path.GetFullPath(packageRoot), out var inventory)
             ? inventory
             : isPackage
-                ? ReadLibraryFiles(library, packageKey, incomplete, budget).ToHashSet(FileSystemPathComparer)
+                ? ReadLibraryFiles(library, packageKey, incomplete, budget).ToHashSet(GetPackageAssetStringComparer(packageKey))
                 : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         AddDuplicatePropertyReasons(package, "target package metadata", incomplete);
         foreach (var group in package.EnumerateObject())
@@ -3081,7 +3098,7 @@ public static class ResolvedGraphClassifier
             }
 
             result[Path.GetFullPath(package.Value)] = ReadLibraryFiles(library, package.Key, incomplete, budget)
-                .ToHashSet(FileSystemPathComparer);
+                .ToHashSet(GetPackageAssetStringComparer(package.Key));
         }
 
         return result;
@@ -3137,7 +3154,7 @@ public static class ResolvedGraphClassifier
 
             var files = packageRoots.TryGetValue(match.CanonicalKey, out var packageRoot) && packageInventories.TryGetValue(Path.GetFullPath(packageRoot), out var inventory)
                 ? inventory
-                : ReadLibraryFiles(library, match.CanonicalKey, incomplete, budget).ToHashSet(FileSystemPathComparer);
+                : ReadLibraryFiles(library, match.CanonicalKey, incomplete, budget).ToHashSet(GetPackageAssetStringComparer(match.CanonicalKey));
             if (relative is not null && !files.Contains(relative))
             {
                 incomplete.Add("Generated NuGet import evidence refers to a file absent from the resolved package inventory.");
@@ -3175,6 +3192,7 @@ public static class ResolvedGraphClassifier
         }
 
         var result = new List<string>();
+        var assetComparison = GetPackageAssetComparison(libraryKey);
         foreach (var file in files.EnumerateArray())
         {
             budget.AddLibraryFile();
@@ -3184,7 +3202,7 @@ public static class ResolvedGraphClassifier
                 continue;
             }
 
-            if (result.Any(existing => string.Equals(existing, normalized, FileSystemComparison)))
+            if (result.Any(existing => string.Equals(existing, normalized, assetComparison)))
             {
                 incomplete.Add($"{libraryKey} contains a duplicate asset path: {normalized}.");
                 continue;
@@ -3368,7 +3386,7 @@ public static class ResolvedGraphClassifier
                     incomplete.Add($"Generated import file {Path.GetFileName(file)} exceeds the supported XML depth.");
                 }
 
-                foreach (var directImport in result.Where(import => string.Equals(import.SourceFile, Path.GetFileName(file), FileSystemComparison) && !import.IsNested).ToArray())
+                foreach (var directImport in result.Where(import => string.Equals(import.SourceFile, Path.GetFileName(file), FileSystemComparisonContext.Current.ProjectStringComparison) && !import.IsNested).ToArray())
                 {
                     string? resolutionReason = null;
                     if (directImport.Applicability.IsKnown &&
@@ -3871,7 +3889,7 @@ public static class ResolvedGraphClassifier
                 continue;
             }
 
-            if (string.Equals(property.Name.Replace('\\', '/'), assetName, FileSystemComparison))
+            if (string.Equals(property.Name.Replace('\\', '/'), assetName, GetPackageAssetComparison(libraryKey)))
             {
                 return true;
             }
@@ -3936,7 +3954,7 @@ public static class ResolvedGraphClassifier
             }
         }
 
-        var selected = new HashSet<string>(FileSystemPathComparer);
+        var selected = new HashSet<string>(GetPackageAssetStringComparer(libraryKey));
         foreach (var candidate in candidates.Where(candidate => candidate.RoslynVersion is null))
         {
             selected.Add(candidate.Path);
@@ -4084,7 +4102,7 @@ public static class ResolvedGraphClassifier
 
         foreach (var contentFile in contentFiles.EnumerateObject())
         {
-            if (!string.Equals(contentFile.Name.Replace('\\', '/'), assetName, FileSystemComparison)) continue;
+            if (!string.Equals(contentFile.Name.Replace('\\', '/'), assetName, GetPackageAssetComparison(libraryKey))) continue;
             if (contentFile.Value.ValueKind != JsonValueKind.Object)
             {
                 incomplete.Add($"{libraryKey}: content file metadata is missing for {assetName}.");
@@ -4284,7 +4302,8 @@ public static class ResolvedGraphClassifier
         }
 
         var importedRelativePath = suffix[(secondSlash + 1)..];
-        return string.Equals(importedRelativePath.Replace('\\', '/'), expectedRelativePath.Replace('\\', '/'), FileSystemComparison);
+        return string.Equals(importedRelativePath.Replace('\\', '/'), expectedRelativePath.Replace('\\', '/'),
+            FileSystemComparisonContext.Current.GetPackageAssetStringComparison(expectedPackage));
     }
 
     private static bool TryGetPropertyIgnoreCase(JsonElement objectElement, string propertyName, out JsonElement value)
@@ -4970,7 +4989,20 @@ public static class ResolvedGraphClassifier
             hasRootPrefix;
     }
 
-    private static StringComparison FileSystemComparison => FileSystemComparisonContext.Current.StringComparison;
+    private static StringComparison GetPackageAssetComparison(string packageKey) =>
+        TryCreatePackageIdentity(packageKey, out var package)
+            ? FileSystemComparisonContext.Current.GetPackageAssetStringComparison(package)
+            : StringComparison.Ordinal;
+
+    private static StringComparer GetPackageAssetStringComparer(string packageKey) =>
+        GetPackageAssetComparison(packageKey) == StringComparison.OrdinalIgnoreCase
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
+
+    private static StringComparer ProjectPathStringComparer =>
+        FileSystemComparisonContext.Current.ProjectStringComparison == StringComparison.OrdinalIgnoreCase
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
 
     private static bool FileSystemPathsEqual(string left, string right) =>
         FileSystemComparisonContext.Current.TryPathsEqual(CanonicalizePath(left), CanonicalizePath(right), out var equal) && equal;

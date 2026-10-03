@@ -55,18 +55,23 @@ public static class CommandLine
             var baselinePath = options.Command == CommandKind.Baseline ? Path.GetFullPath(options.OutputPath!) : null;
             BaselineDocument? baseline = null;
             var strictContent = options.StrictContent;
+            using var fileSystemScope = FileSystemComparisonScope.Push(options.InputPath!);
+            var selection = ProjectSelection.Resolve(options.InputPath!, options.ProjectPath);
             if (options.Command == CommandKind.Check)
             {
-                baseline = BaselineDocument.Read(options.BaselinePath!);
+                baseline = BaselineDocument.ReadForAnalysis(options.BaselinePath!);
                 strictContent |= baseline.StrictContent;
             }
 
-            using var fileSystemScope = FileSystemComparisonScope.Push(options.InputPath!);
-            var selection = ProjectSelection.Resolve(options.InputPath!, options.ProjectPath);
             var baselineTransaction = baselinePath is null
                 ? null
                 : BaselineFileTransaction.Prepare(baselinePath, options.InputPath!, selection);
             var current = AnalyzeSelection(selection, strictContent, options.CompilerApiVersion);
+            if (baseline is not null)
+            {
+                BaselineDocument.ValidatePathIdentities(baseline);
+            }
+
             var diagnostics = current.IncompleteReasons
                 .Select(reason => Diagnostic.Create("PS007", reason))
                 .ToList();
@@ -575,7 +580,12 @@ public sealed record Options(
         for SDK-style PackageReference restore outputs; hosted CI validates the command contract
         on all three platforms. On macOS, only the standard root-level /var to /private/var
         alias is ignored; caller-controlled root aliases and links nested below /var remain
-        rejected. Baseline JSON uses exact camelCase property names, named string
+        rejected. Filesystem path identity follows the filesystem containing the resolved path:
+        project-path identities use the project/assets filesystem, while package-relative asset
+        identities and package-file `Exists(...)` checks use the NuGet package-root filesystem.
+        Those roots can differ in case sensitivity, including across volumes. NuGet package ID/version
+        identity remains case-insensitive. Inaccessible or ambiguous resolution fails closed with `PS007`.
+        Baseline JSON uses exact camelCase property names, named string
         enums, and rejects duplicate or unknown members. It does not execute full MSBuild
         evaluation, execute package code, or crawl the global package cache. It proves only
         the bounded condition grammar documented below; unsupported expansions stay unknown
@@ -877,6 +887,7 @@ public sealed record SurfaceSnapshot(
             .ThenBy(entry => entry.Relationship, StringComparer.Ordinal)
             .ThenBy(entry => entry.Capability)
             .ThenBy(entry => entry.PackageRelativePath, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(entry => entry.PackageRelativePath, StringComparer.Ordinal)
             .ToArray(), reasons.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray(), strictContent, resolvedPackageCount);
 }
 
@@ -899,6 +910,12 @@ public sealed record BaselineDocument(
     private static readonly string[] EntryNullableTextProperties = { "targetFramework", "runtimeIdentifier", "sha256", "incompleteReason" };
 
     public static BaselineDocument Read(string path)
+        => ReadCore(path, validatePathIdentities: true);
+
+    public static BaselineDocument ReadForAnalysis(string path)
+        => ReadCore(path, validatePathIdentities: false);
+
+    private static BaselineDocument ReadCore(string path, bool validatePathIdentities)
     {
         try
         {
@@ -909,12 +926,24 @@ public sealed record BaselineDocument(
             using var parsed = JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = 64 });
             ValidateJsonShape(parsed.RootElement);
             var document = parsed.RootElement.Deserialize<BaselineDocument>(JsonOptions.Default) ?? throw new InvalidDataException("Baseline is empty.");
-            Validate(document);
+            Validate(document, validatePathIdentities);
             return document;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or NotSupportedException)
         {
             throw new InvalidDataException("Baseline is not a readable valid JSON document.");
+        }
+    }
+
+    public static void ValidatePathIdentities(BaselineDocument document)
+    {
+        var identities = new HashSet<SurfaceIdentity>(SurfaceIdentityComparer.Instance);
+        foreach (var entry in document.Entries)
+        {
+            if (!identities.Add(SurfaceIdentityKey.Create(entry)))
+            {
+                throw new InvalidDataException("Baseline contains duplicate capability-surface identities.");
+            }
         }
     }
 
@@ -961,7 +990,7 @@ public sealed record BaselineDocument(
         }
     }
 
-    private static void Validate(BaselineDocument document)
+    private static void Validate(BaselineDocument document, bool validatePathIdentities = true)
     {
         if (document.SchemaVersion != CommandLineSchema.Version) throw new InvalidDataException("Unsupported baseline schema version.");
         RequireText(document.ToolVersion, "toolVersion");
@@ -974,7 +1003,6 @@ public sealed record BaselineDocument(
 
         foreach (var reason in document.IncompleteReasons) RequireText(reason, "incompleteReason");
         if (document.IncompleteReasons.Count > 0) throw new InvalidDataException("An incomplete analysis cannot be used as an approved baseline.");
-        var identities = new HashSet<SurfaceIdentity>(SurfaceIdentityComparer.Instance);
         foreach (var entry in document.Entries)
         {
             if (entry is null) throw new InvalidDataException("Baseline contains a null entry.");
@@ -1000,7 +1028,11 @@ public sealed record BaselineDocument(
             if (entry.Sha256 is not null && !IsSha256(entry.Sha256)) throw new InvalidDataException("Baseline contains an invalid SHA-256 fingerprint.");
             if (entry.ObservedPrimitives is not null && (entry.ObservedPrimitives.Count > 16 || entry.ObservedPrimitives.Any(primitive => primitive is not ("Exec" or "Import" or "InlineTaskFactory" or "UsingTask")))) throw new InvalidDataException("Baseline contains invalid observed XML primitives.");
             if (entry.ObservedPrimitives is not null && entry.Capability is not (CapabilityKind.BuildProps or CapabilityKind.BuildTargets or CapabilityKind.BuildTransitive or CapabilityKind.BuildMultiTargeting)) throw new InvalidDataException("Observed XML primitives are only valid for build capability entries.");
-            if (!identities.Add(SurfaceIdentityKey.Create(entry))) throw new InvalidDataException("Baseline contains duplicate capability-surface identities.");
+        }
+
+        if (validatePathIdentities)
+        {
+            ValidatePathIdentities(document);
         }
     }
 

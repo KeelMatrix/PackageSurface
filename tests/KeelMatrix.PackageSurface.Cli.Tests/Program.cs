@@ -721,30 +721,28 @@ static void RunPackageIdentityAndPathRegression()
         File.WriteAllText(caseAssets, caseDocument.ToJsonString());
         File.WriteAllText(Path.Combine(caseCache, "Case.Package", "1.0.0", "build", "Case.targets"), "<Project />");
         File.WriteAllText(Path.Combine(caseObj, "Test.csproj.nuget.g.targets"), "<Project><Import Project=\"$(NuGetPackageRoot)/Case.Package/1.0.0/build/case.targets\" /></Project>");
-        var caseResult = ResolvedGraphClassifier.Analyze(caseAssets, caseRoot, strictContent: false);
-        if (OperatingSystem.IsWindows())
+        using (FileSystemComparisonScope.Push(caseRoot, FileSystemCaseSensitivity.Sensitive))
         {
-            Require(caseResult.IsComplete && caseResult.Entries.Any(entry => entry.Active), "Windows package/import path comparison rejected a case-insensitive match: " + string.Join(" | ", caseResult.IncompleteReasons));
-        }
-        else
-        {
-            Require(!caseResult.IsComplete && caseResult.Entries.Count == 0, "A wrong-case generated import was accepted on a case-sensitive host.");
-        }
-
-        var identity = Entry(CapabilityKind.BuildTargets, "build/Case.targets", new string('a', 64)) with { Project = "Src/Consumer.csproj" };
-        var projectCase = identity with { Project = "src/Consumer.csproj" };
-        var pathCase = identity with { PackageRelativePath = "build/case.targets" };
-        if (OperatingSystem.IsWindows())
-        {
-            Require(DiffEngine.Compare(new[] { BaselineEntry.From(identity) }, new[] { projectCase }, false).Count == 0 &&
-                DiffEngine.Compare(new[] { BaselineEntry.From(identity) }, new[] { pathCase }, false).Count == 0,
-                "Windows filesystem identity comparison rejected an equivalent project or asset path.");
-        }
-        else
-        {
+            var caseResult = ResolvedGraphClassifier.Analyze(caseAssets, caseRoot, strictContent: false, fileSystemCaseSensitivity: FileSystemCaseSensitivity.Sensitive);
+            Require(!caseResult.IsComplete && caseResult.Entries.Count == 0, "A case-sensitive filesystem accepted a wrong-case generated import.");
+            var identity = Entry(CapabilityKind.BuildTargets, "build/Case.targets", new string('a', 64)) with { Project = "Src/Consumer.csproj" };
+            var projectCase = identity with { Project = "src/Consumer.csproj" };
+            var pathCase = identity with { PackageRelativePath = "build/case.targets" };
             Require(DiffEngine.Compare(new[] { BaselineEntry.From(identity) }, new[] { projectCase }, false).Count > 0 &&
                 DiffEngine.Compare(new[] { BaselineEntry.From(identity) }, new[] { pathCase }, false).Count > 0,
-                "Case-distinct project or asset identities collapsed on a case-sensitive host.");
+                "Case-sensitive filesystem identity comparison collapsed distinct project or asset paths.");
+        }
+
+        using (FileSystemComparisonScope.Push(caseRoot, FileSystemCaseSensitivity.Insensitive))
+        {
+            var caseResult = ResolvedGraphClassifier.Analyze(caseAssets, caseRoot, strictContent: false, fileSystemCaseSensitivity: FileSystemCaseSensitivity.Insensitive);
+            Require(caseResult.IsComplete && caseResult.Entries.Any(entry => entry.Active), "A case-insensitive filesystem rejected a case-only generated import: " + string.Join(" | ", caseResult.IncompleteReasons));
+            var identity = Entry(CapabilityKind.BuildTargets, "build/Case.targets", new string('a', 64)) with { Project = "Src/Consumer.csproj" };
+            var projectCase = identity with { Project = "src/Consumer.csproj" };
+            var pathCase = identity with { PackageRelativePath = "build/case.targets" };
+            Require(DiffEngine.Compare(new[] { BaselineEntry.From(identity) }, new[] { projectCase }, false).Count == 0 &&
+                DiffEngine.Compare(new[] { BaselineEntry.From(identity) }, new[] { pathCase }, false).Count == 0,
+                "Case-insensitive filesystem identity comparison rejected an equivalent project or asset path.");
         }
     }
     finally

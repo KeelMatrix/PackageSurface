@@ -152,6 +152,16 @@ static void RunGeneratedImportConditionRegression(string baselineAssets)
         AssertTarget("OR composition", CreateImports(buildPropsImport, $"'$(TargetFramework)' == 'net8.0' OR '$(TargetFramework)' == '{alternateTargetFramework}'", null), true, null, allTargetFrameworks);
         AssertTarget("restore guard", CreateImports(buildPropsImport, "'$(ExcludeRestorePackageImports)' != 'true'", null), true, null, allTargetFrameworks);
         AssertTarget("standard Exists guard", CreateImports(buildPropsImport, null, $"Exists('{buildPropsMacroPath}')"), true, null, allTargetFrameworks);
+        var wrongCaseMacroPath = buildPropsMacroPath.Replace("BuildProps", "buildprops", StringComparison.Ordinal);
+        AssertTarget("case-sensitive wrong-case Exists guard", CreateImports(buildPropsImport, null, $"Exists('{wrongCaseMacroPath}')"), true, null, string.Empty, FileSystemCaseSensitivity.Sensitive);
+        AssertTarget("case-insensitive wrong-case Exists guard", CreateImports(buildPropsImport, null, $"Exists('{wrongCaseMacroPath}')"), true, null, allTargetFrameworks, FileSystemCaseSensitivity.Insensitive);
+        var wrongCaseAbsolutePath = buildPropsImport.Replace("BuildProps.props", "buildprops.props", StringComparison.Ordinal);
+        AssertTarget("case-sensitive absolute wrong-case Exists guard", CreateImports(buildPropsImport, null, $"Exists('{wrongCaseAbsolutePath}')"), true, null, string.Empty, FileSystemCaseSensitivity.Sensitive);
+        AssertTarget("case-insensitive absolute wrong-case Exists guard", CreateImports(buildPropsImport, null, $"Exists('{wrongCaseAbsolutePath}')"), true, null, allTargetFrameworks, FileSystemCaseSensitivity.Insensitive);
+        var noSlashMacroPath = buildPropsMacroPath.Replace("$(NuGetPackageRoot)/", "$(NuGetPackageRoot)", StringComparison.Ordinal).Replace('/', '\\');
+        var noSlashWrongCaseMacroPath = noSlashMacroPath.Replace("BuildProps", "buildprops", StringComparison.Ordinal);
+        AssertTarget("case-sensitive no-slash wrong-case Exists guard", CreateImports(buildPropsImport, null, $"Exists('{noSlashWrongCaseMacroPath}')"), true, null, string.Empty, FileSystemCaseSensitivity.Sensitive);
+        AssertTarget("case-insensitive no-slash wrong-case Exists guard", CreateImports(buildPropsImport, null, $"Exists('{noSlashWrongCaseMacroPath}')"), true, null, allTargetFrameworks, FileSystemCaseSensitivity.Insensitive);
         AssertTarget("ImportGroup and Import conditions", CreateImports(buildPropsImport, "'$(ExcludeRestorePackageImports)' != 'true'", "'$(TargetFramework)' == 'net8.0'"), true, null, "net8.0");
         AssertTarget("nested groups", CreateImports(buildPropsImport, "'$(TargetFramework)' == 'net8.0'", "'$(ExcludeRestorePackageImports)' != 'true'", nested: true), true, null, "net8.0");
         AssertTarget("arbitrary property", CreateImports(buildPropsImport, "'$(Configuration)' == 'Debug'", null), false, "unsupported property", string.Empty);
@@ -199,11 +209,20 @@ static void RunGeneratedImportConditionRegression(string baselineAssets)
         return new XDocument(new XElement("Project", group));
     }
 
-    void AssertTarget(string scenario, XDocument generatedImports, bool complete, string? reason, string activeTargetFrameworks)
+    void AssertTarget(
+        string scenario,
+        XDocument generatedImports,
+        bool complete,
+        string? reason,
+        string activeTargetFrameworks,
+        FileSystemCaseSensitivity fileSystemCaseSensitivity = FileSystemCaseSensitivity.Host)
     {
         var props = ComposeScenario(baselineGeneratedProps, generatedImports, buildPropsPath);
         props.Save(Path.Combine(scratch, "obj", generatedPropsFileName));
-        var analyzed = ResolvedGraphClassifier.Analyze(Path.Combine(scratch, "obj", "project.assets.json"), scratch);
+        var analyzed = ResolvedGraphClassifier.Analyze(
+            Path.Combine(scratch, "obj", "project.assets.json"),
+            scratch,
+            fileSystemCaseSensitivity: fileSystemCaseSensitivity);
         var entries = analyzed.Entries.Where(entry =>
             entry.Context == SurfaceContextKind.Target &&
             entry.PackageId.Equals("KeelMatrix.Phase0.BuildProps", StringComparison.OrdinalIgnoreCase) &&

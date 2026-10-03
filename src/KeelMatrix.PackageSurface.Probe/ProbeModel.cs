@@ -173,33 +173,33 @@ public sealed class SurfaceIdentity
 public sealed class SurfaceIdentityComparer : IEqualityComparer<SurfaceIdentity>
 {
     public static SurfaceIdentityComparer Instance { get; } = new();
-    private static StringComparison FileSystemComparison => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
-    private static StringComparer FileSystemComparer => OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
 
     public bool Equals(SurfaceIdentity? x, SurfaceIdentity? y)
     {
         if (x is null || y is null) return x is null && y is null;
-        return string.Equals(x.Project, y.Project, FileSystemComparison) &&
+        var fileSystemComparer = FileSystemComparisonContext.Current.StringComparer;
+        return fileSystemComparer.Equals(x.Project, y.Project) &&
             x.Context == y.Context &&
             string.Equals(x.TargetFramework, y.TargetFramework, StringComparison.OrdinalIgnoreCase) &&
             string.Equals(x.RuntimeIdentifier, y.RuntimeIdentifier, StringComparison.OrdinalIgnoreCase) &&
             string.Equals(x.Package.Id, y.Package.Id, StringComparison.OrdinalIgnoreCase) &&
             string.Equals(x.Relationship, y.Relationship, StringComparison.OrdinalIgnoreCase) &&
             x.Capability == y.Capability &&
-            string.Equals(x.PackageRelativePath, y.PackageRelativePath, FileSystemComparison);
+            fileSystemComparer.Equals(x.PackageRelativePath, y.PackageRelativePath);
     }
 
     public int GetHashCode(SurfaceIdentity obj)
     {
         var hash = new HashCode();
-        hash.Add(obj.Project, FileSystemComparer);
+        var fileSystemComparer = FileSystemComparisonContext.Current.StringComparer;
+        hash.Add(obj.Project, fileSystemComparer);
         hash.Add(obj.Context);
         hash.Add(obj.TargetFramework, StringComparer.OrdinalIgnoreCase);
         hash.Add(obj.RuntimeIdentifier, StringComparer.OrdinalIgnoreCase);
         hash.Add(obj.Package.Id, StringComparer.OrdinalIgnoreCase);
         hash.Add(obj.Relationship, StringComparer.OrdinalIgnoreCase);
         hash.Add(obj.Capability);
-        hash.Add(obj.PackageRelativePath, FileSystemComparer);
+        hash.Add(obj.PackageRelativePath, fileSystemComparer);
         return hash.ToHashCode();
     }
 }

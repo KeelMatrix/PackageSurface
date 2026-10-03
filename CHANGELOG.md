@@ -21,9 +21,12 @@ PackageSurface release history.
 
 ### Changed
 
-- History hygiene now scans tracked content and every reachable historical blob as whole text, with the bounded
-  developer-coordination vocabulary rejected across arbitrary non-alphanumeric separators including LF, CRLF, and
-  repeated line boundaries; incomplete or shallow history and Git read failures remain fail-closed.
+- History hygiene now scans tracked content and every reachable historical blob as strict UTF-8, UTF-16, or UTF-32
+  text across arbitrary non-alphanumeric separators including LF, CRLF, and repeated line boundaries. Unsupported or
+  binary content fails closed except for the confirmed root `icon.png`; per-file and per-archive-entry inputs are
+  limited to 4 MiB, and cumulative scanned/decompressed history is limited to 128 MiB. The mandatory repository
+  co-author trailer is the only history-metadata allowlist. Incomplete or shallow history and Git read failures
+  remain fail-closed.
 
 - Generated-import `Exists(...)` guards now follow the host filesystem casing contract while NuGet package ID/version matching remains case-insensitive; unresolved or ambiguous path comparisons fail closed with `PS007`.
 

@@ -459,20 +459,11 @@ try {
             throw "The history log result does not include commit $commit."
         }
     }
-    $coAuthorTrailer = (Convert-CodePoints @(67,111,45,65,117,116,104,111,114,101,100,45,66,121)) +
-        (Convert-CodePoints @(58,32)) +
-        (Convert-CodePoints @(80,97,112,101,114,99,108,105,112)) +
-        (Convert-CodePoints @(32,60,110,111,114,101,112,108,121,64,112,97,112,101,114,99,108,105,112,46,105,110,103,62))
-    $historyScanText = [regex]::Replace(
-        $historyText.Output,
-        '(?m)^' + [regex]::Escape($coAuthorTrailer) + '(?:\r?\n|$)',
-        ''
-    )
-    if (Test-RestrictedText $historyScanText) {
+    if (Test-RestrictedText $historyText.Output) {
         $violations.Add('history metadata')
     }
     $historyTaskIdPattern = '\b(?!SHA-)[A-Z]{2,8}-[0-9]{3,6}\b'
-    if ($historyScanText -match $historyTaskIdPattern) {
+    if ($historyText.Output -match $historyTaskIdPattern) {
         $violations.Add('history task identifier')
     }
 

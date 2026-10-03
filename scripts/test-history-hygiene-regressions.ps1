@@ -477,11 +477,16 @@ exit 128
 
     $survivingPhrasePairs = @(
         @{ Name = 'surviving-01'; Marker = $candidateWord + $space + $remediation },
+        @{ Name = 'surviving-01-plural'; Marker = $candidateWord + $space + $remediation + 's' },
         @{ Name = 'surviving-02'; Marker = $remediation + $space + $gapWord },
+        @{ Name = 'surviving-02-plural'; Marker = $remediation + $space + $gapWord + 's' },
         @{ Name = 'surviving-03'; Marker = $review + $space + $gapWord },
+        @{ Name = 'surviving-03-plural'; Marker = $review + $space + $gapWord + 's' },
         @{ Name = 'surviving-04'; Marker = $candidateWord + $space + $evidenceWord },
         @{ Name = 'surviving-05'; Marker = $identifiedWord + $space + $caseWord },
-        @{ Name = 'phase-zero'; Marker = $phaseWord + '0' }
+        @{ Name = 'surviving-05-plural'; Marker = $identifiedWord + $space + $caseWord + 's' },
+        @{ Name = 'phase-zero'; Marker = $phaseWord + '0' },
+        @{ Name = 'phase-one'; Marker = $phaseWord + '1' }
     )
     foreach ($phraseCase in $survivingPhrasePairs) {
         foreach ($location in @('subject', 'body', 'tree')) {
@@ -492,7 +497,7 @@ exit 128
                 'body' { New-Repository $caseRoot -CommitBody ('fixture ' + $phraseCase.Marker) }
                 'tree' { New-Repository $caseRoot -TreeContentMarker $phraseCase.Marker -TwoCommits }
             }
-            if ($phraseCase.Name -eq 'phase-zero' -and $location -eq 'tree') {
+            if ($phraseCase.Name -like 'phase-*' -and $location -eq 'tree') {
                 Assert-ExpectedPass $caseName $caseRoot @{}
             }
             else {

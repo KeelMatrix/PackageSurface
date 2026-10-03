@@ -379,6 +379,26 @@ try {
         }
     }
 
+    $historyRemaining = $MaxHistoryScannedBytes - $totalHistoryScannedBytes
+    $historyText = Invoke-GitChecked @('log', '--all', '--format=%H%n%an%n%ae%n%cn%n%ce%n%B') -RequireOutput -MaxOutputBytes ([Math]::Max(1, $historyRemaining))
+    $historyBytes = $utf8ForAccounting.GetByteCount($historyText.Output)
+    Add-LimitedBytes ([ref]$totalHistoryScannedBytes) $historyBytes $MaxHistoryScannedBytes 'history scan byte budget'
+    foreach ($commit in $commits) {
+        if ($historyText.Output -notmatch [regex]::Escape($commit)) {
+            throw "The history log result does not include commit $commit."
+        }
+    }
+    if (Test-RestrictedText $historyText.Output -IncludeHistoryOnly) {
+        $violations.Add('history metadata')
+    }
+    $historyTaskIdPattern = '\b(?!SHA-)[A-Z]{2,8}-[0-9]{3,6}\b'
+    if ($historyText.Output -match $historyTaskIdPattern) {
+        $violations.Add('history task identifier')
+    }
+    if ($violations.Count -gt 0) {
+        throw ('Restricted text found: ' + ($violations -join ', '))
+    }
+
     $archiveRoot = Join-Path ([IO.Path]::GetTempPath()) ('packagesurface-history-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Force -Path $archiveRoot | Out-Null
     try {
@@ -462,23 +482,6 @@ try {
         if (Test-Path -LiteralPath $archiveRoot) {
             Remove-Item -LiteralPath $archiveRoot -Recurse -Force
         }
-    }
-
-    $historyRemaining = $MaxHistoryScannedBytes - $totalHistoryScannedBytes
-    $historyText = Invoke-GitChecked @('log', '--all', '--format=%H%n%an%n%ae%n%cn%n%ce%n%B') -RequireOutput -MaxOutputBytes ([Math]::Max(1, $historyRemaining))
-    $historyBytes = $utf8ForAccounting.GetByteCount($historyText.Output)
-    Add-LimitedBytes ([ref]$totalHistoryScannedBytes) $historyBytes $MaxHistoryScannedBytes 'history scan byte budget'
-    foreach ($commit in $commits) {
-        if ($historyText.Output -notmatch [regex]::Escape($commit)) {
-            throw "The history log result does not include commit $commit."
-        }
-    }
-    if (Test-RestrictedText $historyText.Output -IncludeHistoryOnly) {
-        $violations.Add('history metadata')
-    }
-    $historyTaskIdPattern = '\b(?!SHA-)[A-Z]{2,8}-[0-9]{3,6}\b'
-    if ($historyText.Output -match $historyTaskIdPattern) {
-        $violations.Add('history task identifier')
     }
 
     if ($violations.Count -gt 0) {

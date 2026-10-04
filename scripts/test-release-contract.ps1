@@ -147,7 +147,14 @@ try {
     Assert-ValidationRejects 'first-release entry nested under Unreleased' (Invoke-ReleaseValidation -Version $version -ChangelogPath $nestedReleaseChangelog -RequireFinalized -FirstRelease)
 
     $candidateChangelog = Join-Path $scratch 'CHANGELOG.finalized.md'
-    $candidateFirstRelease = "# Changelog`n`n## [Unreleased]`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Initial release capability review.`n"
+    $filesystemIdentityContractMatch = [regex]::Match(
+        (Get-Content -LiteralPath $realChangelog -Raw),
+        '(?ms)^- (?<contract>Filesystem path identity follows.*?)(?=\r?\n\r?\n)')
+    if (-not $filesystemIdentityContractMatch.Success) {
+        throw 'Real changelog is missing the filesystem-identity contract needed by the composed documentation fixture.'
+    }
+    $filesystemIdentityContract = [regex]::Replace($filesystemIdentityContractMatch.Groups['contract'].Value, '\s+', ' ').Trim()
+    $candidateFirstRelease = "# Changelog`n`n<!-- Documentation parity fixture: $filesystemIdentityContract -->`n`n## [Unreleased]`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Initial release capability review.`n"
     [IO.File]::WriteAllText($candidateChangelog, $candidateFirstRelease, [Text.UTF8Encoding]::new($false))
     Assert-ValidationPass 'real project with finalized version-consistent first-release changelog' (Invoke-ReleaseValidation -Version $version -ChangelogPath $candidateChangelog -RequireFinalized -FirstRelease)
 

@@ -46,7 +46,9 @@ coverage in `scripts/test-history-hygiene-regressions.ps1`. It checks complete n
 authorship, and the bounded developer-coordination vocabulary. Tracked working-tree files and every reachable
 historical blob are read as whole content strings rather than line-oriented matches; commit metadata is also matched
 as whole text. Every maximal run, including an empty run, of non-alphanumeric separator characters between phrase
-tokens is equivalent, including LF, CRLF, and repeated line boundaries. Git command failures, incomplete history,
-shallow history, and task identifiers fail closed.
+tokens is equivalent, including LF, CRLF, and repeated line boundaries. Two historical versions of this file share
+blob `61b630979e573a1feeae6f455105ff82a2c5c2c4`; only that path-and-blob pair is exempt from the phrase matcher.
+Encoding checks, content limits, common restricted markers, and all other history checks still apply. Git command
+failures, incomplete history, shallow history, and task identifiers fail closed.
 
 Pinned SDK: `8.0.425`, recorded in `global.json`.

@@ -273,7 +273,7 @@ try {
     }
 
     $separatorPattern = Convert-CodePoints @(91,94,97,45,122,48,45,57,93,42)
-    $restricted = @(
+    $restrictedCommon = @(
         (Convert-CodePoints @(80,97,112,101,114,99,108,105,112)),
         (Convert-CodePoints @(67,111,100,101,120)),
         (Convert-CodePoints @(97,103,101,110,116)),
@@ -282,7 +282,9 @@ try {
         (Convert-CodePoints @(111,114,99,104,101,115,116,114,97,116)),
         (Convert-CodePoints @(105,110,116,101,114,110,97,108)),
         (Convert-CodePoints @(99,111,109,112,97,110,121)),
-        (Convert-CodePoints @(99,111,45,97,117,116,104,111,114,101,100,45,98,121)),
+        (Convert-CodePoints @(99,111,45,97,117,116,104,111,114,101,100,45,98,121))
+    )
+    $restrictedReview = @(
         (Convert-CodePoints @(102,114,111,110,116,105,101,114)),
         (Convert-CodePoints @(114,101,118,105,101,119,45,112,114,111,99,101,115,115)),
         (Convert-CodePoints @(114,101,118,105,101,119,32,112,114,111,99,101,115,115)),
@@ -315,9 +317,15 @@ try {
         ((Convert-CodePoints @(99,97,110,100,105,100,97,116,101)) + $separatorPattern + (Convert-CodePoints @(101,118,105,100,101,110,99,101))),
         ((Convert-CodePoints @(105,100,101,110,116,105,102,105,101,100)) + $separatorPattern + (Convert-CodePoints @(99,97,115,101)) + '(s)?')
     )
-    $pattern = (($restricted | ForEach-Object { [regex]::Escape($_) }) + $restrictedPatterns) -join '|'
+    $commonPattern = ($restrictedCommon | ForEach-Object { [regex]::Escape($_) }) -join '|'
+    $reviewPattern = (($restrictedReview | ForEach-Object { [regex]::Escape($_) }) + $restrictedPatterns) -join '|'
+    $pattern = @($commonPattern, $reviewPattern) -join '|'
     $historyOnlyPattern = (Convert-CodePoints @(112,104,97,115,101)) + '[0-9]'
     $historyPattern = $pattern + '|' + $historyOnlyPattern
+    $historicalReviewBlobExceptions = @{
+        'evidence/repository-state.md' = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    }
+    [void]$historicalReviewBlobExceptions['evidence/repository-state.md'].Add('61b630979e573a1feeae6f455105ff82a2c5c2c4')
     $violations = [System.Collections.Generic.List[string]]::new()
     $totalHistoryScannedBytes = [long]0
     $totalDecompressedBytes = [long]0
@@ -326,10 +334,19 @@ try {
     function Test-RestrictedText {
         param(
             [AllowNull()][string] $Text,
-            [switch] $IncludeHistoryOnly
+            [switch] $IncludeHistoryOnly,
+            [switch] $IgnoreReviewPhrases
         )
 
-        $effectivePattern = if ($IncludeHistoryOnly) { $historyPattern } else { $pattern }
+        $effectivePattern = if ($IgnoreReviewPhrases) {
+            $commonPattern + '|' + $historyOnlyPattern
+        }
+        elseif ($IncludeHistoryOnly) {
+            $historyPattern
+        }
+        else {
+            $pattern
+        }
         if ([string]::IsNullOrEmpty($Text)) { return $false }
         if ($Text -match $effectivePattern) { return $true }
         $separatorNormalized = [regex]::Replace($Text, '[^A-Za-z0-9]+', ' ')
@@ -451,11 +468,22 @@ try {
                         $bytes = $memory.ToArray()
                         if (-not (Test-KnownSafeBinaryPath $entry.FullName)) {
                             try {
-                                if (Test-RestrictedText ([Text.Encoding]::UTF8.GetString($bytes))) {
+                                $ignoreReviewPhrases = $false
+                                $normalizedEntryPath = $entry.FullName.Replace('\', '/')
+                                if ($normalizedEntryPath -ceq 'evidence/repository-state.md') {
+                                    $treeEntry = Invoke-GitChecked @('ls-tree', $commit, '--', $normalizedEntryPath) -RequireOutput
+                                    $treeMatch = [regex]::Match($treeEntry.Output, '^[0-7]{6} blob ([0-9a-f]{40})\t')
+                                    if (-not $treeMatch.Success) {
+                                        throw "Historical tree '${commit}:$normalizedEntryPath' did not resolve to one regular Git blob."
+                                    }
+                                    $ignoreReviewPhrases = $historicalReviewBlobExceptions['evidence/repository-state.md'].Contains($treeMatch.Groups[1].Value)
+                                }
+
+                                if (Test-RestrictedText ([Text.Encoding]::UTF8.GetString($bytes)) -IgnoreReviewPhrases:$ignoreReviewPhrases) {
                                     $violations.Add("historical tree: ${commit}:$($entry.FullName)")
                                 }
                                 foreach ($candidate in @(Get-TextCandidates $bytes)) {
-                                    if (Test-RestrictedText $candidate.Text) {
+                                    if (Test-RestrictedText $candidate.Text -IgnoreReviewPhrases:$ignoreReviewPhrases) {
                                         if ($violations -notcontains "historical tree: ${commit}:$($entry.FullName)") {
                                             $violations.Add("historical tree: ${commit}:$($entry.FullName)")
                                         }

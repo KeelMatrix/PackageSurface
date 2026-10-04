@@ -350,6 +350,18 @@ exit 128
     New-Repository $treeRoot -TreeContentMarker $processMarker -TwoCommits
     Assert-ExpectedFailure 'historical-tree-marker' $treeRoot 'Restricted text found' ''
 
+    $repositoryStateRoot = Join-Path $scratch 'repository-state-tree-marker'
+    New-Repository $repositoryStateRoot
+    $repositoryStatePath = Join-Path $repositoryStateRoot 'evidence/repository-state.md'
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $repositoryStatePath) | Out-Null
+    [IO.File]::WriteAllText($repositoryStatePath, "fixture $processMarker")
+    Invoke-External 'git' @('-C', $repositoryStateRoot, 'add', '--', 'evidence/repository-state.md') | Out-Null
+    Invoke-External 'git' @('-C', $repositoryStateRoot, 'commit', '--quiet', '-m', 'fixture-state-marker') | Out-Null
+    [IO.File]::WriteAllText($repositoryStatePath, 'ordinary engineering documentation')
+    Invoke-External 'git' @('-C', $repositoryStateRoot, 'add', '--', 'evidence/repository-state.md') | Out-Null
+    Invoke-External 'git' @('-C', $repositoryStateRoot, 'commit', '--quiet', '-m', 'fixture-state-cleanup') | Out-Null
+    Assert-ExpectedFailure 'repository-state-unlisted-blob' $repositoryStateRoot 'Restricted text found' ''
+
     $space = Convert-CodePoints @(32)
     $doubleSpace = $space + $space
     $tab = Convert-CodePoints @(9)

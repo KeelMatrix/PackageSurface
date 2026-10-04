@@ -33,11 +33,10 @@ package-surface check <path> --baseline <baseline>
 --strict-content
 --compiler-api-version <version>
 --project <path>
---telemetry on|off
 --no-telemetry
 ```
 
-Supported options are `--format text|json|sarif`, `--strict-content`, `--compiler-api-version <version>`, `--project <path>`, `--telemetry on|off`, and `--no-telemetry`. SARIF scan and baseline output contains `PS-SURFACE` note results for classified facts; check output contains diagnostics. Exit code `0` means success, `1` means a check found a reviewed surface or policy difference, and `2` means invalid invocation or incomplete analysis.
+Supported options are `--format text|json|sarif`, `--strict-content`, `--compiler-api-version <version>`, `--project <path>`, and `--no-telemetry`. SARIF scan and baseline output contains `PS-SURFACE` note results for classified facts; check output contains diagnostics. Exit code `0` means success, `1` means a check found a reviewed surface or policy difference, and `2` means invalid invocation or incomplete analysis.
 
 Exit code `0` means a scan or baseline succeeded, or a check passed. A check difference returns exit code `1`; invalid invocation, missing restore artifacts, unsupported input, incomplete analysis, or an environment error returns exit code `2`.
 
@@ -73,7 +72,7 @@ Analysis does not load dependency assemblies, execute MSBuild or package-provide
 
 Repository validation has a separate history-hygiene contract. Its implementation source of truth is [`scripts/test-history-hygiene.ps1`](https://github.com/KeelMatrix/PackageSurface/blob/main/scripts/test-history-hygiene.ps1), with [`scripts/test-history-hygiene-regressions.ps1`](https://github.com/KeelMatrix/PackageSurface/blob/main/scripts/test-history-hygiene-regressions.ps1) as the regression contract. The gate scans every tracked file and reachable historical blob as strict UTF-8, UTF-16, or UTF-32 text; unsupported or binary content fails closed, except for the confirmed root `icon.png` binary allowlist entry. Per-tracked-file and per-archive-entry limits are 4 MiB; cumulative scanned history and decompressed history are each limited to 128 MiB. Incomplete or shallow history, Git read failures, task identifiers, and co-author trailers fail closed.
 
-Best-effort activation telemetry uses `KeelMatrix.Telemetry` only after a successful baseline or check that classified at least one real resolved `PackageReference` graph. PackageSurface requests activation only, does not request a heartbeat, and passes no analyzed package or build data to the shared client. Disable the request with `--telemetry off` or `--no-telemetry`; telemetry cannot affect the result. See the repository [PRIVACY.md](https://github.com/KeelMatrix/PackageSurface/blob/main/PRIVACY.md) for the product-specific boundary and the [KeelMatrix.Telemetry privacy policy](https://github.com/KeelMatrix/Telemetry/blob/main/PRIVACY.md) for shared payload, opt-out, storage, delivery, and retention details.
+Best-effort activation telemetry uses `KeelMatrix.Telemetry` only after a successful baseline or check that classified at least one real resolved `PackageReference` graph. PackageSurface requests activation only, does not request a heartbeat, and passes no analyzed package or build data to the shared client. Use `--no-telemetry` to suppress the request for one invocation; the shared client resolves process and repository opt-outs. Telemetry cannot affect the result. See the repository [PRIVACY.md](https://github.com/KeelMatrix/PackageSurface/blob/main/PRIVACY.md) for the product-specific boundary and the [KeelMatrix.Telemetry privacy policy](https://github.com/KeelMatrix/Telemetry/blob/main/PRIVACY.md) for shared payload, opt-out, storage, delivery, and retention details.
 
 See the [PackageSurface repository](https://github.com/KeelMatrix/PackageSurface) for the full diagnostic table, limitations, and developer validation guide.
 

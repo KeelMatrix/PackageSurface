@@ -2237,10 +2237,29 @@ static void RunTelemetryEligibilityTests()
         attempts = 0;
         var optOutBaseline = Path.Combine(scratch, "opt-out-baseline.json");
         Require(CommandLine.Run(new[] { "baseline", assets, "--output", optOutBaseline, "--no-telemetry" }) == 0 && attempts == 0,
-            "Telemetry opt-out did not suppress activation.");
-        var namedOptOutBaseline = Path.Combine(scratch, "named-opt-out-baseline.json");
-        Require(CommandLine.Run(new[] { "baseline", assets, "--output", namedOptOutBaseline, "--telemetry", "off" }) == 0 && attempts == 0,
-            "The explicit telemetry=off option did not suppress activation.");
+            "The per-invocation telemetry opt-out did not suppress activation.");
+
+        attempts = 0;
+        var missingValue = new List<string> { "baseline", assets, "--output", optOutBaseline, "--telemetry" };
+        Require(CommandLine.Run(missingValue.ToArray()) == 2 && attempts == 0,
+            "The removed --telemetry option without a value was accepted.");
+        attempts = 0;
+        var emptyValue = new List<string> { "baseline", assets, "--output", optOutBaseline, "--telemetry=" };
+        Require(CommandLine.Run(emptyValue.ToArray()) == 2 && attempts == 0,
+            "The removed --telemetry option with an empty value was accepted.");
+
+        foreach (var value in new[] { "on", "off", "ON", "OFF" })
+        {
+            attempts = 0;
+            var splitOption = new List<string> { "baseline", assets, "--output", optOutBaseline, "--telemetry", value };
+            Require(CommandLine.Run(splitOption.ToArray()) == 2 && attempts == 0,
+                $"The removed --telemetry {value} option was accepted.");
+
+            attempts = 0;
+            var equalsOption = new List<string> { "baseline", assets, "--output", optOutBaseline, $"--telemetry={value}" };
+            Require(CommandLine.Run(equalsOption.ToArray()) == 2 && attempts == 0,
+                $"The removed --telemetry={value} option was accepted.");
+        }
     }
     finally
     {

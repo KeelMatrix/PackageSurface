@@ -521,8 +521,7 @@ public sealed record Options(
           --strict-content          Record SHA-256 fingerprints for present, active build/compiler execution assets.
           --compiler-api-version <v>  Declare the consuming compiler API version for versioned analyzer assets.
           --project <path>          Select one project when a solution contains several projects.
-          --telemetry on|off        Enable or disable best-effort activation telemetry.
-          --no-telemetry             Disable best-effort activation telemetry.
+          --no-telemetry            Suppress the activation request for this invocation.
 
         Telemetry privacy:
           PackageSurface requests activation only and passes no analyzed package or build data
@@ -661,15 +660,6 @@ public sealed record Options(
             if (IsOption(argument, "--compiler-api-version"))
             {
                 compilerApiVersion = ReadOptionValue(args, ref index, argument, "--compiler-api-version");
-                continue;
-            }
-
-            if (IsOption(argument, "--telemetry"))
-            {
-                var value = ReadOptionValue(args, ref index, argument, "--telemetry");
-                if (value.Equals("off", StringComparison.OrdinalIgnoreCase)) telemetry = false;
-                else if (value.Equals("on", StringComparison.OrdinalIgnoreCase)) telemetry = true;
-                else return new(ParseResultKind.Invalid, Error: "--telemetry must be on or off.");
                 continue;
             }
 

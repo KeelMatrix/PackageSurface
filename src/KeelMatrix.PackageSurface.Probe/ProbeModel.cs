@@ -275,9 +275,7 @@ public static class DiagnosticDataPolicy
         "--output requires a value.",
         "--baseline requires a value.",
         "--project requires a value.",
-        "--compiler-api-version requires a value.",
-        "--telemetry requires a value.",
-        "--telemetry must be on or off."
+        "--compiler-api-version requires a value."
     };
 
     public static IReadOnlyList<string> NormalizeReasons(IEnumerable<string> reasons) =>

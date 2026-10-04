@@ -55,7 +55,6 @@ package-surface check <path> --baseline <baseline>
 --strict-content
 --compiler-api-version <version>
 --project <path>
---telemetry on|off
 --no-telemetry
 ```
 
@@ -101,7 +100,7 @@ The analyzer reads only packages reachable from the supplied resolved graph. It 
 
 Repository validation has a separate history-hygiene contract. Its implementation source of truth is [`scripts/test-history-hygiene.ps1`](scripts/test-history-hygiene.ps1), with [`scripts/test-history-hygiene-regressions.ps1`](scripts/test-history-hygiene-regressions.ps1) as the regression contract. The gate scans every tracked file and reachable historical blob as strict UTF-8, UTF-16, or UTF-32 text; unsupported or binary content fails closed, except for the confirmed root `icon.png` binary allowlist entry. Per-tracked-file and per-archive-entry limits are 4 MiB; cumulative scanned history and decompressed history are each limited to 128 MiB. Incomplete or shallow history, Git read failures, task identifiers, and co-author trailers fail closed.
 
-PackageSurface uses the shared `KeelMatrix.Telemetry` client for optional best-effort activation. PackageSurface requests activation only after a successful baseline creation or comparison that classified at least one real resolved `PackageReference` graph; it does not request a heartbeat and passes no analyzed package or build data to the shared client. Use `--telemetry off` or `--no-telemetry` to disable the request. Telemetry cannot affect analysis results, and local validation disables it. See [PRIVACY.md](PRIVACY.md) for the product-specific boundary and the [KeelMatrix.Telemetry privacy policy](https://github.com/KeelMatrix/Telemetry/blob/main/PRIVACY.md) for shared payload, opt-out, storage, delivery, and retention details.
+PackageSurface uses the shared `KeelMatrix.Telemetry` client for optional best-effort activation. PackageSurface requests activation only after a successful baseline creation or comparison that classified at least one real resolved `PackageReference` graph; it does not request a heartbeat and passes no analyzed package or build data to the shared client. Use `--no-telemetry` to suppress the request for one invocation; the shared client resolves process and repository opt-outs. Telemetry cannot affect analysis results, and local validation disables it. See [PRIVACY.md](PRIVACY.md) for the product-specific boundary and the [KeelMatrix.Telemetry privacy policy](https://github.com/KeelMatrix/Telemetry/blob/main/PRIVACY.md) for shared payload, opt-out, storage, delivery, and retention details.
 
 ## Supported scope and limitations
 

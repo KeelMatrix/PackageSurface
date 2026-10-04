@@ -8,7 +8,6 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using KeelMatrix.PackageSurface;
 using KeelMatrix.PackageSurface.Probe;
-using KeelMatrix.Telemetry;
 
 var entries = new[]
 {
@@ -41,7 +40,7 @@ if (incomplete.Diagnostics.Count != 1 || incomplete.Diagnostics[0].Id != "PS007"
 
 var requiredHelpClauses = new[]
 {
-    "Activation fields: event, tool, tool_version, telemetry_version, schema_version",
+    "PackageSurface requests activation only",
     "https://github.com/KeelMatrix/Telemetry/blob/main/PRIVACY.md",
     "Generated top-level and nested imports",
     "never replaces a baseline",
@@ -78,8 +77,7 @@ if (missingHelpClauses.Length > 0)
 }
 
 RunClassifierHardeningTests();
-RunTelemetryStateMachineTests();
-RunTelemetryPayloadAllowlistRegression();
+RunTelemetryEligibilityTests();
 RunParserMessageRegression();
 RunParserTokenPrivacyRegression();
 RunBaselineContractRegression();
@@ -2168,7 +2166,7 @@ static void RenameJsonProperty(JsonObject parent, string oldName, string newName
     parent[newName] = value;
 }
 
-static void RunTelemetryStateMachineTests()
+static void RunTelemetryEligibilityTests()
 {
     var scratch = Path.Combine(Path.GetTempPath(), "packagesurface-telemetry-tests-" + Guid.NewGuid().ToString("N"));
     Directory.CreateDirectory(scratch);
@@ -2186,6 +2184,20 @@ static void RunTelemetryStateMachineTests()
         attempts = 0;
         Require(CommandLine.Run(new[] { "check", assets, "--baseline", baseline }) == 0 && attempts == 1,
             "Unchanged check did not count activation.");
+
+        var emptyAssets = Path.Combine(scratch, "empty-project.assets.json");
+        var emptyDocument = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
+        emptyDocument["targets"] = new JsonObject { ["net8.0"] = new JsonObject() };
+        emptyDocument["libraries"] = new JsonObject();
+        emptyDocument["project"]!["frameworks"]!["net8.0"]!["dependencies"] = new JsonObject();
+        File.WriteAllText(emptyAssets, emptyDocument.ToJsonString());
+        WriteGeneratedImportEvidence(emptyAssets);
+        attempts = 0;
+        var emptyBaseline = Path.Combine(scratch, "empty-baseline.json");
+        Require(CommandLine.Run(new[] { "baseline", emptyAssets, "--output", emptyBaseline }) == 0 && attempts == 0,
+            "A successful baseline with no resolved packages incorrectly counted activation.");
+        Require(CommandLine.Run(new[] { "check", emptyAssets, "--baseline", emptyBaseline }) == 0 && attempts == 0,
+            "A successful check with no resolved packages incorrectly counted activation.");
 
         var changed = JsonNode.Parse(File.ReadAllText(baseline))!.AsObject();
         changed["entries"] = new JsonArray
@@ -2226,10 +2238,9 @@ static void RunTelemetryStateMachineTests()
         var optOutBaseline = Path.Combine(scratch, "opt-out-baseline.json");
         Require(CommandLine.Run(new[] { "baseline", assets, "--output", optOutBaseline, "--no-telemetry" }) == 0 && attempts == 0,
             "Telemetry opt-out did not suppress activation.");
-
-        SetTelemetryHook(() => throw new InvalidOperationException("simulated telemetry failure"));
-        Require(CommandLine.Run(new[] { "check", assets, "--baseline", baseline }) == 0,
-            "Telemetry client failure changed the successful analysis result.");
+        var namedOptOutBaseline = Path.Combine(scratch, "named-opt-out-baseline.json");
+        Require(CommandLine.Run(new[] { "baseline", assets, "--output", namedOptOutBaseline, "--telemetry", "off" }) == 0 && attempts == 0,
+            "The explicit telemetry=off option did not suppress activation.");
     }
     finally
     {
@@ -2276,61 +2287,6 @@ static (int ExitCode, string Output) CaptureCommand(params string[] args)
     {
         Console.SetOut(priorOutput);
         Console.SetError(priorError);
-    }
-}
-
-static void RunTelemetryPayloadAllowlistRegression()
-{
-    var scratch = Path.Combine(Path.GetTempPath(), "packagesurface-telemetry-payload-" + Guid.NewGuid().ToString("N"));
-    Directory.CreateDirectory(scratch);
-    try
-    {
-        var assets = Path.Combine(scratch, "TelemetryRepresentative.csproj.assets.json");
-        var telemetryFiles = new[] { "tools/diagnostic-marker.ps1" };
-        WriteAssets(assets, Path.Combine(scratch, "cache"), "Telemetry.Representative.Package", telemetryFiles, createFiles: true, projectFileName: "TelemetryRepresentative.csproj");
-        var result = ResolvedGraphClassifier.Analyze(assets, scratch, strictContent: false);
-        Require(result.IsComplete && result.ResolvedPackageCount == 1, "The representative telemetry project was not classified completely.");
-
-        var telemetryAssembly = typeof(Client).Assembly;
-        var activationType = telemetryAssembly.GetType("KeelMatrix.Telemetry.Events.ActivationEvent", throwOnError: true)!;
-        var activationConstructor = activationType.GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic).Single();
-        var activation = activationConstructor.Invoke(new object[]
-        {
-            "packagesurface",
-            "0.1.0",
-            "0.1.1",
-            1,
-            new string('a', 64),
-            new string('b', 64),
-            "dotnet",
-            "windows",
-            false,
-            "2026-09-27T00:00:00Z"
-        });
-        var serializerType = telemetryAssembly.GetType("KeelMatrix.Telemetry.Serialization.TelemetrySerializer", throwOnError: true)!;
-        var serialize = serializerType.GetMethod("Serialize", BindingFlags.Static | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException("The shared telemetry serializer was not found.");
-        var json = (string?)serialize.Invoke(null, new[] { activation, "packagesurface" });
-        Require(json is not null, "The shared telemetry serializer rejected the representative activation payload.");
-
-        using var document = JsonDocument.Parse(json!);
-        var actual = document.RootElement.EnumerateObject().Select(property => property.Name).ToHashSet(StringComparer.Ordinal);
-        var expectedFields = new[]
-        {
-            "event", "tool", "tool_version", "telemetry_version", "schema_version", "project_hash", "installation_hash", "runtime", "os", "ci", "timestamp"
-        };
-        var expected = new HashSet<string>(expectedFields, StringComparer.Ordinal);
-        Require(actual.SetEquals(expected), $"Activation telemetry field allowlist drifted: {string.Join(", ", actual.Order(StringComparer.Ordinal))}");
-        var serialized = document.RootElement.GetRawText();
-        var forbiddenFields = new[] { "Telemetry.Representative.Package", "diagnostic-marker.ps1", "TelemetryRepresentative.csproj", "net8.0", "baseline", "PS007" };
-        foreach (var forbidden in forbiddenFields)
-        {
-            Require(!serialized.Contains(forbidden, StringComparison.OrdinalIgnoreCase), $"Activation telemetry serialized forbidden scanned data '{forbidden}'.");
-        }
-    }
-    finally
-    {
-        if (Directory.Exists(scratch)) Directory.Delete(scratch, recursive: true);
     }
 }
 

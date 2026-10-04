@@ -497,14 +497,14 @@ try {
         'https://github.com/KeelMatrix/Telemetry/blob/main/PRIVACY.md',
         'analyzed dependency package IDs or versions',
         'content hashes',
-        'anonymous `project_hash` and `installation_hash`',
-        'The shared client serializes activation with exactly',
+        'PackageSurface calls the shared client with only its stable product name and the CLI type.',
+        'The shared client owns the payload fields and anonymous identifiers',
         'PackageSurface requests activation only')) {
         if (-not $privacyText.Contains($requiredText, [StringComparison]::Ordinal)) {
             throw "Product privacy contract is missing '$requiredText'."
         }
     }
-    Write-Output 'TELEMETRY_PRIVACY=PASS Activation uses the fixed shared field allowlist; PackageSurface adds no analyzed dependency identity or content, and local gate uses --no-telemetry.'
+    Write-Output 'TELEMETRY_PRIVACY=PASS PackageSurface requests activation only and passes no analyzed data to the shared client; local gate uses --no-telemetry.'
 
     Invoke-GateStep 'working tree cleanliness' {
         $status = @(git status --porcelain --untracked-files=all)

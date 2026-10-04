@@ -213,19 +213,13 @@ public static class CommandLine
 
     private static void TrackActivation()
     {
-        try
+        if (TelemetryHook is not null)
         {
-            if (TelemetryHook is not null)
-            {
-                TelemetryHook();
-                return;
-            }
+            TelemetryHook();
+            return;
+        }
 
-            new Client("PackageSurface", typeof(CommandLine)).TrackActivation();
-        }
-        catch
-        {
-        }
+        new Client("PackageSurface", typeof(CommandLine)).TrackActivation();
     }
 
     private static void WriteOutput(ReportDocument report, OutputFormat format)
@@ -531,13 +525,11 @@ public sealed record Options(
           --no-telemetry             Disable best-effort activation telemetry.
 
         Telemetry privacy:
-          Activation fields: event, tool, tool_version, telemetry_version, schema_version,
-          project_hash, installation_hash, runtime, os, ci, timestamp.
-          Heartbeat fields: the same common fields plus runtime, os, ci, and week.
-          PackageSurface requests activation only and adds no scanned package, asset, path,
-          TFM, RID, baseline, or diagnostic data.
-          See https://github.com/KeelMatrix/PackageSurface/blob/main/PRIVACY.md and the
-          shared policy at https://github.com/KeelMatrix/Telemetry/blob/main/PRIVACY.md.
+          PackageSurface requests activation only and passes no analyzed package or build data
+          to the shared client. See the product and shared privacy policies for payload fields,
+          opt-out, storage, delivery, and retention details:
+          https://github.com/KeelMatrix/PackageSurface/blob/main/PRIVACY.md
+          https://github.com/KeelMatrix/Telemetry/blob/main/PRIVACY.md.
 
         Exit codes:
           0  Scan/baseline succeeded, or check passed.

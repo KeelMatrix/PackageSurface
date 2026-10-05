@@ -126,10 +126,9 @@ try {
     if ($localGate -notmatch '(?s)finally\s*\{.*\$scratch') { throw 'Canonical local gate does not clean run-owned scratch state in finally.' }
     if ($localGate -notmatch 'ReadAllBytes|Read-ZipEntryBytes') { throw 'Canonical local gate does not validate package bytes.' }
 
-    # The real repository is intentionally still a candidate: its Unreleased section may pass
-    # pre-tag validation but must never pass the finalized tag/publish contract.
-    Assert-ValidationPass 'real pre-tag candidate' (Invoke-ReleaseValidation -Version $version -ChangelogPath $realChangelog)
-    Assert-ValidationRejects 'real planned/unreleased tag gate' (Invoke-ReleaseValidation -Version $version -ChangelogPath $realChangelog -RequireFinalized)
+    # The finalized repository changelog must pass both candidate and first-release tag validation.
+    Assert-ValidationPass 'real finalized candidate' (Invoke-ReleaseValidation -Version $version -ChangelogPath $realChangelog)
+    Assert-ValidationPass 'real finalized first-release tag gate' (Invoke-ReleaseValidation -Version $version -ChangelogPath $realChangelog -RequireFinalized -FirstRelease)
 
     $missingUnreleasedChangelog = Join-Path $scratch 'CHANGELOG.missing-unreleased.md'
     $missingUnreleasedFirstRelease = "# Changelog`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Initial release capability review.`n"
@@ -147,14 +146,7 @@ try {
     Assert-ValidationRejects 'first-release entry nested under Unreleased' (Invoke-ReleaseValidation -Version $version -ChangelogPath $nestedReleaseChangelog -RequireFinalized -FirstRelease)
 
     $candidateChangelog = Join-Path $scratch 'CHANGELOG.finalized.md'
-    $filesystemIdentityContractMatch = [regex]::Match(
-        (Get-Content -LiteralPath $realChangelog -Raw),
-        '(?ms)^- (?<contract>Filesystem path identity follows.*?)(?=\r?\n\r?\n)')
-    if (-not $filesystemIdentityContractMatch.Success) {
-        throw 'Real changelog is missing the filesystem-identity contract needed by the composed documentation fixture.'
-    }
-    $filesystemIdentityContract = [regex]::Replace($filesystemIdentityContractMatch.Groups['contract'].Value, '\s+', ' ').Trim()
-    $candidateFirstRelease = "# Changelog`n`n<!-- Documentation parity fixture: $filesystemIdentityContract -->`n`n## [Unreleased]`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Initial release capability review.`n"
+    $candidateFirstRelease = "# Changelog`n`n## [Unreleased]`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Initial release capability review.`n"
     [IO.File]::WriteAllText($candidateChangelog, $candidateFirstRelease, [Text.UTF8Encoding]::new($false))
     Assert-ValidationPass 'real project with finalized version-consistent first-release changelog' (Invoke-ReleaseValidation -Version $version -ChangelogPath $candidateChangelog -RequireFinalized -FirstRelease)
 

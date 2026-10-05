@@ -4,50 +4,12 @@ PackageSurface release history.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-05
+
 ### Added
 
-- Initial consumer workflow: restore normally, then run `package-surface scan`, `baseline`, and `check` against an SDK-style PackageReference project or solution.
-- Reports active build props/targets, transitive and multi-targeting imports, compiler extensions, compile-source content, native runtime assets, and informational tool/script presence without executing package code.
-- Supports text, JSON, and SARIF reports with stable `PS001`–`PS007` diagnostics and exit codes `0` (success), `1` (reviewed surface difference), and `2` (invalid or incomplete analysis).
-- `--strict-content` records SHA-256 fingerprints for present, active build/compiler execution assets and requires an explicitly strict baseline; strict baselines also enforce hashing when the flag is omitted.
-- Baselines are deterministic, package-relative, bounded, versioned schema documents. Unsupported schema versions, incomplete restore evidence, unsafe paths, malformed XML, invalid hashes, and unsupported project inputs fail closed.
-- Multi-target restore evidence reconciles equivalent framework monikers and effective aliases, including RID-qualified target names, while genuinely missing or incoherent graphs remain fail-closed.
-- Static package `.props`/`.targets` inspection reports observed `UsingTask`, `Exec`, inline factories, and `Import` elements as syntax facts only.
-- Static package imports are followed only within bounded, provable package-relative chains; cycles are bounded and dynamic conditions/imports fail closed as `PS007`.
-- Bounded `TargetFramework` condition comparisons preserve written MSBuild string semantics; unsupported property expansions or syntax remain unknown and fail closed as `PS007`.
-- Restore evidence is reconciled across declared frameworks, target graphs, dependency closure, package inventories, content metadata, and generated imports before active filtering.
-- Baseline JSON is parsed through an exact, fail-closed schema boundary that rejects duplicate/case-variant members, unknown members, integer enums, null substitutions, and future schema versions.
-- V1 is limited to already-restored modern SDK-style PackageReference graphs; it does not restore, query feeds, execute MSBuild, load analyzers, inspect malware/vulnerabilities, or decide whether a dependency is safe.
-
-### Changed
-
-- History hygiene now scans tracked content and every reachable historical blob as strict UTF-8, UTF-16, or UTF-32
-  text across arbitrary non-alphanumeric separators including LF, CRLF, and repeated line boundaries. Unsupported or
-  binary content fails closed except for the confirmed root `icon.png`; per-file and per-archive-entry inputs are
-  limited to 4 MiB, and cumulative scanned/decompressed history is limited to 128 MiB. Commit metadata is scanned
-  under the same restricted vocabulary; no co-author trailer is allowlisted. Incomplete or shallow history and Git
-  read failures remain fail-closed.
-
-- Filesystem path identity follows the filesystem containing the resolved path: project-path identities use the project/assets filesystem, while package-relative asset identities and package-file `Exists(...)` checks use the NuGet package-root filesystem. Those roots can differ in case sensitivity, including across volumes. NuGet package ID/version identity remains case-insensitive. Inaccessible or ambiguous resolution fails closed with `PS007`.
-
-- Restore metadata is now validated against the native shapes emitted by supported SDKs before graph closure. The admitted restore members reject wrong primitives, nulls, array elements, map values, and malformed nested metadata with `PS007` while preserving absent-member semantics and both native dependency-value forms; the regression matrix covers SDK 8.0.425, 9.0.121, and 10.0.401 formats 3 and 4.
-
-- Restore validation now fails closed for malformed typed metadata and shares structural, import-edge, and dependency-traversal budgets across the complete invocation.
-- Restore JSON/XML evidence has one schema-aware boundary that rejects exact or case-variant duplicates, unknown members of consumed JSON objects, and non-canonical spellings of every consumed member; package XML tolerates standard unconsumed MSBuild elements and attributes while keeping the consumed `Import`/`UsingTask`/`Exec`/`Code` contract strict. Explicit `x-` JSON extensions and `urn:keelmatrix:packagesurface:extension` XML attributes remain available for unrelated metadata. Every applicable target graph uses one direct/project-reference rooted package closure for classification, activation, resolved counts, generated imports, and package-input preflight.
-- Same-ID multi-version target graphs are now treated as incoherent restore evidence; direct and transitive edges use their declared version ranges and require exactly one selected package version before classification or package-input preflight.
-- Package identity and dependency-range matching now share the `NuGet.Versioning` 7.9.0 parser/comparer and grammar across package keys, roots, imports, baseline provenance, target dependencies, project dependencies, and format-4 requirements; verified restore-format support is documented as formats 3 and 4.
-- Nested package imports inherit their importing capability and phase context, generated-import edges consume the cumulative edge budget, and baseline replacement is coupled transactionally to final report generation.
-- Incomplete multi-project selections are transactional: every `PS007`/structural-budget failure discards accumulated entries, emits no clean-looking text/JSON/SARIF result, and preserves an existing baseline so `--project` narrowing can recover.
-- Terminal report normalization now occurs after late strict-policy, persistence, size, serializer, and sink outcomes are known, so every incomplete result has only `PS007` diagnostics, no surface facts, and non-empty incomplete reasons.
-- Validation diagnostics use one package-relative privacy policy for returned reasons and thrown exceptions; malformed folder, duplicate-member, and unknown-member failures do not echo absolute cache paths or untrusted member names.
-- Generated top-level and nested imports are validated against the case-insensitive package identities reachable in every applicable target graph, including conditional, phase/diamond, TFM/RID, and orphan-package cases; format-4 dependency-group identities are also case-insensitive.
-- Analyzer activation now shares the typed reachable graph and distinguishes graph nodes, traversal roots, and reachable package assets, including analyzer flow through restored project references and their include/exclude/private asset controls.
-- Restore identity reconciliation now uses one canonical index for project/restore framework maps, effective frameworks, target aliases, target/RID keys, dependency groups, and package `ID/version` identities; key/effective/alias incoherence, duplicate, case-folded, or effective-moniker-equivalent identities fail closed before reachability and capability filtering, while valid aliases, multi-target/RID selections, dependency-group project paths, and package requirements remain accepted.
-- Package library paths are bound to their NuGet package ID/version and normalized physical package-root representation; generated-import, filesystem, project, baseline, deduplication, and diff matching now use typed field-specific identity semantics.
-- Baseline persistence uses bounded file transactions. An explicit baseline --output path is preflighted against every reachable package-inventory file resolved from packageFolders, including global and fallback roots, direct and transitive packages, every TFM/RID, nested static imports, and all inventory categories. Lexical . and .. aliases, single and multiple hardlinks, and direct, interior, and ancestor reparse/symlink aliases are rejected with PS007 and controlled exit code 2 before any mutation. A rejection preserves existing output and input bytes; genuinely distinct outputs are accepted.
-- Target-package asset metadata now accepts only NuGet's exact canonical property names; unknown, case-variant, null, or malformed groups fail closed. `packageFolders` entries are validated as absolute object-valued folder paths, including valid fallback folders.
-- macOS reparse compatibility now ignores only the standard root-level `/var` to `/private/var` alias; caller-controlled root aliases and nested links remain rejected.
-- Restore identity sets now fail closed in both directions, including missing or extra project/restore frameworks, format-4 dependency groups, and RID-qualified targets whose framework is absent from restore metadata. Project, target-package, and format-4 dependency values are validated against the SDK-shaped restore grammar and selected package versions.
-- Filesystem containment uses a canonicalization seam for deterministic ancestor-link regression coverage while continuing to reject reparse points within the declared package/cache root; the real ancestor-directory-link fixture now creates its physical target directories and reports verified or environmental-unavailability evidence.
-- Activation telemetry remains best-effort and opt-out. PackageSurface requests shared-client activation only after an eligible successful baseline or check and passes no analyzed package or build data to the client; shared payload and delivery behavior are owned by `KeelMatrix.Telemetry`.
-- Kept `--no-telemetry` as a per-invocation control and removed the redundant `--telemetry on|off` alias; process and repository opt-out resolution remains in `KeelMatrix.Telemetry`.
+- Provides `package-surface scan`, `baseline`, and `check` for already-restored SDK-style `PackageReference` projects, with text, JSON, and SARIF reports, stable `PS001`–`PS007` diagnostics, and exit codes `0`, `1`, and `2` for success, surface differences, and invalid or incomplete analysis.
+- Distinguishes present from active package build, compiler-extension, source-injection, and native-runtime assets for each project, target framework, and runtime identifier; lists recognized tools and scripts as informational facts. Versioned deterministic `package-surface.json` baselines detect surface changes, with optional `--strict-content` SHA-256 fingerprints for eligible active build/compiler assets.
+- Analyzes existing restore evidence without restoring packages, querying feeds, loading dependency assemblies, or executing package or MSBuild code. Incomplete evidence fails closed as `PS007`; capability reports are not malware, vulnerability, or safety verdicts.
+- Uses best-effort activation telemetry only after a successful baseline or check of at least one PackageReference graph. `--no-telemetry` suppresses the request, and analyzed package/build data is not sent.
+- Supports modern SDK-style `PackageReference` projects targeting .NET 8 on Windows, Linux, and macOS.

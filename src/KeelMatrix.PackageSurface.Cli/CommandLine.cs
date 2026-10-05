@@ -566,8 +566,7 @@ public sealed record Options(
         TFM/RID and all inventory categories. Lexical . and .. aliases, single and multiple
         hardlinks, and direct, interior, and ancestor reparse/symlink aliases are rejected with
         PS007 and controlled exit code 2 before any mutation. A rejection preserves existing output
-        and input bytes; genuinely distinct outputs are accepted. The current
-        candidate supports Windows, Linux, and macOS
+        and input bytes; genuinely distinct outputs are accepted. PackageSurface supports Windows, Linux, and macOS
         for SDK-style PackageReference restore outputs; hosted CI validates the command contract
         on all three platforms. On macOS, only the standard root-level /var to /private/var
         alias is ignored; caller-controlled root aliases and links nested below /var remain

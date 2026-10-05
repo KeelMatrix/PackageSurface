@@ -12,7 +12,7 @@ else {
 
 $rootReadme = Get-Content -Raw (Join-Path $RepositoryRoot 'README.md')
 $packedReadme = Get-Content -Raw (Join-Path $RepositoryRoot 'src/KeelMatrix.PackageSurface.Cli/README.md')
-$platformContract = 'The current candidate supports Windows, Linux, and macOS for SDK-style PackageReference restore outputs; hosted CI validates the command contract on all three platforms.'
+$platformContract = 'PackageSurface supports Windows, Linux, and macOS for SDK-style PackageReference restore outputs; hosted CI validates the command contract on all three platforms.'
 if (-not $rootReadme.Contains($platformContract, [StringComparison]::Ordinal) -or
     -not $packedReadme.Contains($platformContract, [StringComparison]::Ordinal)) {
     throw 'Root and packed README files do not state the same evidenced platform contract.'

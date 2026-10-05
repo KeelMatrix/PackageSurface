@@ -104,7 +104,7 @@ PackageSurface uses the shared `KeelMatrix.Telemetry` client for optional best-e
 
 ## Supported scope and limitations
 
-The current candidate supports Windows, Linux, and macOS for SDK-style PackageReference restore outputs; hosted CI validates the command contract on all three platforms. The tool targets `net8.0`, including coherent `project.assets.json` formats 3 and 4, the formats verified by the shipping fixture and gate. Format 4 framework aliases are mapped to their effective framework; missing or mismatched v4 metadata remains incomplete analysis. Legacy project systems, `packages.config`, automatic restore, feed queries, vulnerability scanning, license analysis, malware detection, decompilation, dynamic sandboxing, and package safety judgments are outside the supported scope.
+PackageSurface supports Windows, Linux, and macOS for SDK-style PackageReference restore outputs; hosted CI validates the command contract on all three platforms. The tool targets `net8.0`, including coherent `project.assets.json` formats 3 and 4, the formats verified by the shipping fixture and gate. Format 4 framework aliases are mapped to their effective framework; missing or mismatched v4 metadata remains incomplete analysis. Legacy project systems, `packages.config`, automatic restore, feed queries, vulnerability scanning, license analysis, malware detection, decompilation, dynamic sandboxing, and package safety judgments are outside the supported scope.
 
 ## Troubleshooting
 

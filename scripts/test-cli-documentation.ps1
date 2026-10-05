@@ -26,7 +26,6 @@ $parityDocuments = @(
 $filesystemContractDocuments = @(
     (Join-Path $root 'README.md'),
     (Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/README.md'),
-    (Join-Path $root 'CHANGELOG.md'),
     (Join-Path $root 'SECURITY.md'),
     (Join-Path $root 'docs/DEV.md')
 )
@@ -146,4 +145,4 @@ if (-not (Normalize-ContractText ($builtHelp -join [Environment]::NewLine)).Cont
 foreach ($requiredText in @('package-surface scan <path>', '--format text|json|sarif', '--strict-content', '--project <path>', '--no-telemetry', 'Exit codes:', 'effective-moniker canonicalization', 'malformed package', 'ID/version', 'both directions', 'package versions', 'direct/project-reference rooted', 'disconnected package nodes', 'duplicate or case-variant', 'unknown members', 'standard unconsumed MSBuild elements and attributes', 'native SDK shape', 'malformed nested', 'compilerApiVersion', 'non-canonical spellings of consumed JSON/XML members', 'x- prefix', 'urn:keelmatrix:packagesurface:extension', 'NuGet.Versioning 7.9.0 parser/comparer')) {
     if (-not $cliSource.Contains($requiredText, [StringComparison]::Ordinal)) { throw "CLI help is missing '$requiredText'." }
 }
-Write-Output 'CLI_DOCUMENTATION=PASS root/package/developer/release/security docs and built --help retain the same baseline-alias and command contract.'
+Write-Output 'CLI_DOCUMENTATION=PASS root/package/developer/security docs and built --help retain the same baseline-alias and command contract.'

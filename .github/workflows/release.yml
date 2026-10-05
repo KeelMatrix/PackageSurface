@@ -40,22 +40,18 @@ jobs:
           $version = $env:RELEASE_TAG.Substring(1)
           & ./scripts/validate-release.ps1 -Version $version -RequireFinalized -FirstRelease
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          "version=$version" >> $env:GITHUB_OUTPUT
+          [IO.File]::AppendAllText($env:GITHUB_OUTPUT, "version=$version`n", [Text.UTF8Encoding]::new($false))
       - name: Build and validate exact release artifacts
+        env:
+          RELEASE_VERSION: ${{ steps.release_contract.outputs.version }}
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          & ./scripts/run-local-gate.ps1 -ArtifactDirectory artifacts/release
+          if ([string]::IsNullOrWhiteSpace($env:RELEASE_VERSION)) { throw 'The release contract did not provide a version.' }
+          & ./scripts/run-local-gate.ps1 -ArtifactDirectory artifacts/release -ExpectedVersion $env:RELEASE_VERSION
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $version = '${{ steps.release_contract.outputs.version }}'
-          $expected = @(
-              "KeelMatrix.PackageSurface.$version.nupkg",
-              "KeelMatrix.PackageSurface.$version.snupkg"
-          )
-          $actual = @(Get-ChildItem -LiteralPath artifacts/release -File | Select-Object -ExpandProperty Name | Sort-Object)
-          if (@(Compare-Object ($expected | Sort-Object) $actual).Count -ne 0) {
-              throw "Validated release artifact set is not exact: $($actual -join ', ')"
-          }
+          & ./scripts/validate-release-artifact-set.ps1 -Version $env:RELEASE_VERSION -ArtifactDirectory artifacts/release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload validated release artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -72,11 +68,24 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - name: Check out source for artifact validation
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - name: Download validated release artifacts
         uses: actions/download-artifact@v4
         with:
           name: packages
           path: artifacts/release
+      - name: Revalidate downloaded package set before OIDC
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./scripts/validate-release-artifact-set.ps1 -Version $env:RELEASE_VERSION -ArtifactDirectory artifacts/release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Authenticate to NuGet.org
         id: nuget-login
         uses: NuGet/login@v1
@@ -86,9 +95,11 @@ jobs:
         shell: pwsh
         env:
           NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $version = '${{ needs.validate.outputs.version }}'
+          $version = $env:RELEASE_VERSION
+          if ([string]::IsNullOrWhiteSpace($version)) { throw 'The validated release version is missing.' }
           $package = "artifacts/release/KeelMatrix.PackageSurface.$version.nupkg"
           if (-not (Test-Path -LiteralPath $package -PathType Leaf)) {
               throw "Validated package is missing: $package"
@@ -104,18 +115,43 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Check out source for artifact validation
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - name: Download validated release artifacts
         uses: actions/download-artifact@v4
         with:
           name: packages
           path: artifacts/release
+      - name: Revalidate downloaded release artifact set
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ./scripts/validate-release-artifact-set.ps1 -Version $env:RELEASE_VERSION -ArtifactDirectory artifacts/release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Create release after successful publication
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        shell: bash
         run: |
+          set -euo pipefail
+          : "${RELEASE_VERSION:?Validated release version is missing}"
+          : "${RELEASE_TAG:?Release tag is missing}"
+          : "${RELEASE_REPOSITORY:?Repository is missing}"
+          if [[ "$RELEASE_TAG" != "v$RELEASE_VERSION" ]]; then
+            echo "Release tag does not match validated version: $RELEASE_TAG" >&2
+            exit 1
+          fi
           gh release create \
-            --repo "${{ github.repository }}" \
-            "${{ github.ref_name }}" \
-            "artifacts/release/KeelMatrix.PackageSurface.${{ needs.validate.outputs.version }}.nupkg" \
-            "artifacts/release/KeelMatrix.PackageSurface.${{ needs.validate.outputs.version }}.snupkg" \
-            --verify-tag --generate-notes --title "${{ github.ref_name }}"
+            --repo "$RELEASE_REPOSITORY" \
+            "$RELEASE_TAG" \
+            "artifacts/release/KeelMatrix.PackageSurface.${RELEASE_VERSION}.nupkg" \
+            "artifacts/release/KeelMatrix.PackageSurface.${RELEASE_VERSION}.snupkg" \
+            --verify-tag --generate-notes --title "$RELEASE_TAG"

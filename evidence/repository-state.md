@@ -10,7 +10,7 @@ The canonical repository is the public `KeelMatrix/PackageSurface` GitHub reposi
 
 - `.github/workflows/ci.yml`: push to `main`, pull requests, and manual exact-SHA dispatch on `windows-latest`,
   `ubuntu-latest`, and `macos-latest`.
-- `.github/workflows/release.yml`: tag-only `v*.*.*` validation, publication, and GitHub Release chain.
+- `.github/workflows/release.yml`: tag-only `v*.*.*` validation, publication, and GitHub Release chain; each downstream artifact consumer checks out the same commit before invoking repository scripts.
 - `scripts/validate-release.ps1`: the shared version and changelog contract used by candidate checks and the release
   workflow.
 
@@ -35,7 +35,7 @@ COMMAND: git tag | Measure-Object | Select-Object -ExpandProperty Count
 EXPECTED: 0 before an approved release tag exists.
 
 COMMAND: pwsh -NoLogo -NoProfile -File scripts/test-release-contract.ps1
-EXPECTED: PASS for the workflow shape and shared fail-closed release-contract regression cases.
+EXPECTED: PASS for the workflow shape, enumerated artifact-consuming script jobs, future-consumer source-availability regressions, and shared fail-closed release-contract cases.
 ```
 
 The exact command output for the checkout, including `git rev-parse HEAD`, `git rev-parse origin/main`, and

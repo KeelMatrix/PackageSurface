@@ -9,6 +9,7 @@ $ciWorkflowPath = Join-Path $workflowDirectory 'ci.yml'
 $releaseWorkflowPath = Join-Path $workflowDirectory 'release.yml'
 $localGatePath = Join-Path $root 'scripts/run-local-gate.ps1'
 $builtCliPath = Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/bin/Release/net8.0/KeelMatrix.PackageSurface.dll'
+$artifactSetValidatorPath = Join-Path $root 'scripts/validate-release-artifact-set.ps1'
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('packagesurface-release-contract-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $scratch | Out-Null
 
@@ -46,6 +47,29 @@ function Assert-ValidationPass {
 function Assert-ValidationRejects {
     param([Parameter(Mandatory)] [string] $Name, [Parameter(Mandatory)] [int] $ExitCode)
     if ($ExitCode -eq 0) { throw "Release-contract case '$Name' was accepted." }
+}
+
+function Invoke-ArtifactSetValidation {
+    param([AllowEmptyString()] [string] $Version, [Parameter(Mandatory)] [string] $Directory)
+    $arguments = @('-NoLogo', '-NoProfile', '-File', $artifactSetValidatorPath, '-Version', $Version, '-ArtifactDirectory', $Directory)
+    $null = Invoke-NestedPwsh -ArgumentList $arguments 2>$null
+    return $LASTEXITCODE
+}
+
+function Invoke-LocalGateVersionValidation {
+    param([Parameter(Mandatory)] [string] $Version)
+    $directory = Join-Path $scratch ('invalid-local-gate-version-' + [Guid]::NewGuid().ToString('N'))
+    $arguments = @('-NoLogo', '-NoProfile', '-File', $localGatePath, '-ArtifactDirectory', $directory, '-ExpectedVersion', $Version)
+    $null = Invoke-NestedPwsh -ArgumentList $arguments 2>$null
+    return $LASTEXITCODE
+}
+
+function New-ArtifactSetDirectory {
+    param([Parameter(Mandatory)] [string] $Name, [Parameter(Mandatory)] [string[]] $Files)
+    $directory = Join-Path $scratch $Name
+    New-Item -ItemType Directory -Force -Path $directory | Out-Null
+    foreach ($file in $Files) { [IO.File]::WriteAllText((Join-Path $directory $file), '') }
+    return $directory
 }
 
 try {
@@ -98,7 +122,11 @@ try {
         'actions/download-artifact@v4',
         'KEELMATRIX_TELEMETRY: ''off''',
         './scripts/validate-release.ps1 -Version $version -RequireFinalized -FirstRelease',
-        './scripts/run-local-gate.ps1 -ArtifactDirectory artifacts/release',
+        './scripts/run-local-gate.ps1 -ArtifactDirectory artifacts/release -ExpectedVersion $env:RELEASE_VERSION',
+        './scripts/validate-release-artifact-set.ps1 -Version $env:RELEASE_VERSION -ArtifactDirectory artifacts/release',
+        'RELEASE_VERSION: ${{ steps.release_contract.outputs.version }}',
+        'RELEASE_VERSION: ${{ needs.validate.outputs.version }}',
+        '[IO.File]::AppendAllText($env:GITHUB_OUTPUT,',
         'path: artifacts/release/*',
         'NuGet/login@v1',
         'user: dmitriyzen',
@@ -107,7 +135,7 @@ try {
         'dotnet nuget push',
         'gh release create',
         '--verify-tag',
-        '--repo "${{ github.repository }}"'
+        '--repo "$RELEASE_REPOSITORY"'
     )) {
         if (-not $releaseWorkflow.Contains($required, [StringComparison]::Ordinal)) { throw "Release workflow is missing '$required'." }
     }
@@ -115,9 +143,21 @@ try {
     if ($releaseWorkflow.Contains('run-phase0.ps1', [StringComparison]::Ordinal)) { throw 'Release workflow runs a mutating standalone Phase 0 step.' }
     if ($releaseWorkflow -match '(?m)dotnet\s+run\s+--project\s+tests/') { throw 'Release workflow duplicates console leaf tests beside the canonical gate.' }
     if ($releaseWorkflow -match '(?m)^\s*run:\s*dotnet\s+pack\b') { throw 'Release workflow repacks a separately validated artifact.' }
-    if ($releaseWorkflow -notmatch '(?s)validate:.*outputs:.*version:.*release_contract') { throw 'Release workflow does not pass the validated tag version to downstream jobs.' }
+    if ($releaseWorkflow -notmatch '(?s)outputs:\s*\r?\n\s+version:\s*\$\{\{\s*steps\.release_contract\.outputs\.version\s*\}\}') { throw 'Release workflow does not expose the validated tag version as a job output.' }
+    if ($releaseWorkflow -match '\$version\s*=\s*["'']\$\{\{\s*(?:steps\.release_contract|needs\.validate)\.outputs\.version') { throw 'Release workflow interpolates a possibly empty version directly into script text.' }
     if ($releaseWorkflow -notmatch '(?s)publish:.*needs:\s*validate.*NuGet/login@v1') { throw 'Publish does not depend on validation and Trusted Publishing.' }
     if ($releaseWorkflow -notmatch '(?s)github-release:.*needs:\s*\[validate, publish\]') { throw 'GitHub Release is not ordered after validation and publication.' }
+
+    $publishStart = $releaseWorkflow.IndexOf("`n  publish:", [StringComparison]::Ordinal)
+    $publishValidation = $releaseWorkflow.IndexOf('Revalidate downloaded package set before OIDC', $publishStart, [StringComparison]::Ordinal)
+    $publishLogin = $releaseWorkflow.IndexOf('uses: NuGet/login@v1', $publishStart, [StringComparison]::Ordinal)
+    if ($publishStart -lt 0 -or $publishValidation -lt $publishStart -or $publishLogin -lt $publishValidation) { throw 'Publish must revalidate exact downloaded artifacts before requesting OIDC.' }
+
+    $releaseStart = $releaseWorkflow.IndexOf("`n  github-release:", [StringComparison]::Ordinal)
+    $releaseValidation = $releaseWorkflow.IndexOf('Revalidate downloaded release artifact set', $releaseStart, [StringComparison]::Ordinal)
+    $createRelease = $releaseWorkflow.IndexOf('gh release create', $releaseStart, [StringComparison]::Ordinal)
+    if ($releaseStart -lt 0 -or $releaseValidation -lt $releaseStart -or $createRelease -lt $releaseValidation) { throw 'GitHub Release must revalidate exact downloaded artifacts before creating a release.' }
+    if ($releaseWorkflow.IndexOf('validate-release-artifact-set.ps1', [StringComparison]::Ordinal) -gt $releaseWorkflow.IndexOf('uses: actions/upload-artifact@v4', [StringComparison]::Ordinal)) { throw 'Release artifacts must be validated before upload.' }
 
     $localGate = Get-Content -LiteralPath $localGatePath -Raw
     foreach ($requiredGate in @('scripts/test-release-contract.ps1', 'scripts/test-vulnerability-audit.ps1', 'validate-package-artifact.ps1', 'dotnet pack')) {
@@ -125,6 +165,40 @@ try {
     }
     if ($localGate -notmatch '(?s)finally\s*\{.*\$scratch') { throw 'Canonical local gate does not clean run-owned scratch state in finally.' }
     if ($localGate -notmatch 'ReadAllBytes|Read-ZipEntryBytes') { throw 'Canonical local gate does not validate package bytes.' }
+    if ($localGate.Contains("`$packageVersion = '0.1.0'", [StringComparison]::Ordinal)) { throw 'Canonical local gate hard-codes a package version.' }
+    if ($localGate -notmatch '\$PSBoundParameters\.ContainsKey\(''ExpectedVersion''\)') { throw 'Canonical local gate does not distinguish an absent version override from an empty one.' }
+    if ($localGate -notmatch 'dotnet tool install[^\r\n]*--version \$packageVersion') { throw 'Installed-tool smoke does not use the validated package version.' }
+    if ($localGate -match '"toolVersion":"0\.1\.0"') { throw 'Local-gate baseline regressions hard-code a package version.' }
+    if ($localGate -notmatch 'if \(\[string\]::IsNullOrWhiteSpace\(\$suppliedPackageVersion\)\).*empty') { throw 'Canonical local gate does not reject an empty supplied version.' }
+
+    $packageArtifactValidator = Get-Content -LiteralPath (Join-Path $root 'scripts/validate-package-artifact.ps1') -Raw
+    if ($packageArtifactValidator -match '\$ExpectedVersion\s*=\s*["'']0\.1\.0') { throw 'Package validator hard-codes a release version.' }
+    if ($packageArtifactValidator -notmatch '\[Parameter\(Mandatory\)\].*\$ExpectedVersion') { throw 'Package validator must require its expected release version.' }
+
+    if (-not (Test-Path -LiteralPath $artifactSetValidatorPath -PathType Leaf)) { throw 'Release artifact-set validator is missing.' }
+    $artifactNames = @("KeelMatrix.PackageSurface.$version.nupkg", "KeelMatrix.PackageSurface.$version.snupkg")
+    $exactArtifactDirectory = New-ArtifactSetDirectory 'artifact-set-exact' $artifactNames
+    Assert-ValidationPass 'exact release artifact set' (Invoke-ArtifactSetValidation -Version $version -Directory $exactArtifactDirectory)
+    Assert-ValidationRejects 'empty release version' (Invoke-ArtifactSetValidation -Version '' -Directory $exactArtifactDirectory)
+    Assert-ValidationRejects 'whitespace release version' (Invoke-ArtifactSetValidation -Version '   ' -Directory $exactArtifactDirectory)
+    Assert-ValidationRejects 'padded release version' (Invoke-ArtifactSetValidation -Version " $version" -Directory $exactArtifactDirectory)
+    Assert-ValidationRejects 'malformed release version' (Invoke-ArtifactSetValidation -Version 'latest' -Directory $exactArtifactDirectory)
+    $mismatchedVersion = if ($version -eq '0.0.0') { '0.0.1' } else { '0.0.0' }
+    Assert-ValidationRejects 'artifact version mismatch' (Invoke-ArtifactSetValidation -Version $mismatchedVersion -Directory $exactArtifactDirectory)
+    Assert-ValidationRejects 'local gate package/project version mismatch' (Invoke-LocalGateVersionValidation -Version $mismatchedVersion)
+    Assert-ValidationRejects 'local gate padded package version' (Invoke-LocalGateVersionValidation -Version " $version")
+
+    $missingPackageDirectory = New-ArtifactSetDirectory 'artifact-set-missing-package' @($artifactNames[1])
+    Assert-ValidationRejects 'missing package artifact' (Invoke-ArtifactSetValidation -Version $version -Directory $missingPackageDirectory)
+    $missingSymbolsDirectory = New-ArtifactSetDirectory 'artifact-set-missing-symbols' @($artifactNames[0])
+    Assert-ValidationRejects 'missing symbols artifact' (Invoke-ArtifactSetValidation -Version $version -Directory $missingSymbolsDirectory)
+    $extraFileDirectory = New-ArtifactSetDirectory 'artifact-set-extra-file' ($artifactNames + 'unexpected.txt')
+    Assert-ValidationRejects 'extra artifact file' (Invoke-ArtifactSetValidation -Version $version -Directory $extraFileDirectory)
+    $extraDirectory = New-ArtifactSetDirectory 'artifact-set-extra-directory' $artifactNames
+    [void][IO.Directory]::CreateDirectory((Join-Path $extraDirectory 'unexpected'))
+    Assert-ValidationRejects 'extra artifact directory' (Invoke-ArtifactSetValidation -Version $version -Directory $extraDirectory)
+    $wrongCaseDirectory = New-ArtifactSetDirectory 'artifact-set-wrong-case' @("keelmatrix.packagesurface.$version.nupkg", $artifactNames[1])
+    Assert-ValidationRejects 'artifact filename case mismatch' (Invoke-ArtifactSetValidation -Version $version -Directory $wrongCaseDirectory)
 
     # The finalized repository changelog must pass both candidate and first-release tag validation.
     Assert-ValidationPass 'real finalized candidate' (Invoke-ReleaseValidation -Version $version -ChangelogPath $realChangelog)
@@ -181,6 +255,10 @@ try {
     }
     Assert-ValidationPass 'composed finalized first-release gate' (Invoke-ReleaseValidation -Version $version -ChangelogPath (Join-Path $composedRoot 'CHANGELOG.md') -RequireFinalized -FirstRelease)
 
+    $workflowOutputPath = Join-Path $scratch 'github-output'
+    [IO.File]::AppendAllText($workflowOutputPath, "version=$version`n", [Text.UTF8Encoding]::new($false))
+    if ([IO.File]::ReadAllText($workflowOutputPath) -cne "version=$version`n") { throw 'Release-contract version was not serialized exactly for GitHub Actions output.' }
+
     $wholeWordChangelog = Join-Path $scratch 'CHANGELOG.whole-word.md'
     [IO.File]::WriteAllText($wholeWordChangelog, "# Changelog`n`n## [Unreleased]`n`n## [$version] - 2026-09-22`n`n### Added`n`n- Adds package prefixes and nowhere-only documentation examples.`n", [Text.UTF8Encoding]::new($false))
     Assert-ValidationPass 'first-release whole-word marker boundaries' (Invoke-ReleaseValidation -Version $version -ChangelogPath $wholeWordChangelog -RequireFinalized -FirstRelease)
@@ -228,7 +306,7 @@ try {
     [IO.File]::WriteAllText($mismatchedChangelog, "# Changelog`n`n## [Unreleased]`n`n## [9.9.9] - 2026-09-22`n`n- Wrong version.`n", [Text.UTF8Encoding]::new($false))
     Assert-ValidationRejects 'changelog/version disagreement' (Invoke-ReleaseValidation -Version $version -ChangelogPath $mismatchedChangelog -RequireFinalized -FirstRelease)
 
-    Write-Output 'PASS: restored CI/release workflows use one shared fail-closed release contract; real candidate, finalized, and version-mismatch cases behave as required.'
+    Write-Output 'PASS: one validated version reaches package and release artifact checks; empty, malformed, mismatched, missing, extra, and case-mismatched artifact sets are rejected.'
 }
 finally {
     if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force }

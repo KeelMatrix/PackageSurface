@@ -1,7 +1,7 @@
 param(
     [Parameter(Mandatory)] [string] $PackagePath,
     [Parameter(Mandatory)] [string] $SymbolsPath,
-    [string] $ExpectedVersion = '0.1.0',
+    [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string] $ExpectedVersion,
     [string] $ExpectedCommit
 )
 

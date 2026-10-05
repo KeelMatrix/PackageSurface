@@ -36,6 +36,7 @@ function Expect-Rejected([string] $Path) {
 }
 
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('packagesurface-package-content-' + [Guid]::NewGuid().ToString('N'))
+$extraPackage = Join-Path $ArtifactDirectory ("KeelMatrix.PackageSurface.unexpected-$([Guid]::NewGuid().ToString('N')).nupkg")
 New-Item -ItemType Directory -Force -Path $scratch | Out-Null
 try {
     $extraTool = Join-Path $scratch 'extra-tool.nupkg'
@@ -50,7 +51,6 @@ try {
     try { $archive.GetEntry($requiredToolFiles[0]).Delete() } finally { $archive.Dispose() }
     try { Assert-Package $missingTool; throw 'Missing required package file was accepted.' } catch [System.Exception] { if ($_.Exception.Message -eq 'Missing required package file was accepted.') { throw } }
 
-    $extraPackage = Join-Path $ArtifactDirectory 'KeelMatrix.PackageSurface.0.1.0.extra.nupkg'
     Copy-Item -LiteralPath $PackagePath -Destination $extraPackage
     $artifactNames = @(Get-ChildItem -LiteralPath $ArtifactDirectory -File | Where-Object Extension -eq '.nupkg')
     if ($artifactNames.Count -ne 2) { throw 'Extra package artifact was not detected.' }
@@ -59,6 +59,5 @@ try {
 }
 finally {
     if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force }
-    $extraPackage = Join-Path $ArtifactDirectory 'KeelMatrix.PackageSurface.0.1.0.extra.nupkg'
     if (Test-Path -LiteralPath $extraPackage) { Remove-Item -LiteralPath $extraPackage -Force }
 }

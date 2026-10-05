@@ -21,7 +21,7 @@ dotnet run --project ./tests/KeelMatrix.PackageSurface.Cli.Tests/KeelMatrix.Pack
 dotnet run --project ./tests/KeelMatrix.PackageSurface.Probe.Tests/KeelMatrix.PackageSurface.Probe.Tests.csproj --configuration Release --no-build -- <project.assets.json> <capability-list>
 ```
 
-The local gate is the authoritative validation entrypoint. It uses a controlled package cache, disables telemetry, checks the exact `.nupkg`/`.snupkg` set using the packable project's evaluated version (or an explicit `-ExpectedVersion` supplied by release validation), installs the packed tool in isolation, and exercises passing, changed-surface, incomplete-input, baseline-schema, strict-retry, and real dependency-change cases. The tag workflow revalidates downloaded package names before NuGet OIDC authentication and GitHub Release creation.
+The local gate is the authoritative validation entrypoint. It uses a controlled package cache, disables telemetry, checks the exact `.nupkg`/`.snupkg` set using the packable project's evaluated version (or an explicit `-ExpectedVersion` supplied by release validation), installs the packed tool in isolation, and exercises passing, changed-surface, incomplete-input, baseline-schema, strict-retry, and real dependency-change cases. Each tag-workflow job that downloads release artifacts and invokes a repository script checks out the workflow's exact commit before the download. It then revalidates downloaded package names before NuGet OIDC authentication or GitHub Release creation.
 
 ## Invariants
 

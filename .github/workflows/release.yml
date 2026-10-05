@@ -68,6 +68,11 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - name: Check out source for artifact validation
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - name: Download validated release artifacts
         uses: actions/download-artifact@v4
         with:
@@ -110,6 +115,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Check out source for artifact validation
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - name: Download validated release artifacts
         uses: actions/download-artifact@v4
         with:

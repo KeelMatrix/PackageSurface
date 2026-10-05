@@ -72,6 +72,146 @@ function New-ArtifactSetDirectory {
     return $directory
 }
 
+function Get-WorkflowJobs {
+    param([Parameter(Mandatory)] [string] $WorkflowText)
+
+    $jobsSection = [regex]::Match($WorkflowText, '(?ms)^jobs:\s*\r?\n(?<jobs>.*?)(?=^[^\s#][^:\r\n]*:\s*(?:#.*)?\r?$|\z)')
+    if (-not $jobsSection.Success) { throw 'Workflow has no jobs section.' }
+
+    $jobMatches = [regex]::Matches($jobsSection.Groups['jobs'].Value, '(?ms)^  (?<name>[A-Za-z0-9_-]+):[^\r\n]*\r?\n(?<body>.*?)(?=^  [A-Za-z0-9_-]+:[^\r\n]*\r?$|\z)')
+    foreach ($jobMatch in $jobMatches) {
+        [pscustomobject]@{ Name = $jobMatch.Groups['name'].Value; Body = $jobMatch.Groups['body'].Value }
+    }
+}
+
+function Assert-ArtifactScriptConsumersHaveSource {
+    param(
+        [Parameter(Mandatory)] [object[]] $Workflows,
+        [string[]] $RequiredConsumerNames = @()
+    )
+
+    $consumers = [Collections.Generic.List[object]]::new()
+    $scriptPattern = '(?i)(?:\./|\.\\)?scripts[\\/](?<path>[A-Za-z0-9_.-]+(?:[\\/][A-Za-z0-9_.-]+)*\.(?:ps1|psm1|sh|bash|py|js|mjs|cjs|ts|rb|pl|php|r|csx|cmd|bat))'
+
+    foreach ($workflow in $Workflows) {
+        foreach ($job in @(Get-WorkflowJobs -WorkflowText $workflow.Text)) {
+            if ($job.Body -notmatch '(?im)^\s*uses:\s*actions/download-artifact@') { continue }
+
+            $scriptMatches = [regex]::Matches($job.Body, $scriptPattern)
+            if ($scriptMatches.Count -eq 0) { continue }
+
+            $checkoutIndex = $job.Body.IndexOf('uses: actions/checkout@', [StringComparison]::Ordinal)
+            $downloadIndex = $job.Body.IndexOf('uses: actions/download-artifact@', [StringComparison]::Ordinal)
+            $scriptIndex = $scriptMatches[0].Index
+            if ($checkoutIndex -lt 0 -or $downloadIndex -lt 0 -or $checkoutIndex -ge $downloadIndex -or $downloadIndex -ge $scriptIndex) {
+                throw "Artifact-consuming job '$($workflow.Name)/$($job.Name)' must check out source before downloading artifacts and invoking repository scripts."
+            }
+
+            $checkoutThroughDownload = $job.Body.Substring($checkoutIndex, $downloadIndex - $checkoutIndex)
+            if ($checkoutThroughDownload -notmatch '(?m)^\s*ref:\s*\$\{\{\s*github\.sha\s*\}\}\s*$') {
+                throw "Artifact-consuming job '$($workflow.Name)/$($job.Name)' must check out the workflow commit before invoking repository scripts."
+            }
+
+            $scriptPaths = [Collections.Generic.List[string]]::new()
+            foreach ($scriptMatch in $scriptMatches) {
+                $relativePath = ('scripts/' + $scriptMatch.Groups['path'].Value.Replace('\', '/'))
+                if ($relativePath -match '(^|/)\.\.?(/|$)') { throw "Repository script path is not normalized: $relativePath" }
+
+                $absolutePath = Join-Path $root ($relativePath.Replace('/', [IO.Path]::DirectorySeparatorChar))
+                if (-not (Test-Path -LiteralPath $absolutePath -PathType Leaf)) { throw "Artifact consumer invokes missing repository script '$relativePath'." }
+                $trackedPath = @(& git -C $root ls-files --error-unmatch -- $relativePath 2>$null)
+                if ($LASTEXITCODE -ne 0 -or $trackedPath.Count -ne 1) { throw "Artifact consumer script '$relativePath' is not tracked in the repository." }
+                $scriptPaths.Add($relativePath)
+            }
+
+            $consumers.Add([pscustomobject]@{
+                Name = $job.Name
+                Workflow = $workflow.Name
+                Scripts = @($scriptPaths | Sort-Object -Unique)
+            })
+        }
+    }
+
+    foreach ($requiredName in $RequiredConsumerNames) {
+        if (-not @($consumers | Where-Object { "$($_.Workflow)/$($_.Name)" -eq $requiredName })) {
+            throw "Expected artifact-consuming repository-script job '$requiredName' was not enumerated."
+        }
+    }
+
+    return $consumers.ToArray()
+}
+
+function Assert-WorkflowScriptSourceRegressionCoverage {
+    $script = 'scripts/validate-release-artifact-set.ps1'
+    $futureConsumerWithoutCheckout = @'
+jobs:
+  future-consumer:
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v4
+      - name: Validate packages
+        run: pwsh -NoLogo -NoProfile -File ./scripts/validate-release-artifact-set.ps1
+'@
+    $futureConsumerWrongOrder = @'
+jobs:
+  future-consumer:
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v4
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Validate packages
+        run: pwsh -NoLogo -NoProfile -File ./scripts/validate-release-artifact-set.ps1
+'@
+    $futureConsumerWrongRevision = @'
+jobs:
+  future-consumer:
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Download packages
+        uses: actions/download-artifact@v4
+      - name: Validate packages
+        run: pwsh -NoLogo -NoProfile -File ./scripts/validate-release-artifact-set.ps1
+'@
+    $futureConsumerWithSource = @'
+jobs:
+  future-consumer:
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Download packages
+        uses: actions/download-artifact@v4
+      - name: Validate packages
+        run: pwsh -NoLogo -NoProfile -File ./scripts/validate-release-artifact-set.ps1
+'@
+
+    foreach ($case in @(
+        @{ Name = 'no checkout'; Text = $futureConsumerWithoutCheckout },
+        @{ Name = 'checkout after artifact download'; Text = $futureConsumerWrongOrder },
+        @{ Name = 'checkout of a different revision'; Text = $futureConsumerWrongRevision }
+    )) {
+        $rejected = $false
+        try {
+            $null = Assert-ArtifactScriptConsumersHaveSource -Workflows @(@{ Name = 'future.yml'; Text = $case.Text })
+        }
+        catch { $rejected = $true }
+        if (-not $rejected) { throw "Workflow contract accepted a future consumer with $($case.Name)." }
+    }
+
+    $futureConsumer = @(Assert-ArtifactScriptConsumersHaveSource -Workflows @(@{ Name = 'future.yml'; Text = $futureConsumerWithSource }) -RequiredConsumerNames @('future.yml/future-consumer'))
+    if ($futureConsumer.Count -ne 1 -or $futureConsumer[0].Scripts -notcontains $script) {
+        throw 'Workflow contract did not enumerate a future artifact-consuming repository-script job.'
+    }
+}
+
 try {
     $projectText = Get-Content -LiteralPath $projectFile -Raw
     $versionMatch = [regex]::Match($projectText, '<Version>\s*(?<version>[^<]+?)\s*</Version>', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
@@ -82,6 +222,17 @@ try {
     if (-not (Test-Path -LiteralPath $releaseWorkflowPath -PathType Leaf)) { throw 'Release workflow is missing.' }
     $ciWorkflow = Get-Content -LiteralPath $ciWorkflowPath -Raw
     $releaseWorkflow = Get-Content -LiteralPath $releaseWorkflowPath -Raw
+    $workflowInputs = @(Get-ChildItem -LiteralPath $workflowDirectory -File | Where-Object { $_.Extension -in @('.yml', '.yaml') } | Sort-Object Name | ForEach-Object {
+        @{ Name = $_.Name; Text = Get-Content -LiteralPath $_.FullName -Raw }
+    })
+    $artifactScriptConsumers = @(Assert-ArtifactScriptConsumersHaveSource -Workflows $workflowInputs -RequiredConsumerNames @('release.yml/publish', 'release.yml/github-release'))
+    foreach ($consumerName in @('release.yml/publish', 'release.yml/github-release')) {
+        $consumer = @($artifactScriptConsumers | Where-Object { "$($_.Workflow)/$($_.Name)" -eq $consumerName })[0]
+        if ($consumer.Scripts -notcontains 'scripts/validate-release-artifact-set.ps1') {
+            throw "Artifact consumer '$consumerName' does not enumerate the release artifact validator script."
+        }
+    }
+    Assert-WorkflowScriptSourceRegressionCoverage
 
     foreach ($required in @(
         'push:',
@@ -306,6 +457,8 @@ try {
     [IO.File]::WriteAllText($mismatchedChangelog, "# Changelog`n`n## [Unreleased]`n`n## [9.9.9] - 2026-09-22`n`n- Wrong version.`n", [Text.UTF8Encoding]::new($false))
     Assert-ValidationRejects 'changelog/version disagreement' (Invoke-ReleaseValidation -Version $version -ChangelogPath $mismatchedChangelog -RequireFinalized -FirstRelease)
 
+    $consumerSummary = @($artifactScriptConsumers | ForEach-Object { "$($_.Workflow)/$($_.Name) [$($_.Scripts -join ', ')]" }) -join '; '
+    Write-Output "PASS: artifact-consuming repository-script jobs are covered: $consumerSummary. Future jobs without same-commit source checkout are rejected."
     Write-Output 'PASS: one validated version reaches package and release artifact checks; empty, malformed, mismatched, missing, extra, and case-mismatched artifact sets are rejected.'
 }
 finally {

@@ -31,7 +31,7 @@ The packable CLI requires the repository-root `icon.png`. Packing fails with an 
 
 ## Release version and artifacts
 
-For a tagged release, the version from `v<version>` is validated against the packable project's version and the finalized changelog before it becomes the release workflow's version output. The workflow passes that same value into the local package gate, exact `.nupkg`/`.snupkg` validation, NuGet publish job, and GitHub Release job. Each downloaded artifact set is checked again before OIDC authentication or release creation; missing, invalid, or mismatched versions and any extra or missing artifact stop the workflow.
+For a tagged release, the version from `v<version>` is validated against the packable project's version and the finalized changelog before it becomes the release workflow's version output. The workflow passes that same value into the local package gate, exact `.nupkg`/`.snupkg` validation, NuGet publish job, and GitHub Release job. Each downstream job that downloads artifacts and invokes a repository script checks out `github.sha` before downloading, so the validation script is available from the same tagged commit. Each downloaded artifact set is checked again before OIDC authentication or release creation; missing, invalid, or mismatched versions and any extra or missing artifact stop the workflow.
 
 The local gate derives its expected package version from the evaluated packable project unless a validated release version is supplied with `-ExpectedVersion`.
 

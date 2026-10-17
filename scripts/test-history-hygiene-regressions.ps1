@@ -1,4 +1,8 @@
+param([string[]] $Cases = @())
+
 $ErrorActionPreference = 'Stop'
+$script:executedCaseCount = 0
+$script:selectedCases = @($Cases | ForEach-Object { $_ -split ',' } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
 . (Join-Path $PSScriptRoot '../build/Invoke-NestedPwsh.ps1')
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -8,6 +12,10 @@ $scratch = Join-Path $scratchParent ('packagesurface-hygiene-' + [Guid]::NewGuid
 
 function Convert-CodePoints([int[]] $points) {
     return -join ($points | ForEach-Object { [char]$_ })
+}
+
+function Test-SelectedCase([string] $Name) {
+    return $script:selectedCases.Count -eq 0 -or $script:selectedCases -contains $Name
 }
 
 function Invoke-External {
@@ -51,11 +59,21 @@ function New-Repository {
     [IO.File]::WriteAllText((Join-Path $Path 'tracked.txt'), $content)
     Invoke-External 'git' @('-C', $Path, 'add', '--', 'tracked.txt') | Out-Null
     $message = if ($WithTaskId) { 'fixture ' + ('A' + 'BC' + '-' + '1' + '234') } else { $CommitSubject }
-    $commitArguments = @('-C', $Path, 'commit', '--quiet', '-m', $message)
+    $messageParts = [System.Collections.Generic.List[string]]::new()
+    $messageParts.Add($message)
     if (-not [string]::IsNullOrWhiteSpace($CommitBody)) {
-        $commitArguments += @('-m', $CommitBody)
+        $messageParts.Add($CommitBody)
     }
-    Invoke-External 'git' $commitArguments | Out-Null
+    $messagePath = $Path + '.commit-message'
+    try {
+        [IO.File]::WriteAllText($messagePath, [string]::Join("`n`n", $messageParts), [Text.UTF8Encoding]::new($false))
+        Invoke-External 'git' @('-C', $Path, 'commit', '--quiet', '--file', $messagePath) | Out-Null
+    }
+    finally {
+        if (Test-Path -LiteralPath $messagePath) {
+            Remove-Item -LiteralPath $messagePath -Force
+        }
+    }
     if ($TwoCommits) {
         [IO.File]::AppendAllText((Join-Path $Path 'tracked.txt'), [Environment]::NewLine + 'second')
         Invoke-External 'git' @('-C', $Path, 'add', '--', 'tracked.txt') | Out-Null
@@ -225,6 +243,8 @@ function Invoke-Gate {
 function Assert-ExpectedFailure {
     param([string] $Name, [string] $Path, [string] $ExpectedText, [string] $PathPrefix, [string] $Scenario, [hashtable] $Limits)
 
+    if (-not (Test-SelectedCase $Name)) { return }
+    $script:executedCaseCount++
     $stopwatch = [Diagnostics.Stopwatch]::StartNew()
     $result = Invoke-Gate $Path $PathPrefix $Scenario $Limits
     $stopwatch.Stop()
@@ -243,6 +263,8 @@ function Assert-ExpectedFailure {
 function Assert-ExpectedPass {
     param([string] $Name, [string] $Path, [hashtable] $Limits)
 
+    if (-not (Test-SelectedCase $Name)) { return }
+    $script:executedCaseCount++
     $result = Invoke-Gate $Path '' $Name $Limits
     Write-Output "CASE: $Name"
     Write-Output "EXIT_CODE: $($result.ExitCode)"
@@ -425,6 +447,10 @@ exit 128
         @{ Name = 'mixed-punctuation'; Separator = $underscore + $hyphen + $slash + $dot },
         @{ Name = 'lf'; Separator = $lineFeed },
         @{ Name = 'crlf'; Separator = $carriageReturn + $lineFeed },
+        @{ Name = 'cr'; Separator = $carriageReturn },
+        @{ Name = 'double-crlf'; Separator = $carriageReturn + $lineFeed + $carriageReturn + $lineFeed },
+        @{ Name = 'mixed-crlf-lf'; Separator = $carriageReturn + $lineFeed + $lineFeed },
+        @{ Name = 'mixed-lf-crlf'; Separator = $lineFeed + $carriageReturn + $lineFeed },
         @{ Name = 'double-line'; Separator = $lineFeed + $lineFeed },
         @{ Name = 'mixed-case'; Separator = $space; MixedCase = $true },
         @{ Name = 'leading-trailing'; Separator = $space; LeadingTrailing = $true }
@@ -471,13 +497,14 @@ exit 128
             }
         }
     }
-    if ($matrixCases.Count -ne 104) {
+    if ($matrixCases.Count -ne 128) {
         throw "Unexpected hygiene matrix size: $($matrixCases.Count)."
     }
 
     foreach ($matrixCase in $matrixCases) {
         $marker = New-CaseMarker $matrixCase.Pair $matrixCase.SeparatorCase
         $caseName = "matrix-$($matrixCase.Pair.Name)-$($matrixCase.Location)-$($matrixCase.SeparatorCase.Name)"
+        if (-not (Test-SelectedCase $caseName)) { continue }
         $caseRoot = Join-Path $scratch $caseName
         switch ($matrixCase.Location) {
             'subject' { New-Repository $caseRoot -CommitSubject ('fixture ' + $marker) }
@@ -634,6 +661,9 @@ exit 128
     New-Repository $taskIdRoot -WithTaskId
     Assert-ExpectedFailure 'history-task-identifier' $taskIdRoot 'history task identifier' ''
 
+    if ($script:selectedCases.Count -gt 0 -and $script:executedCaseCount -eq 0) {
+        throw 'No hygiene regression cases matched the selected names.'
+    }
     Write-Output 'PASS: hygiene gate rejects command failure, shallow history, metadata markers, historical-tree markers, and task identifiers in disposable repositories.'
     exit 0
 }

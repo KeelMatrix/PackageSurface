@@ -15,7 +15,9 @@ if (-not $PSBoundParameters.ContainsKey('ExpectedVersion')) {
     $ExpectedVersion = $versionMatch.Groups['version'].Value.Trim()
 }
 if ([string]::IsNullOrWhiteSpace($ExpectedVersion)) { throw 'Expected package version must not be empty.' }
-& (Join-Path $root 'scripts/validate-release.ps1') -Version $ExpectedVersion
+Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/validate-release.ps1') -Version $ExpectedVersion
+$releaseContractExitCode = $LASTEXITCODE
+if ($releaseContractExitCode -ne 0) { throw "Release version validation failed with exit code $releaseContractExitCode." }
 $launchGuard = Join-Path $root 'build/Test-NestedPwshLaunch.ps1'
 & $launchGuard -SelfTest
 if ($LASTEXITCODE -ne 0) { throw 'Nested PowerShell launch guard self-test failed.' }

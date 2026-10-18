@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory)] [string] $PackagePath,
-    [Parameter(Mandatory)] [string] $ArtifactDirectory
+    [Parameter(Mandatory)] [string] $ArtifactDirectory,
+    [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string] $ExpectedVersion
 )
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -50,7 +51,7 @@ try {
     try { $archive.GetEntry($requiredToolFiles[0]).Delete() } finally { $archive.Dispose() }
     try { Assert-Package $missingTool; throw 'Missing required package file was accepted.' } catch [System.Exception] { if ($_.Exception.Message -eq 'Missing required package file was accepted.') { throw } }
 
-    $extraPackage = Join-Path $ArtifactDirectory 'KeelMatrix.PackageSurface.0.1.0.extra.nupkg'
+    $extraPackage = Join-Path $ArtifactDirectory "KeelMatrix.PackageSurface.$ExpectedVersion.extra.nupkg"
     Copy-Item -LiteralPath $PackagePath -Destination $extraPackage
     $artifactNames = @(Get-ChildItem -LiteralPath $ArtifactDirectory -File | Where-Object Extension -eq '.nupkg')
     if ($artifactNames.Count -ne 2) { throw 'Extra package artifact was not detected.' }
@@ -59,6 +60,6 @@ try {
 }
 finally {
     if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force }
-    $extraPackage = Join-Path $ArtifactDirectory 'KeelMatrix.PackageSurface.0.1.0.extra.nupkg'
+    $extraPackage = Join-Path $ArtifactDirectory "KeelMatrix.PackageSurface.$ExpectedVersion.extra.nupkg"
     if (Test-Path -LiteralPath $extraPackage) { Remove-Item -LiteralPath $extraPackage -Force }
 }

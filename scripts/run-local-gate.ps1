@@ -1,10 +1,21 @@
 param(
-    [string] $ArtifactDirectory
+    [string] $ArtifactDirectory,
+    [ValidateNotNullOrEmpty()]
+    [string] $ExpectedVersion
 )
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../build/Invoke-NestedPwsh.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$cliProject = Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/KeelMatrix.PackageSurface.Cli.csproj'
+if (-not $PSBoundParameters.ContainsKey('ExpectedVersion')) {
+    $projectText = Get-Content -LiteralPath $cliProject -Raw
+    $versionMatch = [regex]::Match($projectText, '<Version>\s*(?<version>[^<]+?)\s*</Version>', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if (-not $versionMatch.Success) { throw 'The packable CLI project has no explicit package version.' }
+    $ExpectedVersion = $versionMatch.Groups['version'].Value.Trim()
+}
+if ([string]::IsNullOrWhiteSpace($ExpectedVersion)) { throw 'Expected package version must not be empty.' }
+& (Join-Path $root 'scripts/validate-release.ps1') -Version $ExpectedVersion
 $launchGuard = Join-Path $root 'build/Test-NestedPwshLaunch.ps1'
 & $launchGuard -SelfTest
 if ($LASTEXITCODE -ne 0) { throw 'Nested PowerShell launch guard self-test failed.' }
@@ -145,7 +156,6 @@ try {
 
     $singleProject = Join-Path $root 'fixtures/consumer/SingleTarget'
     $singleAssets = Join-Path $singleProject 'obj/project.assets.json'
-    $cliProject = Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/KeelMatrix.PackageSurface.Cli.csproj'
     $feed = $artifactRoot
     Get-ChildItem -LiteralPath $feed -File -ErrorAction SilentlyContinue |
         Where-Object { $_.Extension -in '.nupkg', '.snupkg' } |
@@ -159,11 +169,11 @@ try {
         Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-public-wording.ps1') -RepositoryRoot $root -PackagePath $nupkg.FullName
     }
 
-    $packageVersion = '0.1.0'
+    $packageVersion = $ExpectedVersion
     $allArtifacts = @(Get-ChildItem -LiteralPath $feed -File)
     $expectedArtifactNames = @("KeelMatrix.PackageSurface.$packageVersion.nupkg", "KeelMatrix.PackageSurface.$packageVersion.snupkg")
     $actualArtifactNames = @($allArtifacts | Select-Object -ExpandProperty Name | Sort-Object)
-    if (@(Compare-Object ($expectedArtifactNames | Sort-Object) $actualArtifactNames).Count -ne 0) { throw ('The package output set is not exact: ' + ($actualArtifactNames -join ', ')) }
+    if (@(Compare-Object -CaseSensitive ($expectedArtifactNames | Sort-Object) $actualArtifactNames).Count -ne 0) { throw ('The package output set is not exact: ' + ($actualArtifactNames -join ', ')) }
     $nupkgs = @($allArtifacts | Where-Object Name -eq "KeelMatrix.PackageSurface.$packageVersion.nupkg")
     $snupkgs = @($allArtifacts | Where-Object Name -eq "KeelMatrix.PackageSurface.$packageVersion.snupkg")
 
@@ -233,7 +243,7 @@ try {
     }
 
     Invoke-GateStep 'package-content negative regressions' {
-        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-package-content-gate.ps1') -PackagePath $nupkgs[0].FullName -ArtifactDirectory $feed
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-package-content-gate.ps1') -PackagePath $nupkgs[0].FullName -ArtifactDirectory $feed -ExpectedVersion $packageVersion
     }
 
     Invoke-GateStep 'sensitive/local pack-input regressions' {
@@ -272,7 +282,7 @@ try {
     [IO.File]::WriteAllText($toolConfig, $toolXml, [Text.UTF8Encoding]::new($false))
     New-Item -ItemType Directory -Force -Path $toolRoot | Out-Null
     Invoke-GateStep 'isolated tool install' {
-        & dotnet tool install --tool-path $toolRoot --configfile $toolConfig --no-cache KeelMatrix.PackageSurface --version 0.1.0
+        & dotnet tool install --tool-path $toolRoot --configfile $toolConfig --no-cache KeelMatrix.PackageSurface --version $packageVersion
     }
     $toolName = if ($IsWindows) { 'package-surface.exe' } else { 'package-surface' }
     $tool = Join-Path $toolRoot $toolName

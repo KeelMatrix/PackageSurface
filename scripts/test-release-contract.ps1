@@ -38,6 +38,21 @@ function Invoke-ReleaseValidation {
     return $LASTEXITCODE
 }
 
+function Invoke-LocalGateVersionValidation {
+    param([AllowEmptyString()] [string] $Version)
+
+    $arguments = @(
+        '-NoLogo',
+        '-NoProfile',
+        '-File',
+        $localGatePath,
+        '-ExpectedVersion',
+        $Version
+    )
+    $null = Invoke-NestedPwsh -ArgumentList $arguments 2>$null
+    return $LASTEXITCODE
+}
+
 function Assert-ValidationPass {
     param([Parameter(Mandatory)] [string] $Name, [Parameter(Mandatory)] [int] $ExitCode)
     if ($ExitCode -ne 0) { throw "Release-contract case '$Name' failed with exit code $ExitCode." }
@@ -339,6 +354,9 @@ try {
         }
     }
     $currentScriptConsumers = @($currentArtifactConsumers | Where-Object { $_.ScriptPaths.Count -gt 0 } | ForEach-Object Name)
+    if ($currentScriptConsumers.Count -gt 0) {
+        throw "Downstream artifact jobs must not call tracked repository scripts on clean runners: $($currentScriptConsumers -join ', ')."
+    }
     Write-Output "RELEASE_ARTIFACT_CONSUMERS=$($currentArtifactConsumerNames -join ',')"
     Write-Output "RELEASE_SCRIPT_ARTIFACT_CONSUMERS=$(if ($currentScriptConsumers.Count -eq 0) { '<none>' } else { $currentScriptConsumers -join ',' })"
 
@@ -545,7 +563,7 @@ jobs:
         'actions/download-artifact@v4',
         'KEELMATRIX_TELEMETRY: ''off''',
         './scripts/validate-release.ps1 -Version $version -RequireFinalized -FirstRelease',
-        './scripts/run-local-gate.ps1 -ArtifactDirectory artifacts/release',
+        './scripts/run-local-gate.ps1 -ArtifactDirectory artifacts/release -ExpectedVersion $version',
         'path: artifacts/release/*',
         'NuGet/login@v1',
         'user: dmitriyzen',
@@ -554,20 +572,63 @@ jobs:
         'dotnet nuget push',
         'gh release create',
         '--verify-tag',
-        '--repo "${{ github.repository }}"'
+        '--repo "$RELEASE_REPOSITORY"',
+        '[IO.File]::AppendAllText($env:GITHUB_OUTPUT',
+        'version=$version',
+        'RELEASE_VERSION: ${{ steps.release_contract.outputs.version }}',
+        'RELEASE_VERSION: ${{ needs.validate.outputs.version }}',
+        'if ([string]::IsNullOrWhiteSpace($version))',
+        'if ($env:RELEASE_TAG -cne "v$version")',
+        'Validate package set before NuGet authentication',
+        'Downloaded release artifact set is not exact',
+        'expected_package="KeelMatrix.PackageSurface.$RELEASE_VERSION.nupkg"',
+        'RELEASE_REPOSITORY: ${{ github.repository }}'
     )) {
         if (-not $releaseWorkflow.Contains($required, [StringComparison]::Ordinal)) { throw "Release workflow is missing '$required'." }
     }
+    $validatedOutputMapping = 'RELEASE_VERSION: ${{ needs.validate.outputs.version }}'
+    if ([regex]::Matches($releaseWorkflow, [regex]::Escape($validatedOutputMapping)).Count -ne 2) {
+        throw 'NuGet publish and GitHub Release must both receive the validated job output.'
+    }
     if ($releaseWorkflow.Contains("PACKAGE_VERSION:", [StringComparison]::Ordinal)) { throw 'Release workflow maintains a second hard-coded package-version definition.' }
+    if (-not $releaseWorkflow.Contains('steps.release_contract.outputs.version', [StringComparison]::Ordinal)) {
+        throw 'Artifact validation does not receive the release-contract step output.'
+    }
     if ($releaseWorkflow.Contains('run-phase0.ps1', [StringComparison]::Ordinal)) { throw 'Release workflow runs a mutating standalone Phase 0 step.' }
     if ($releaseWorkflow -match '(?m)dotnet\s+run\s+--project\s+tests/') { throw 'Release workflow duplicates console leaf tests beside the canonical gate.' }
     if ($releaseWorkflow -match '(?m)^\s*run:\s*dotnet\s+pack\b') { throw 'Release workflow repacks a separately validated artifact.' }
     if ($releaseWorkflow -notmatch '(?s)validate:.*outputs:.*version:.*release_contract') { throw 'Release workflow does not pass the validated tag version to downstream jobs.' }
     if ($releaseWorkflow -notmatch '(?s)publish:.*needs:\s*validate.*NuGet/login@v1') { throw 'Publish does not depend on validation and Trusted Publishing.' }
     if ($releaseWorkflow -notmatch '(?s)github-release:.*needs:\s*\[validate, publish\]') { throw 'GitHub Release is not ordered after validation and publication.' }
+    $publishValidationIndex = $releaseWorkflow.IndexOf('Validate package set before NuGet authentication', [StringComparison]::Ordinal)
+    $nugetLoginIndex = $releaseWorkflow.IndexOf('uses: NuGet/login@v1', [StringComparison]::Ordinal)
+    if ($publishValidationIndex -lt 0 -or $nugetLoginIndex -lt 0 -or $publishValidationIndex -ge $nugetLoginIndex) {
+        throw 'Downloaded artifacts must be validated before NuGet Trusted Publishing authentication.'
+    }
+    $publishPreflight = $releaseWorkflow.Substring($publishValidationIndex, $nugetLoginIndex - $publishValidationIndex)
+    if (-not $publishPreflight.Contains('if ([string]::IsNullOrWhiteSpace($version))', [StringComparison]::Ordinal) -or
+        -not $publishPreflight.Contains('if ($env:RELEASE_TAG -cne "v$version")', [StringComparison]::Ordinal)) {
+        throw 'NuGet authentication must be preceded by empty-version and tag-version checks.'
+    }
+    if (-not $releaseWorkflow.Contains('if [[ "$RELEASE_TAG" != "v$RELEASE_VERSION" ]]', [StringComparison]::Ordinal) -or
+        $releaseWorkflow.IndexOf('if [[ "$RELEASE_TAG" != "v$RELEASE_VERSION" ]]', [StringComparison]::Ordinal) -ge
+        $releaseWorkflow.IndexOf('gh release create', [StringComparison]::Ordinal)) {
+        throw 'GitHub Release must reject an empty or tag-mismatched version before release creation.'
+    }
 
     $localGate = Get-Content -LiteralPath $localGatePath -Raw
-    foreach ($requiredGate in @('scripts/test-release-contract.ps1', 'scripts/test-vulnerability-audit.ps1', 'validate-package-artifact.ps1', 'dotnet pack')) {
+    foreach ($requiredGate in @(
+        'scripts/test-release-contract.ps1',
+        'scripts/test-vulnerability-audit.ps1',
+        'validate-package-artifact.ps1',
+        'dotnet pack',
+        '[string] $ExpectedVersion',
+        'scripts/validate-release.ps1',
+        '$packageVersion = $ExpectedVersion',
+        '--version $packageVersion',
+        '-ExpectedVersion $packageVersion',
+        'Compare-Object -CaseSensitive'
+    )) {
         if (-not $localGate.Contains($requiredGate, [StringComparison]::Ordinal)) { throw "Canonical local gate is missing '$requiredGate'." }
     }
     if ($localGate -notmatch '(?s)finally\s*\{.*\$scratch') { throw 'Canonical local gate does not clean run-owned scratch state in finally.' }
@@ -576,6 +637,20 @@ jobs:
     # The finalized repository changelog must pass both candidate and first-release tag validation.
     Assert-ValidationPass 'real finalized candidate' (Invoke-ReleaseValidation -Version $version -ChangelogPath $realChangelog)
     Assert-ValidationPass 'real finalized first-release tag gate' (Invoke-ReleaseValidation -Version $version -ChangelogPath $realChangelog -RequireFinalized -FirstRelease)
+    Assert-ValidationRejects 'local gate empty expected version' (Invoke-LocalGateVersionValidation -Version '')
+    Assert-ValidationRejects 'local gate whitespace expected version' (Invoke-LocalGateVersionValidation -Version ' ')
+    Assert-ValidationRejects 'local gate mismatched expected version' (Invoke-LocalGateVersionValidation -Version '9.9.9')
+
+    $workflowOutputPath = Join-Path $scratch 'github-output'
+    $serializedOutput = 'version=' + $version + [Environment]::NewLine
+    [IO.File]::AppendAllText($workflowOutputPath, $serializedOutput, [Text.UTF8Encoding]::new($false))
+    $workflowOutputBytes = [IO.File]::ReadAllBytes($workflowOutputPath)
+    if ($workflowOutputBytes.Length -ge 3 -and $workflowOutputBytes[0] -eq 239 -and $workflowOutputBytes[1] -eq 187 -and $workflowOutputBytes[2] -eq 191) {
+        throw 'GitHub Actions release output must be written without a UTF-8 byte-order mark.'
+    }
+    if ([IO.File]::ReadAllText($workflowOutputPath) -cne $serializedOutput) {
+        throw 'Release-contract output does not serialize the validated version exactly.'
+    }
 
     $missingUnreleasedChangelog = Join-Path $scratch 'CHANGELOG.missing-unreleased.md'
     $missingUnreleasedFirstRelease = "# Changelog`n`n## [$version] - $releaseDate`n`n### Added`n`n- Initial release capability review.`n"

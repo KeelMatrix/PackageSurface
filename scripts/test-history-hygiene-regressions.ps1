@@ -51,11 +51,22 @@ function New-Repository {
     [IO.File]::WriteAllText((Join-Path $Path 'tracked.txt'), $content)
     Invoke-External 'git' @('-C', $Path, 'add', '--', 'tracked.txt') | Out-Null
     $message = if ($WithTaskId) { 'fixture ' + ('A' + 'BC' + '-' + '1' + '234') } else { $CommitSubject }
-    $commitArguments = @('-C', $Path, 'commit', '--quiet', '-m', $message)
+    $messageParts = [Collections.Generic.List[string]]::new()
+    $messageParts.Add($message)
     if (-not [string]::IsNullOrWhiteSpace($CommitBody)) {
-        $commitArguments += @('-m', $CommitBody)
+        $messageParts.Add($CommitBody)
     }
-    Invoke-External 'git' $commitArguments | Out-Null
+    $messagePath = $Path + '.commit-message'
+    try {
+        $separator = [string]([char]10)
+        [IO.File]::WriteAllText($messagePath, [string]::Join($separator + $separator, $messageParts), [Text.UTF8Encoding]::new($false))
+        Invoke-External 'git' @('-C', $Path, 'commit', '--quiet', '--file', $messagePath) | Out-Null
+    }
+    finally {
+        if (Test-Path -LiteralPath $messagePath) {
+            Remove-Item -LiteralPath $messagePath -Force
+        }
+    }
     if ($TwoCommits) {
         [IO.File]::AppendAllText((Join-Path $Path 'tracked.txt'), [Environment]::NewLine + 'second')
         Invoke-External 'git' @('-C', $Path, 'add', '--', 'tracked.txt') | Out-Null

@@ -395,7 +395,9 @@ function Assert-ArtifactScriptConsumersHaveSource {
                         Get-WorkflowScalarValue -Value $checkout.With['path'] -Context "job '$($workflow.Name)/$($job.Name)' checkout path"
                     }
                     else { '.' }
-                    if ($checkoutPath -notin @('.', './', '.\')) { $checkoutFailures.Add("checkout path '$checkoutPath' is not the workspace root"); continue }
+                    # Keep accepted spellings portable across Windows and POSIX runners.
+                    # Backslashes and mixed separators can resolve to child paths on POSIX.
+                    if ($checkoutPath -notin @('.', './', './.')) { $checkoutFailures.Add("checkout path '$checkoutPath' is not a portable workspace-root path"); continue }
 
                     $checkoutRepository = if ($checkout.With.ContainsKey('repository')) {
                         Get-WorkflowScalarValue -Value $checkout.With['repository'] -Context "job '$($workflow.Name)/$($job.Name)' checkout repository"

@@ -161,6 +161,10 @@ function Assert-WorkflowScriptSourceRegressionCoverage {
 
     if ($CurrentConsumers.Count -eq 0) { throw 'Regression coverage requires at least one discovered artifact-consuming script job.' }
     $script = [string]$CurrentConsumers[0].Scripts[0]
+    $backslash = [string][char]92
+    $dotBackslash = '.' + $backslash
+    $slashBackslash = './' + $backslash
+    $dotBackslashDotSlash = $dotBackslash + './'
 
     $fourSpaceJob = New-WorkflowScriptConsumerFixture -ScriptPath $script -JobIndent 4
     $fourSpaceResult = @(Assert-ArtifactScriptConsumersHaveSource -Workflows @(@{ Name = 'four-space.yml'; Text = $fourSpaceJob }) -RepositoryRoot $RepositoryRoot)
@@ -168,12 +172,31 @@ function Assert-WorkflowScriptSourceRegressionCoverage {
         throw 'A valid four-space-indented job must be discovered and its tracked script validated.'
     }
 
-    $quotedUses = New-WorkflowScriptConsumerFixture -ScriptPath $script -CheckoutUses "'actions/checkout@v4'" -CheckoutPath "'.'"
+    foreach ($rootPath in @('.', './', './.')) {
+        $scalars = [Collections.Generic.List[string]]::new()
+        $scalars.Add($rootPath)
+        $scalars.Add("'" + $rootPath + "'")
+        $scalars.Add('"' + $rootPath + '"')
+        foreach ($scalar in $scalars) {
+            $rootFixture = New-WorkflowScriptConsumerFixture -ScriptPath $script -CheckoutPath $scalar
+            $rootResult = @(Assert-ArtifactScriptConsumersHaveSource -Workflows @(@{ Name = 'portable-root.yml'; Text = $rootFixture }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('portable-root.yml/future-consumer'))
+            if ($rootResult.Count -ne 1 -or $rootResult[0].Scripts -notcontains $script) {
+                throw "Portable workspace-root checkout scalar '$scalar' was rejected."
+            }
+        }
+    }
+
+    $quotedUses = New-WorkflowScriptConsumerFixture -ScriptPath $script -CheckoutUses "'actions/checkout@v4'" -CheckoutPath "'./.'"
     $quotedResult = @(Assert-ArtifactScriptConsumersHaveSource -Workflows @(@{ Name = 'quoted-uses.yml'; Text = $quotedUses }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('quoted-uses.yml/future-consumer'))
-    if ($quotedResult.Count -ne 1 -or $quotedResult[0].Scripts -notcontains $script) { throw 'Quoted action uses and a quoted workspace-root path must pass.' }
+    if ($quotedResult.Count -ne 1 -or $quotedResult[0].Scripts -notcontains $script) { throw 'Quoted action uses and a quoted portable workspace-root path must pass.' }
 
     $rejectedCases = @(
+        @{ Name = 'dot plus backslash checkout path'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -CheckoutPath ("'" + $dotBackslash + "'")) },
+        @{ Name = 'mixed-separator checkout path'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -CheckoutPath ("'" + $slashBackslash + "'")) },
+        @{ Name = 'mixed-separator dot checkout path'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -CheckoutPath ("'" + $dotBackslashDotSlash + "'")) },
         @{ Name = 'checkout into a subdirectory'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -CheckoutPath 'source') },
+        @{ Name = 'quoted checkout into a subdirectory'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -CheckoutPath "'./source'") },
+        @{ Name = 'checkout path that normalizes through a subdirectory'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -CheckoutPath 'source/..') },
         @{ Name = 'conditional checkout'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -ConditionalCheckout) },
         @{ Name = 'checkout after artifact download'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -CheckoutOrder 'after-download') },
         @{ Name = 'checkout after script invocation'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -CheckoutOrder 'after-script') },

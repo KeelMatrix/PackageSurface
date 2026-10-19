@@ -8,6 +8,7 @@
 - `scripts/run-phase0.ps1` builds the permanent fixture corpus, restores consumers, runs the classifier, and writes evidence.
 - `scripts/run-local-gate.ps1` is the validation entrypoint for restore, fixture coverage, formatting, Release build, no-execution proof, package inspection, vulnerability policy, installed-tool smoke, and consumer regressions.
 - `scripts/validate-release.ps1` is the shared package-version/changelog contract used by local checks before an approved release.
+- `scripts/ReleaseWorkflowSourceGuard.ps1` is the restricted workflow reader used by release-contract regressions to enumerate artifact-consuming jobs that invoke tracked scripts; unsupported workflow forms fail closed.
 - `tools/NoExecutionProof/` checks the compiled classifier for forbidden execution, MSBuild, and network references.
 
 ## Commands

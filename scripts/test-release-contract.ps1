@@ -72,146 +72,155 @@ function New-ArtifactSetDirectory {
     return $directory
 }
 
-function Get-WorkflowJobs {
-    param([Parameter(Mandatory)] [string] $WorkflowText)
+. (Join-Path $PSScriptRoot 'ReleaseWorkflowSourceGuard.ps1')
 
-    $jobsSection = [regex]::Match($WorkflowText, '(?ms)^jobs:\s*\r?\n(?<jobs>.*?)(?=^[^\s#][^:\r\n]*:\s*(?:#.*)?\r?$|\z)')
-    if (-not $jobsSection.Success) { throw 'Workflow has no jobs section.' }
+function Add-WorkflowFixtureCheckout {
+    param(
+        [System.Collections.Generic.List[string]] $Lines,
+        [int] $SequenceIndent,
+        [int] $FieldIndent,
+        [string] $CheckoutUses,
+        [string] $CheckoutRepository,
+        [switch] $IncludeCheckoutRepository,
+        [string] $CheckoutPath,
+        [switch] $IncludeCheckoutPath,
+        [string] $CheckoutRef,
+        [switch] $ConditionalCheckout
+    )
 
-    $jobMatches = [regex]::Matches($jobsSection.Groups['jobs'].Value, '(?ms)^  (?<name>[A-Za-z0-9_-]+):[^\r\n]*\r?\n(?<body>.*?)(?=^  [A-Za-z0-9_-]+:[^\r\n]*\r?$|\z)')
-    foreach ($jobMatch in $jobMatches) {
-        [pscustomobject]@{ Name = $jobMatch.Groups['name'].Value; Body = $jobMatch.Groups['body'].Value }
+    $Lines.Add((' ' * $SequenceIndent) + '- name: Check out source')
+    $Lines.Add((' ' * $FieldIndent) + 'uses: ' + $CheckoutUses)
+    if ($ConditionalCheckout) { $Lines.Add((' ' * $FieldIndent) + 'if: ${{ always() }}') }
+    $Lines.Add((' ' * $FieldIndent) + 'with:')
+    if ($IncludeCheckoutRepository) { $Lines.Add((' ' * ($FieldIndent + 2)) + 'repository: ' + $CheckoutRepository) }
+    if ($IncludeCheckoutPath) { $Lines.Add((' ' * ($FieldIndent + 2)) + 'path: ' + $CheckoutPath) }
+    $Lines.Add((' ' * ($FieldIndent + 2)) + 'ref: ' + $CheckoutRef)
+}
+
+function Add-WorkflowFixtureDownload {
+    param([System.Collections.Generic.List[string]] $Lines, [int] $SequenceIndent, [int] $FieldIndent)
+
+    $Lines.Add((' ' * $SequenceIndent) + '- name: Download packages')
+    $Lines.Add((' ' * $FieldIndent) + "uses: 'actions/download-artifact@v4'")
+}
+
+function Add-WorkflowFixtureScripts {
+    param([System.Collections.Generic.List[string]] $Lines, [int] $SequenceIndent, [int] $FieldIndent, [string[]] $ScriptPaths)
+
+    $Lines.Add((' ' * $SequenceIndent) + '- name: Validate packages')
+    $Lines.Add((' ' * $FieldIndent) + 'run: |')
+    foreach ($currentScript in $ScriptPaths) {
+        $Lines.Add((' ' * ($FieldIndent + 2)) + 'pwsh -NoLogo -NoProfile -File ./' + $currentScript)
     }
 }
 
-function Assert-ArtifactScriptConsumersHaveSource {
+function New-WorkflowScriptConsumerFixture {
     param(
-        [Parameter(Mandatory)] [object[]] $Workflows,
-        [string[]] $RequiredConsumerNames = @()
+        [string] $ScriptPath,
+        [string[]] $ScriptPaths = @(),
+        [string] $JobName = 'future-consumer',
+        [int] $JobIndent = 2,
+        [string] $CheckoutUses = 'actions/checkout@v4',
+        [string] $CheckoutRepository,
+        [string] $CheckoutPath,
+        [string] $CheckoutRef = '${{ github.sha }}',
+        [switch] $ConditionalCheckout,
+        [switch] $OmitCheckout,
+        [ValidateSet('before-download', 'after-download', 'after-script')]
+        [string] $CheckoutOrder = 'before-download'
     )
 
-    $consumers = [Collections.Generic.List[object]]::new()
-    $scriptPattern = '(?i)(?:\./|\.\\)?scripts[\\/](?<path>[A-Za-z0-9_.-]+(?:[\\/][A-Za-z0-9_.-]+)*\.(?:ps1|psm1|sh|bash|py|js|mjs|cjs|ts|rb|pl|php|r|csx|cmd|bat))'
-
-    foreach ($workflow in $Workflows) {
-        foreach ($job in @(Get-WorkflowJobs -WorkflowText $workflow.Text)) {
-            if ($job.Body -notmatch '(?im)^\s*uses:\s*actions/download-artifact@') { continue }
-
-            $scriptMatches = [regex]::Matches($job.Body, $scriptPattern)
-            if ($scriptMatches.Count -eq 0) { continue }
-
-            $checkoutIndex = $job.Body.IndexOf('uses: actions/checkout@', [StringComparison]::Ordinal)
-            $downloadIndex = $job.Body.IndexOf('uses: actions/download-artifact@', [StringComparison]::Ordinal)
-            $scriptIndex = $scriptMatches[0].Index
-            if ($checkoutIndex -lt 0 -or $downloadIndex -lt 0 -or $checkoutIndex -ge $downloadIndex -or $downloadIndex -ge $scriptIndex) {
-                throw "Artifact-consuming job '$($workflow.Name)/$($job.Name)' must check out source before downloading artifacts and invoking repository scripts."
-            }
-
-            $checkoutThroughDownload = $job.Body.Substring($checkoutIndex, $downloadIndex - $checkoutIndex)
-            if ($checkoutThroughDownload -notmatch '(?m)^\s*ref:\s*\$\{\{\s*github\.sha\s*\}\}\s*$') {
-                throw "Artifact-consuming job '$($workflow.Name)/$($job.Name)' must check out the workflow commit before invoking repository scripts."
-            }
-
-            $scriptPaths = [Collections.Generic.List[string]]::new()
-            foreach ($scriptMatch in $scriptMatches) {
-                $relativePath = ('scripts/' + $scriptMatch.Groups['path'].Value.Replace('\', '/'))
-                if ($relativePath -match '(^|/)\.\.?(/|$)') { throw "Repository script path is not normalized: $relativePath" }
-
-                $absolutePath = Join-Path $root ($relativePath.Replace('/', [IO.Path]::DirectorySeparatorChar))
-                if (-not (Test-Path -LiteralPath $absolutePath -PathType Leaf)) { throw "Artifact consumer invokes missing repository script '$relativePath'." }
-                $trackedPath = @(& git -C $root ls-files --error-unmatch -- $relativePath 2>$null)
-                if ($LASTEXITCODE -ne 0 -or $trackedPath.Count -ne 1) { throw "Artifact consumer script '$relativePath' is not tracked in the repository." }
-                $scriptPaths.Add($relativePath)
-            }
-
-            $consumers.Add([pscustomobject]@{
-                Name = $job.Name
-                Workflow = $workflow.Name
-                Scripts = @($scriptPaths | Sort-Object -Unique)
-            })
-        }
+    if ($ScriptPaths.Count -eq 0) { $ScriptPaths = @($ScriptPath) }
+    $lines = [Collections.Generic.List[string]]::new()
+    $lines.Add('jobs:')
+    $lines.Add((' ' * $JobIndent) + $JobName + ':')
+    $lines.Add((' ' * ($JobIndent + 2)) + 'steps:')
+    $sequenceIndent = $JobIndent + 4
+    $fieldIndent = $sequenceIndent + 2
+    $includeCheckoutRepository = $PSBoundParameters.ContainsKey('CheckoutRepository')
+    $includeCheckoutPath = $PSBoundParameters.ContainsKey('CheckoutPath')
+    if (-not $OmitCheckout -and $CheckoutOrder -eq 'before-download') {
+        Add-WorkflowFixtureCheckout -Lines $lines -SequenceIndent $sequenceIndent -FieldIndent $fieldIndent -CheckoutUses $CheckoutUses -CheckoutRepository $CheckoutRepository -IncludeCheckoutRepository:$includeCheckoutRepository -CheckoutPath $CheckoutPath -IncludeCheckoutPath:$includeCheckoutPath -CheckoutRef $CheckoutRef -ConditionalCheckout:$ConditionalCheckout
     }
-
-    foreach ($requiredName in $RequiredConsumerNames) {
-        if (-not @($consumers | Where-Object { "$($_.Workflow)/$($_.Name)" -eq $requiredName })) {
-            throw "Expected artifact-consuming repository-script job '$requiredName' was not enumerated."
-        }
+    Add-WorkflowFixtureDownload -Lines $lines -SequenceIndent $sequenceIndent -FieldIndent $fieldIndent
+    if (-not $OmitCheckout -and $CheckoutOrder -eq 'after-download') {
+        Add-WorkflowFixtureCheckout -Lines $lines -SequenceIndent $sequenceIndent -FieldIndent $fieldIndent -CheckoutUses $CheckoutUses -CheckoutRepository $CheckoutRepository -IncludeCheckoutRepository:$includeCheckoutRepository -CheckoutPath $CheckoutPath -IncludeCheckoutPath:$includeCheckoutPath -CheckoutRef $CheckoutRef -ConditionalCheckout:$ConditionalCheckout
     }
-
-    return $consumers.ToArray()
+    Add-WorkflowFixtureScripts -Lines $lines -SequenceIndent $sequenceIndent -FieldIndent $fieldIndent -ScriptPaths $ScriptPaths
+    if (-not $OmitCheckout -and $CheckoutOrder -eq 'after-script') {
+        Add-WorkflowFixtureCheckout -Lines $lines -SequenceIndent $sequenceIndent -FieldIndent $fieldIndent -CheckoutUses $CheckoutUses -CheckoutRepository $CheckoutRepository -IncludeCheckoutRepository:$includeCheckoutRepository -CheckoutPath $CheckoutPath -IncludeCheckoutPath:$includeCheckoutPath -CheckoutRef $CheckoutRef -ConditionalCheckout:$ConditionalCheckout
+    }
+    return ($lines -join [Environment]::NewLine)
 }
 
 function Assert-WorkflowScriptSourceRegressionCoverage {
-    $script = 'scripts/validate-release-artifact-set.ps1'
-    $futureConsumerWithoutCheckout = @'
-jobs:
-  future-consumer:
-    steps:
-      - name: Download packages
-        uses: actions/download-artifact@v4
-      - name: Validate packages
-        run: pwsh -NoLogo -NoProfile -File ./scripts/validate-release-artifact-set.ps1
-'@
-    $futureConsumerWrongOrder = @'
-jobs:
-  future-consumer:
-    steps:
-      - name: Download packages
-        uses: actions/download-artifact@v4
-      - name: Check out source
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-      - name: Validate packages
-        run: pwsh -NoLogo -NoProfile -File ./scripts/validate-release-artifact-set.ps1
-'@
-    $futureConsumerWrongRevision = @'
-jobs:
-  future-consumer:
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-        with:
-          ref: main
-      - name: Download packages
-        uses: actions/download-artifact@v4
-      - name: Validate packages
-        run: pwsh -NoLogo -NoProfile -File ./scripts/validate-release-artifact-set.ps1
-'@
-    $futureConsumerWithSource = @'
-jobs:
-  future-consumer:
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - name: Download packages
-        uses: actions/download-artifact@v4
-      - name: Validate packages
-        run: pwsh -NoLogo -NoProfile -File ./scripts/validate-release-artifact-set.ps1
-'@
+    param(
+        [Parameter(Mandatory)] [object[]] $CurrentConsumers,
+        [Parameter(Mandatory)] [string] $RepositoryRoot
+    )
 
-    foreach ($case in @(
-        @{ Name = 'no checkout'; Text = $futureConsumerWithoutCheckout },
-        @{ Name = 'checkout after artifact download'; Text = $futureConsumerWrongOrder },
-        @{ Name = 'checkout of a different revision'; Text = $futureConsumerWrongRevision }
-    )) {
+    if ($CurrentConsumers.Count -eq 0) { throw 'Regression coverage requires at least one discovered artifact-consuming script job.' }
+    $script = [string]$CurrentConsumers[0].Scripts[0]
+
+    $fourSpaceJob = New-WorkflowScriptConsumerFixture -ScriptPath $script -JobIndent 4
+    $fourSpaceResult = @(Assert-ArtifactScriptConsumersHaveSource -Workflows @(@{ Name = 'four-space.yml'; Text = $fourSpaceJob }) -RepositoryRoot $RepositoryRoot)
+    if ($fourSpaceResult.Count -ne 1 -or $fourSpaceResult[0].Scripts -notcontains $script) {
+        throw 'A valid four-space-indented job must be discovered and its tracked script validated.'
+    }
+
+    $quotedUses = New-WorkflowScriptConsumerFixture -ScriptPath $script -CheckoutUses "'actions/checkout@v4'" -CheckoutPath "'.'"
+    $quotedResult = @(Assert-ArtifactScriptConsumersHaveSource -Workflows @(@{ Name = 'quoted-uses.yml'; Text = $quotedUses }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('quoted-uses.yml/future-consumer'))
+    if ($quotedResult.Count -ne 1 -or $quotedResult[0].Scripts -notcontains $script) { throw 'Quoted action uses and a quoted workspace-root path must pass.' }
+
+    $rejectedCases = @(
+        @{ Name = 'checkout into a subdirectory'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -CheckoutPath 'source') },
+        @{ Name = 'conditional checkout'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -ConditionalCheckout) },
+        @{ Name = 'checkout after artifact download'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -CheckoutOrder 'after-download') },
+        @{ Name = 'checkout after script invocation'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -CheckoutOrder 'after-script') },
+        @{ Name = 'checkout of a different revision'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -CheckoutRef 'main') },
+        @{ Name = 'checkout of a different repository'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -CheckoutRepository 'other/repository') },
+        @{ Name = 'script path with different casing'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script.ToUpperInvariant()) },
+        @{ Name = 'missing checkout'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -OmitCheckout) },
+        @{ Name = 'four-space job with missing checkout'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -JobIndent 4 -OmitCheckout) }
+    )
+    foreach ($case in $rejectedCases) {
         $rejected = $false
         try {
-            $null = Assert-ArtifactScriptConsumersHaveSource -Workflows @(@{ Name = 'future.yml'; Text = $case.Text })
+            $null = Assert-ArtifactScriptConsumersHaveSource -Workflows @(@{ Name = 'regression.yml'; Text = $case.Text }) -RepositoryRoot $RepositoryRoot
         }
         catch { $rejected = $true }
-        if (-not $rejected) { throw "Workflow contract accepted a future consumer with $($case.Name)." }
+        if (-not $rejected) { throw "Workflow contract accepted a consumer with $($case.Name)." }
     }
 
-    $futureConsumer = @(Assert-ArtifactScriptConsumersHaveSource -Workflows @(@{ Name = 'future.yml'; Text = $futureConsumerWithSource }) -RequiredConsumerNames @('future.yml/future-consumer'))
-    if ($futureConsumer.Count -ne 1 -or $futureConsumer[0].Scripts -notcontains $script) {
-        throw 'Workflow contract did not enumerate a future artifact-consuming repository-script job.'
+    $unsupportedFlow = "jobs:`n  future-consumer:`n    steps: []`n"
+    $unsupportedRejected = $false
+    try { $null = Assert-ArtifactScriptConsumersHaveSource -Workflows @(@{ Name = 'unsupported.yml'; Text = $unsupportedFlow }) -RepositoryRoot $RepositoryRoot }
+    catch { $unsupportedRejected = $true }
+    if (-not $unsupportedRejected) { throw 'Workflow guard must fail closed on unsupported flow-style steps.' }
+    $unsupportedAlias = "jobs:`n  future-consumer:`n    steps:`n      - *shared-step`n"
+    $unsupportedRejected = $false
+    try { $null = Assert-ArtifactScriptConsumersHaveSource -Workflows @(@{ Name = 'unsupported-alias.yml'; Text = $unsupportedAlias }) -RepositoryRoot $RepositoryRoot }
+    catch { $unsupportedRejected = $true }
+    if (-not $unsupportedRejected) { throw 'Workflow guard must fail closed on unsupported step aliases.' }
+
+    $multiJobLines = [Collections.Generic.List[string]]::new()
+    $multiJobLines.Add('jobs:')
+    foreach ($consumer in $CurrentConsumers) {
+        $fixture = New-WorkflowScriptConsumerFixture -ScriptPaths $consumer.Scripts -JobName $consumer.Name
+        $fixtureLines = @($fixture -split '\r?\n')
+        $multiJobLines.AddRange([string[]]$fixtureLines[1..($fixtureLines.Count - 1)])
+    }
+    $requiredConsumerNames = @($CurrentConsumers | ForEach-Object { "$($_.Workflow)/$($_.Name)" })
+    $enumerated = @(Assert-ArtifactScriptConsumersHaveSource -Workflows @(@{ Name = 'release.yml'; Text = ($multiJobLines -join [Environment]::NewLine) }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames $requiredConsumerNames)
+    if ($enumerated.Count -ne $CurrentConsumers.Count) { throw 'Regression coverage did not enumerate every current script-consuming job.' }
+    foreach ($consumer in $CurrentConsumers) {
+        $actual = @($enumerated | Where-Object { $_.Name -eq $consumer.Name -and $_.Workflow -eq $consumer.Workflow })
+        if ($actual.Count -ne 1) { throw "Regression coverage omitted '$($consumer.Workflow)/$($consumer.Name)'." }
+        foreach ($currentScript in $consumer.Scripts) {
+            if ($actual[0].Scripts -notcontains $currentScript) { throw "Regression coverage omitted '$currentScript' from '$($consumer.Workflow)/$($consumer.Name)'." }
+        }
     }
 }
-
 try {
     $projectText = Get-Content -LiteralPath $projectFile -Raw
     $versionMatch = [regex]::Match($projectText, '<Version>\s*(?<version>[^<]+?)\s*</Version>', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
@@ -225,14 +234,14 @@ try {
     $workflowInputs = @(Get-ChildItem -LiteralPath $workflowDirectory -File | Where-Object { $_.Extension -in @('.yml', '.yaml') } | Sort-Object Name | ForEach-Object {
         @{ Name = $_.Name; Text = Get-Content -LiteralPath $_.FullName -Raw }
     })
-    $artifactScriptConsumers = @(Assert-ArtifactScriptConsumersHaveSource -Workflows $workflowInputs -RequiredConsumerNames @('release.yml/publish', 'release.yml/github-release'))
+    $artifactScriptConsumers = @(Assert-ArtifactScriptConsumersHaveSource -Workflows $workflowInputs -RepositoryRoot $root -RequiredConsumerNames @('release.yml/publish', 'release.yml/github-release'))
     foreach ($consumerName in @('release.yml/publish', 'release.yml/github-release')) {
         $consumer = @($artifactScriptConsumers | Where-Object { "$($_.Workflow)/$($_.Name)" -eq $consumerName })[0]
         if ($consumer.Scripts -notcontains 'scripts/validate-release-artifact-set.ps1') {
             throw "Artifact consumer '$consumerName' does not enumerate the release artifact validator script."
         }
     }
-    Assert-WorkflowScriptSourceRegressionCoverage
+    Assert-WorkflowScriptSourceRegressionCoverage -CurrentConsumers $artifactScriptConsumers -RepositoryRoot $root
 
     foreach ($required in @(
         'push:',

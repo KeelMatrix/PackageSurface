@@ -6,6 +6,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($ExpectedVersion) -or $ExpectedVersion -notmatch '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$') {
+    throw 'Expected package version must be a semantic three-part version.'
+}
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 if ([string]::IsNullOrWhiteSpace($ExpectedCommit)) { $ExpectedCommit = (& git -C $root rev-parse HEAD).Trim() }

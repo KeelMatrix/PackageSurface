@@ -1,11 +1,23 @@
 param(
     [string] $ArtifactDirectory,
+    [ValidateNotNullOrEmpty()]
     [string] $ExpectedVersion
 )
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../build/Invoke-NestedPwsh.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$cliProject = Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/KeelMatrix.PackageSurface.Cli.csproj'
+if (-not $PSBoundParameters.ContainsKey('ExpectedVersion')) {
+    $projectText = Get-Content -LiteralPath $cliProject -Raw
+    $versionMatch = [regex]::Match($projectText, '<Version>\s*(?<version>[^<]+?)\s*</Version>', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if (-not $versionMatch.Success) { throw 'The packable CLI project has no explicit package version.' }
+    $ExpectedVersion = $versionMatch.Groups['version'].Value.Trim()
+}
+if ([string]::IsNullOrWhiteSpace($ExpectedVersion)) { throw 'Expected package version must not be empty.' }
+Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/validate-release.ps1') -Version $ExpectedVersion
+$releaseContractExitCode = $LASTEXITCODE
+if ($releaseContractExitCode -ne 0) { throw "Release version validation failed with exit code $releaseContractExitCode." }
 $launchGuard = Join-Path $root 'build/Test-NestedPwshLaunch.ps1'
 & $launchGuard -SelfTest
 if ($LASTEXITCODE -ne 0) { throw 'Nested PowerShell launch guard self-test failed.' }
@@ -243,7 +255,7 @@ try {
     }
 
     Invoke-GateStep 'package-content negative regressions' {
-        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-package-content-gate.ps1') -PackagePath $nupkgs[0].FullName -ArtifactDirectory $feed
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-package-content-gate.ps1') -PackagePath $nupkgs[0].FullName -ArtifactDirectory $feed -ExpectedVersion $packageVersion
     }
 
     Invoke-GateStep 'sensitive/local pack-input regressions' {

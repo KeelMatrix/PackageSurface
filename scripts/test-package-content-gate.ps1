@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory)] [string] $PackagePath,
-    [Parameter(Mandatory)] [string] $ArtifactDirectory
+    [Parameter(Mandatory)] [string] $ArtifactDirectory,
+    [Parameter(Mandatory)] [ValidateNotNullOrEmpty()] [string] $ExpectedVersion
 )
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression.FileSystem

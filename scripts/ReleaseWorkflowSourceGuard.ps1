@@ -302,6 +302,33 @@ function Resolve-WorkflowRelativePath {
     return ($parts -join '/')
 }
 
+function Get-WorkflowCheckoutFailure {
+    param([Parameter(Mandatory)] [object] $Checkout, [Parameter(Mandatory)] [string] $Context)
+
+    $failures = [Collections.Generic.List[string]]::new()
+    $checkoutPath = if ($Checkout.With.ContainsKey('path')) {
+        Get-WorkflowScalarValue -Value $Checkout.With['path'] -Context "$Context checkout path"
+    }
+    else { '.' }
+    # Keep accepted spellings portable across Windows and POSIX runners.
+    # Backslashes and mixed separators can resolve to child paths on POSIX.
+    if ($checkoutPath -notin @('.', './', './.')) { $failures.Add("checkout path '$checkoutPath' is not a portable workspace-root path") }
+
+    $checkoutRepository = if ($Checkout.With.ContainsKey('repository')) {
+        Get-WorkflowScalarValue -Value $Checkout.With['repository'] -Context "$Context checkout repository"
+    }
+    else { '${{ github.repository }}' }
+    if ($checkoutRepository -notmatch '^\$\{\{\s*github\.repository\s*\}\}$') { $failures.Add('checkout does not select github.repository') }
+
+    $checkoutRef = if ($Checkout.With.ContainsKey('ref')) {
+        Get-WorkflowScalarValue -Value $Checkout.With['ref'] -Context "$Context checkout ref"
+    }
+    else { '' }
+    if ($checkoutRef -notmatch '^\$\{\{\s*github\.sha\s*\}\}$') { $failures.Add('checkout does not pin github.sha') }
+
+    return ($failures -join '; ')
+}
+
 function Assert-ArtifactScriptConsumersHaveSource {
     param(
         [Parameter(Mandatory)] [object[]] $Workflows,
@@ -382,45 +409,43 @@ function Assert-ArtifactScriptConsumersHaveSource {
                 $stepWorkingDirectory = if ($null -ne $step.WorkingDirectory) { $step.WorkingDirectory } else { $resolvedJobWorkingDirectory }
                 $resolvedStepWorkingDirectory = Resolve-WorkflowRelativePath -BasePath '' -RelativePath $stepWorkingDirectory
                 if ($null -eq $resolvedStepWorkingDirectory) { throw "Artifact-consuming job '$($workflow.Name)/$($job.Name)' has an unsupported step working-directory." }
-                $downloadIndex = ($precedingDownloads | Measure-Object -Maximum).Maximum
-
-                $validCheckout = $false
-                $checkoutFailures = [Collections.Generic.List[string]]::new()
-                for ($checkoutIndex = 0; $checkoutIndex -lt $downloadIndex; $checkoutIndex++) {
-                    $checkout = $steps[$checkoutIndex]
-                    if ($null -eq $checkout.Uses -or $checkout.Uses -notmatch '(?i)^actions/checkout@') { continue }
-                    if ($checkout.HasIf) { $checkoutFailures.Add('checkout is conditional'); continue }
-
-                    $checkoutPath = if ($checkout.With.ContainsKey('path')) {
-                        Get-WorkflowScalarValue -Value $checkout.With['path'] -Context "job '$($workflow.Name)/$($job.Name)' checkout path"
+                $effectiveCheckoutValid = $false
+                $effectiveCheckoutFailure = 'no checkout has established a pinned workspace-root source'
+                $latestDownloadHadValidSource = $false
+                $latestDownloadFailure = $effectiveCheckoutFailure
+                for ($stateIndex = 0; $stateIndex -lt $stepIndex; $stateIndex++) {
+                    $stateStep = $steps[$stateIndex]
+                    if ($null -ne $stateStep.Uses -and $stateStep.Uses -match '(?i)^actions/download-artifact@') {
+                        $latestDownloadHadValidSource = $effectiveCheckoutValid
+                        $latestDownloadFailure = $effectiveCheckoutFailure
+                        continue
                     }
-                    else { '.' }
-                    # Keep accepted spellings portable across Windows and POSIX runners.
-                    # Backslashes and mixed separators can resolve to child paths on POSIX.
-                    if ($checkoutPath -notin @('.', './', './.')) { $checkoutFailures.Add("checkout path '$checkoutPath' is not a portable workspace-root path"); continue }
+                    if ($null -eq $stateStep.Uses -or $stateStep.Uses -notmatch '(?i)^actions/checkout@') { continue }
 
-                    $checkoutRepository = if ($checkout.With.ContainsKey('repository')) {
-                        Get-WorkflowScalarValue -Value $checkout.With['repository'] -Context "job '$($workflow.Name)/$($job.Name)' checkout repository"
+                    $checkoutFailure = Get-WorkflowCheckoutFailure -Checkout $stateStep -Context "job '$($workflow.Name)/$($job.Name)'"
+                    if ($stateStep.HasIf) {
+                        if (-not $effectiveCheckoutValid -or -not [string]::IsNullOrWhiteSpace($checkoutFailure)) {
+                            $effectiveCheckoutValid = $false
+                            $effectiveCheckoutFailure = if ([string]::IsNullOrWhiteSpace($checkoutFailure)) {
+                                'conditional checkout can leave the source state unchanged'
+                            }
+                            else { "conditional checkout may replace the pinned source: $checkoutFailure" }
+                        }
                     }
-                    else { '${{ github.repository }}' }
-                    if ($checkoutRepository -notmatch '^\$\{\{\s*github\.repository\s*\}\}$') { $checkoutFailures.Add('checkout does not select github.repository'); continue }
-
-                    $checkoutRef = if ($checkout.With.ContainsKey('ref')) {
-                        Get-WorkflowScalarValue -Value $checkout.With['ref'] -Context "job '$($workflow.Name)/$($job.Name)' checkout ref"
+                    else {
+                        $effectiveCheckoutValid = [string]::IsNullOrWhiteSpace($checkoutFailure)
+                        $effectiveCheckoutFailure = if ($effectiveCheckoutValid) {
+                            ''
+                        }
+                        else { $checkoutFailure }
                     }
-                    else { '' }
-                    if ($checkoutRef -notmatch '^\$\{\{\s*github\.sha\s*\}\}$') { $checkoutFailures.Add('checkout does not pin github.sha'); continue }
-
-                    $validCheckout = $true
-                    break
                 }
-                if (-not $validCheckout) {
-                    if ($checkoutFailures.Count -gt 0) {
-                        throw "Artifact-consuming job '$($workflow.Name)/$($job.Name)' has no unconditional workspace-root checkout of github.sha before artifact download: $($checkoutFailures -join '; ')."
-                    }
-                    $anyCheckout = @($steps | Where-Object { $null -ne $_.Uses -and $_.Uses -match '(?i)^actions/checkout@' }).Count -gt 0
-                    if ($anyCheckout) { throw "Artifact-consuming job '$($workflow.Name)/$($job.Name)' checks out source after artifact download." }
-                    throw "Artifact-consuming job '$($workflow.Name)/$($job.Name)' invokes a tracked repository script without checkout."
+
+                if (-not $latestDownloadHadValidSource) {
+                    throw "Artifact-consuming job '$($workflow.Name)/$($job.Name)' has no valid workspace-root checkout of github.repository at github.sha before its last preceding artifact download: $latestDownloadFailure."
+                }
+                if (-not $effectiveCheckoutValid) {
+                    throw "Artifact-consuming job '$($workflow.Name)/$($job.Name)' does not have an effective pinned workspace-root source when the script runs: $effectiveCheckoutFailure."
                 }
 
                 foreach ($scriptMatch in $scriptMatches) {

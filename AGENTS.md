@@ -8,7 +8,7 @@
 - `scripts/run-phase0.ps1` builds the permanent fixture corpus, restores consumers, runs the classifier, and writes evidence.
 - `scripts/run-local-gate.ps1` is the validation entrypoint for restore, fixture coverage, formatting, Release build, no-execution proof, package inspection, vulnerability policy, installed-tool smoke, and consumer regressions.
 - `scripts/validate-release.ps1` is the shared package-version/changelog contract used by local checks before an approved release.
-- `scripts/ReleaseWorkflowSourceGuard.ps1` enforces the portable workspace-root checkout contract for release artifact jobs that invoke tracked scripts; its regression matrix rejects unsupported workflow forms. Current downstream release artifact jobs validate downloaded files inline and do not invoke tracked repository scripts.
+- `scripts/ReleaseWorkflowSourceGuard.ps1` enforces the portable workspace-root checkout contract for release artifact jobs that invoke tracked scripts. It checks that the effective repository checkout is pinned to `github.sha` before the last preceding artifact download and at every guarded script invocation; a later invalid or source-changing conditional checkout breaks that proof until a valid unconditional checkout restores it. Current downstream release artifact jobs validate downloaded files inline and do not invoke tracked repository scripts.
 - `tools/NoExecutionProof/` checks the compiled classifier for forbidden execution, MSBuild, and network references.
 
 ## Commands

@@ -132,7 +132,16 @@ function New-WorkflowScriptConsumerFixture {
         [switch] $ConditionalCheckout,
         [switch] $OmitCheckout,
         [ValidateSet('before-download', 'after-download', 'after-script')]
-        [string] $CheckoutOrder = 'before-download'
+        [string] $CheckoutOrder = 'before-download',
+        [ValidateSet('none', 'before-download', 'after-download', 'between-scripts')]
+        [string] $SecondCheckoutOrder = 'none',
+        [string] $SecondCheckoutUses = 'actions/checkout@v4',
+        [string] $SecondCheckoutRepository,
+        [string] $SecondCheckoutPath,
+        [string] $SecondCheckoutRef = '${{ github.sha }}',
+        [switch] $ConditionalSecondCheckout,
+        [switch] $SecondArtifactDownload,
+        [switch] $FinalValidCheckout
     )
 
     if ($ScriptPaths.Count -eq 0) { $ScriptPaths = @($ScriptPath) }
@@ -144,14 +153,30 @@ function New-WorkflowScriptConsumerFixture {
     $fieldIndent = $sequenceIndent + 2
     $includeCheckoutRepository = $PSBoundParameters.ContainsKey('CheckoutRepository')
     $includeCheckoutPath = $PSBoundParameters.ContainsKey('CheckoutPath')
+    $includeSecondCheckoutRepository = $PSBoundParameters.ContainsKey('SecondCheckoutRepository')
+    $includeSecondCheckoutPath = $PSBoundParameters.ContainsKey('SecondCheckoutPath')
     if (-not $OmitCheckout -and $CheckoutOrder -eq 'before-download') {
         Add-WorkflowFixtureCheckout -Lines $lines -SequenceIndent $sequenceIndent -FieldIndent $fieldIndent -CheckoutUses $CheckoutUses -CheckoutRepository $CheckoutRepository -IncludeCheckoutRepository:$includeCheckoutRepository -CheckoutPath $CheckoutPath -IncludeCheckoutPath:$includeCheckoutPath -CheckoutRef $CheckoutRef -ConditionalCheckout:$ConditionalCheckout
+    }
+    if ($SecondCheckoutOrder -eq 'before-download') {
+        Add-WorkflowFixtureCheckout -Lines $lines -SequenceIndent $sequenceIndent -FieldIndent $fieldIndent -CheckoutUses $SecondCheckoutUses -CheckoutRepository $SecondCheckoutRepository -IncludeCheckoutRepository:$includeSecondCheckoutRepository -CheckoutPath $SecondCheckoutPath -IncludeCheckoutPath:$includeSecondCheckoutPath -CheckoutRef $SecondCheckoutRef -ConditionalCheckout:$ConditionalSecondCheckout
     }
     Add-WorkflowFixtureDownload -Lines $lines -SequenceIndent $sequenceIndent -FieldIndent $fieldIndent
     if (-not $OmitCheckout -and $CheckoutOrder -eq 'after-download') {
         Add-WorkflowFixtureCheckout -Lines $lines -SequenceIndent $sequenceIndent -FieldIndent $fieldIndent -CheckoutUses $CheckoutUses -CheckoutRepository $CheckoutRepository -IncludeCheckoutRepository:$includeCheckoutRepository -CheckoutPath $CheckoutPath -IncludeCheckoutPath:$includeCheckoutPath -CheckoutRef $CheckoutRef -ConditionalCheckout:$ConditionalCheckout
     }
+    if ($SecondCheckoutOrder -eq 'after-download') {
+        Add-WorkflowFixtureCheckout -Lines $lines -SequenceIndent $sequenceIndent -FieldIndent $fieldIndent -CheckoutUses $SecondCheckoutUses -CheckoutRepository $SecondCheckoutRepository -IncludeCheckoutRepository:$includeSecondCheckoutRepository -CheckoutPath $SecondCheckoutPath -IncludeCheckoutPath:$includeSecondCheckoutPath -CheckoutRef $SecondCheckoutRef -ConditionalCheckout:$ConditionalSecondCheckout
+    }
+    if ($SecondArtifactDownload) { Add-WorkflowFixtureDownload -Lines $lines -SequenceIndent $sequenceIndent -FieldIndent $fieldIndent }
+    if ($FinalValidCheckout) {
+        Add-WorkflowFixtureCheckout -Lines $lines -SequenceIndent $sequenceIndent -FieldIndent $fieldIndent -CheckoutUses 'actions/checkout@v4' -CheckoutRepository '${{ github.repository }}' -IncludeCheckoutRepository -CheckoutPath '.' -IncludeCheckoutPath -CheckoutRef '${{ github.sha }}'
+    }
     Add-WorkflowFixtureScripts -Lines $lines -SequenceIndent $sequenceIndent -FieldIndent $fieldIndent -ScriptPaths $ScriptPaths
+    if ($SecondCheckoutOrder -eq 'between-scripts') {
+        Add-WorkflowFixtureCheckout -Lines $lines -SequenceIndent $sequenceIndent -FieldIndent $fieldIndent -CheckoutUses $SecondCheckoutUses -CheckoutRepository $SecondCheckoutRepository -IncludeCheckoutRepository:$includeSecondCheckoutRepository -CheckoutPath $SecondCheckoutPath -IncludeCheckoutPath:$includeSecondCheckoutPath -CheckoutRef $SecondCheckoutRef -ConditionalCheckout:$ConditionalSecondCheckout
+        Add-WorkflowFixtureScripts -Lines $lines -SequenceIndent $sequenceIndent -FieldIndent $fieldIndent -ScriptPaths $ScriptPaths
+    }
     if (-not $OmitCheckout -and $CheckoutOrder -eq 'after-script') {
         Add-WorkflowFixtureCheckout -Lines $lines -SequenceIndent $sequenceIndent -FieldIndent $fieldIndent -CheckoutUses $CheckoutUses -CheckoutRepository $CheckoutRepository -IncludeCheckoutRepository:$includeCheckoutRepository -CheckoutPath $CheckoutPath -IncludeCheckoutPath:$includeCheckoutPath -CheckoutRef $CheckoutRef -ConditionalCheckout:$ConditionalCheckout
     }
@@ -214,6 +239,13 @@ function Assert-WorkflowScriptSourceRegressionCoverage {
         @{ Name = 'checkout path that normalizes through a subdirectory'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -CheckoutPath 'source/..') },
         @{ Name = 'conditional checkout'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -ConditionalCheckout) },
         @{ Name = 'checkout after artifact download'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -CheckoutOrder 'after-download') },
+        @{ Name = 'later checkout after artifact download replaces pinned revision'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -SecondCheckoutOrder 'after-download' -SecondCheckoutRef 'main') },
+        @{ Name = 'later checkout before artifact download replaces pinned revision'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -SecondCheckoutOrder 'before-download' -SecondCheckoutRef 'main') },
+        @{ Name = 'checkout state before a later artifact download remains required'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -SecondCheckoutOrder 'after-download' -SecondCheckoutRef 'main' -SecondArtifactDownload -FinalValidCheckout) },
+        @{ Name = 'later checkout after artifact download selects another repository'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -SecondCheckoutOrder 'after-download' -SecondCheckoutRepository 'other/repository') },
+        @{ Name = 'later checkout after artifact download uses a non-root path'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -SecondCheckoutOrder 'after-download' -SecondCheckoutPath 'source') },
+        @{ Name = 'conditional later checkout may replace pinned revision'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -SecondCheckoutOrder 'after-download' -SecondCheckoutRef 'main' -ConditionalSecondCheckout) },
+        @{ Name = 'later checkout between guarded script invocations'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -SecondCheckoutOrder 'between-scripts' -SecondCheckoutRef 'main') },
         @{ Name = 'checkout after script invocation'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -CheckoutOrder 'after-script') },
         @{ Name = 'checkout of a different revision'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -CheckoutRef 'main') },
         @{ Name = 'checkout of a different repository'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -CheckoutRepository 'other/repository') },
@@ -228,6 +260,18 @@ function Assert-WorkflowScriptSourceRegressionCoverage {
         }
         catch { $rejected = $true }
         if (-not $rejected) { throw "Workflow contract accepted a consumer with $($case.Name)." }
+    }
+
+    $finalValidFixture = New-WorkflowScriptConsumerFixture -ScriptPath $script -SecondCheckoutOrder 'after-download' -SecondCheckoutRef 'main' -FinalValidCheckout
+    $finalValidResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'final-valid-source.yml'; Text = $finalValidFixture }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('final-valid-source.yml/future-consumer'))
+    if ($finalValidResult.Count -ne 1 -or $finalValidResult[0].Scripts -notcontains $script) {
+        throw 'An unconditional final checkout pinned to github.sha must restore the effective source state before script invocation.'
+    }
+
+    $conditionalValidFixture = New-WorkflowScriptConsumerFixture -ScriptPath $script -SecondCheckoutOrder 'after-download' -ConditionalSecondCheckout
+    $conditionalValidResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'conditional-valid-source.yml'; Text = $conditionalValidFixture }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('conditional-valid-source.yml/future-consumer'))
+    if ($conditionalValidResult.Count -ne 1 -or $conditionalValidResult[0].Scripts -notcontains $script) {
+        throw 'A conditional checkout to the already-pinned repository, revision, and root path must preserve the effective source state.'
     }
 
     $unsupportedFlow = "jobs:`n  future-consumer:`n    steps: []`n"
@@ -543,7 +587,7 @@ try {
     # exercised through synthetic jobs while the workflow parser below enforces that
     # the real consumers do not invoke repository scripts after downloading artifacts.
     Assert-WorkflowScriptSourceRegressionCoverage -CurrentConsumers @() -RepositoryRoot $root
-    Write-Output 'PASS: checkout-root path guard rejects non-root and non-portable workflow checkout paths.'
+    Write-Output 'PASS: checkout-source guard tracks effective root checkout state through each guarded script invocation.'
     $trackedRepositoryFiles = @(git -C $root ls-files)
     if ($LASTEXITCODE -ne 0) { throw 'Unable to enumerate tracked repository files for workflow-consumer checks.' }
 

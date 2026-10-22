@@ -1,3 +1,5 @@
+param([switch] $SourceGuardOnly)
+
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../build/Invoke-NestedPwsh.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -90,11 +92,13 @@ function Add-WorkflowFixtureCheckout {
         [string] $CheckoutPath,
         [switch] $IncludeCheckoutPath,
         [string] $CheckoutRef,
+        [string] $ContinueOnError,
         [switch] $ConditionalCheckout
     )
 
     $Lines.Add((' ' * $SequenceIndent) + '- name: Check out source')
     $Lines.Add((' ' * $FieldIndent) + 'uses: ' + $CheckoutUses)
+    if (-not [string]::IsNullOrWhiteSpace($ContinueOnError)) { $Lines.Add((' ' * $FieldIndent) + 'continue-on-error: ' + $ContinueOnError) }
     if ($ConditionalCheckout) { $Lines.Add((' ' * $FieldIndent) + 'if: ${{ always() }}') }
     $Lines.Add((' ' * $FieldIndent) + 'with:')
     if ($IncludeCheckoutRepository) { $Lines.Add((' ' * ($FieldIndent + 2)) + 'repository: ' + $CheckoutRepository) }
@@ -141,7 +145,8 @@ function New-WorkflowScriptConsumerFixture {
         [string] $SecondCheckoutRef = '${{ github.sha }}',
         [switch] $ConditionalSecondCheckout,
         [switch] $SecondArtifactDownload,
-        [switch] $FinalValidCheckout
+        [switch] $FinalValidCheckout,
+        [string] $FinalCheckoutContinueOnError
     )
 
     if ($ScriptPaths.Count -eq 0) { $ScriptPaths = @($ScriptPath) }
@@ -170,7 +175,7 @@ function New-WorkflowScriptConsumerFixture {
     }
     if ($SecondArtifactDownload) { Add-WorkflowFixtureDownload -Lines $lines -SequenceIndent $sequenceIndent -FieldIndent $fieldIndent }
     if ($FinalValidCheckout) {
-        Add-WorkflowFixtureCheckout -Lines $lines -SequenceIndent $sequenceIndent -FieldIndent $fieldIndent -CheckoutUses 'actions/checkout@v4' -CheckoutRepository '${{ github.repository }}' -IncludeCheckoutRepository -CheckoutPath '.' -IncludeCheckoutPath -CheckoutRef '${{ github.sha }}'
+        Add-WorkflowFixtureCheckout -Lines $lines -SequenceIndent $sequenceIndent -FieldIndent $fieldIndent -CheckoutUses 'actions/checkout@v4' -CheckoutRepository '${{ github.repository }}' -IncludeCheckoutRepository -CheckoutPath '.' -IncludeCheckoutPath -CheckoutRef '${{ github.sha }}' -ContinueOnError $FinalCheckoutContinueOnError
     }
     Add-WorkflowFixtureScripts -Lines $lines -SequenceIndent $sequenceIndent -FieldIndent $fieldIndent -ScriptPaths $ScriptPaths
     if ($SecondCheckoutOrder -eq 'between-scripts') {
@@ -179,6 +184,50 @@ function New-WorkflowScriptConsumerFixture {
     }
     if (-not $OmitCheckout -and $CheckoutOrder -eq 'after-script') {
         Add-WorkflowFixtureCheckout -Lines $lines -SequenceIndent $sequenceIndent -FieldIndent $fieldIndent -CheckoutUses $CheckoutUses -CheckoutRepository $CheckoutRepository -IncludeCheckoutRepository:$includeCheckoutRepository -CheckoutPath $CheckoutPath -IncludeCheckoutPath:$includeCheckoutPath -CheckoutRef $CheckoutRef -ConditionalCheckout:$ConditionalCheckout
+    }
+    return ($lines -join [Environment]::NewLine)
+}
+
+function Add-WorkflowFixtureRunSteps {
+    param([System.Collections.Generic.List[string]] $Lines, [object[]] $RunSteps)
+
+    foreach ($runStep in $RunSteps) {
+        $Lines.Add('      - name: ' + [string]$runStep.Name)
+        if ($runStep.ContainsKey('If') -and $runStep.If) { $Lines.Add('        if: ${{ always() }}') }
+        if ($runStep.ContainsKey('Shell')) { $Lines.Add('        shell: ' + [string]$runStep.Shell) }
+        if ($runStep.ContainsKey('WorkingDirectory')) { $Lines.Add('        working-directory: ' + [string]$runStep.WorkingDirectory) }
+        if ($runStep.ContainsKey('ContinueOnError')) { $Lines.Add('        continue-on-error: ' + [string]$runStep.ContinueOnError) }
+        $runText = [string]$runStep.Text
+        $runLines = @($runText -split "`r?`n")
+        if ($runLines.Count -gt 1) {
+            $Lines.Add('        run: |')
+            foreach ($runLine in $runLines) { $Lines.Add('          ' + $runLine) }
+        }
+        else { $Lines.Add('        run: ' + $runText) }
+    }
+}
+
+function New-WorkflowGitScriptConsumerFixture {
+    param(
+        [Parameter(Mandatory)] [string] $ScriptPath,
+        [object[]] $RunsBeforeDownload = @(),
+        [object[]] $RunsAfterDownload = @(),
+        [object[]] $RunsBetweenInvocations = @(),
+        [switch] $SecondInvocation
+    )
+
+    $lines = [Collections.Generic.List[string]]::new()
+    $lines.Add('jobs:')
+    $lines.Add('  future-consumer:')
+    $lines.Add('    steps:')
+    Add-WorkflowFixtureCheckout -Lines $lines -SequenceIndent 6 -FieldIndent 8 -CheckoutUses 'actions/checkout@v4' -CheckoutRef '${{ github.sha }}'
+    Add-WorkflowFixtureRunSteps -Lines $lines -RunSteps $RunsBeforeDownload
+    Add-WorkflowFixtureDownload -Lines $lines -SequenceIndent 6 -FieldIndent 8
+    Add-WorkflowFixtureRunSteps -Lines $lines -RunSteps $RunsAfterDownload
+    Add-WorkflowFixtureScripts -Lines $lines -SequenceIndent 6 -FieldIndent 8 -ScriptPaths @($ScriptPath)
+    if ($SecondInvocation) {
+        Add-WorkflowFixtureRunSteps -Lines $lines -RunSteps $RunsBetweenInvocations
+        Add-WorkflowFixtureScripts -Lines $lines -SequenceIndent 6 -FieldIndent 8 -ScriptPaths @($ScriptPath)
     }
     return ($lines -join [Environment]::NewLine)
 }
@@ -273,6 +322,72 @@ function Assert-WorkflowScriptSourceRegressionCoverage {
     if ($conditionalValidResult.Count -ne 1 -or $conditionalValidResult[0].Scripts -notcontains $script) {
         throw 'A conditional checkout to the already-pinned repository, revision, and root path must preserve the effective source state.'
     }
+
+    $conditionalShell = @'
+if [ -n "$GITHUB_SHA" ]; then
+  git checkout main
+fi
+'@
+    $shellMutationCases = @(
+        @{ Name = 'shell checkout before artifact download'; Text = (New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsBeforeDownload @(@{ Name = 'Replace source'; Text = 'git checkout main' })) },
+        @{ Name = 'shell checkout after artifact download'; Text = (New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @(@{ Name = 'Replace source'; Text = 'git checkout main' })) },
+        @{ Name = 'shell switch after artifact download'; Text = (New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @(@{ Name = 'Switch source'; Text = 'git switch main' })) },
+        @{ Name = 'fetch and checkout command chain'; Text = (New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @(@{ Name = 'Fetch and switch'; Text = 'git fetch origin main; git checkout FETCH_HEAD' })) },
+        @{ Name = 'git -C workspace checkout'; Text = (New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @(@{ Name = 'Replace source'; Text = 'git -C "$env:GITHUB_WORKSPACE" checkout main' })) },
+        @{ Name = 'conditional workflow shell step'; Text = (New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @(@{ Name = 'Conditional replace'; If = $true; Text = 'git checkout main' })) },
+        @{ Name = 'conditional command inside shell'; Text = (New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @(@{ Name = 'Conditional replace'; Shell = 'bash'; Text = $conditionalShell })) },
+        @{ Name = 'unsupported Git checkout alias'; Text = (New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @(@{ Name = 'Replace source'; Text = 'git co main' })) },
+        @{ Name = 'unsupported Git ref mutation'; Text = (New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @(@{ Name = 'Replace source'; Text = 'git update-ref refs/heads/main FETCH_HEAD' })) },
+        @{ Name = 'shell checkout between guarded invocations'; Text = (New-WorkflowGitScriptConsumerFixture -ScriptPath $script -SecondInvocation -RunsBetweenInvocations @(@{ Name = 'Replace source'; Text = 'git checkout main' })) },
+        @{ Name = 'conditional pinned shell checkout cannot restore invalid state'; Text = (New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @(@{ Name = 'Replace source'; Text = 'git checkout main' }, @{ Name = 'Conditional restore'; If = $true; Text = 'git checkout --detach ''${{ github.sha }}''' })) },
+        @{ Name = 'non-root shell checkout cannot restore source'; Text = (New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @(@{ Name = 'Replace source'; Text = 'git checkout main' }, @{ Name = 'Wrong-root restore'; WorkingDirectory = 'source'; Text = 'git checkout --detach ''${{ github.sha }}''' })) },
+        @{ Name = 'continue-on-error shell checkout cannot restore source'; Text = (New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @(@{ Name = 'Replace source'; Text = 'git checkout main' }, @{ Name = 'Ignored restore failure'; ContinueOnError = 'true'; Text = 'git checkout --detach ''${{ github.sha }}''' })) },
+        @{ Name = 'continue-on-error shell checkout cannot preserve valid source'; Text = (New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @(@{ Name = 'Ignored restore failure'; ContinueOnError = 'true'; Text = 'git checkout --detach ''${{ github.sha }}''' })) },
+        @{ Name = 'continue-on-error action checkout cannot restore source'; Text = (New-WorkflowScriptConsumerFixture -ScriptPath $script -SecondCheckoutOrder 'after-download' -SecondCheckoutRef 'main' -FinalValidCheckout -FinalCheckoutContinueOnError 'true') }
+    )
+    foreach ($case in $shellMutationCases) {
+        $rejected = $false
+        try {
+            $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'shell-mutation.yml'; Text = $case.Text }) -RepositoryRoot $RepositoryRoot
+        }
+        catch { $rejected = $true }
+        if (-not $rejected) { throw "Workflow contract accepted $($case.Name)." }
+    }
+
+    $sameStepCommandChain = New-WorkflowGitScriptConsumerFixture -ScriptPath $script
+    $scriptCommand = '          pwsh -NoLogo -NoProfile -File ./' + $script
+    $sameStepCommandChain = $sameStepCommandChain.Replace($scriptCommand, '          git fetch origin main; git checkout FETCH_HEAD' + [Environment]::NewLine + $scriptCommand)
+    $sameStepRejected = $false
+    try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'same-step-source-mutation.yml'; Text = $sameStepCommandChain }) -RepositoryRoot $RepositoryRoot }
+    catch { $sameStepRejected = $true }
+    if (-not $sameStepRejected) { throw 'A source-changing Git chain in the same run step as a tracked script invocation must be rejected.' }
+
+    $safeGitFixture = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @(
+        @{ Name = 'Read source status'; Text = 'git status --short' },
+        @{ Name = 'Read source diff'; Text = 'git diff --quiet' }
+    )
+    $safeGitResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'safe-git.yml'; Text = $safeGitFixture }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('safe-git.yml/future-consumer'))
+    if ($safeGitResult.Count -ne 1 -or $safeGitResult[0].Scripts -notcontains $script) { throw 'Read-only Git status and diff commands must preserve the pinned source state.' }
+
+    $shellRestoreBeforeDownload = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsBeforeDownload @(
+        @{ Name = 'Replace source'; Text = 'git checkout main' },
+        @{ Name = 'Restore pinned source'; Text = 'git checkout --detach ''${{ github.sha }}''' }
+    )
+    $shellRestoreBeforeResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'restore-before-download.yml'; Text = $shellRestoreBeforeDownload }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('restore-before-download.yml/future-consumer'))
+    if ($shellRestoreBeforeResult.Count -ne 1 -or $shellRestoreBeforeResult[0].Scripts -notcontains $script) { throw 'An unconditional root checkout pinned to github.sha must restore source before artifact download.' }
+
+    $shellRestoreAfterDownload = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @(
+        @{ Name = 'Replace source'; Text = 'git checkout main' },
+        @{ Name = 'Restore pinned source'; Text = 'git -C "$GITHUB_WORKSPACE" switch --detach $GITHUB_SHA'; Shell = 'bash' }
+    )
+    $shellRestoreAfterResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'restore-after-download.yml'; Text = $shellRestoreAfterDownload }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('restore-after-download.yml/future-consumer'))
+    if ($shellRestoreAfterResult.Count -ne 1 -or $shellRestoreAfterResult[0].Scripts -notcontains $script) { throw 'An unconditional root git -C switch to GITHUB_SHA must restore source before script invocation.' }
+
+    $conditionalSameSource = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @(
+        @{ Name = 'Conditional pinned source'; If = $true; Text = 'git checkout --detach ''${{ github.sha }}''' }
+    )
+    $conditionalSameSourceResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'conditional-same-source.yml'; Text = $conditionalSameSource }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('conditional-same-source.yml/future-consumer'))
+    if ($conditionalSameSourceResult.Count -ne 1 -or $conditionalSameSourceResult[0].Scripts -notcontains $script) { throw 'A conditional checkout to the already-pinned source must preserve, but never establish, the valid source state.' }
 
     $unsupportedFlow = "jobs:`n  future-consumer:`n    steps: []`n"
     $unsupportedRejected = $false
@@ -587,7 +702,8 @@ try {
     # exercised through synthetic jobs while the workflow parser below enforces that
     # the real consumers do not invoke repository scripts after downloading artifacts.
     Assert-WorkflowScriptSourceRegressionCoverage -CurrentConsumers @() -RepositoryRoot $root
-    Write-Output 'PASS: checkout-source guard tracks effective root checkout state through each guarded script invocation.'
+    Write-Output 'PASS: checkout-source guard tracks action and shell source state through artifact boundaries, command chains, and guarded script invocations.'
+    if ($SourceGuardOnly) { return }
     $trackedRepositoryFiles = @(git -C $root ls-files)
     if ($LASTEXITCODE -ne 0) { throw 'Unable to enumerate tracked repository files for workflow-consumer checks.' }
 

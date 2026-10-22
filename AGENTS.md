@@ -8,13 +8,14 @@
 - `scripts/run-phase0.ps1` builds the permanent fixture corpus, restores consumers, runs the classifier, and writes evidence.
 - `scripts/run-local-gate.ps1` is the validation entrypoint for restore, fixture coverage, formatting, Release build, no-execution proof, package inspection, vulnerability policy, installed-tool smoke, and consumer regressions.
 - `scripts/validate-release.ps1` is the shared package-version/changelog contract used by local checks before an approved release.
-- `scripts/ReleaseWorkflowSourceGuard.ps1` enforces the portable workspace-root checkout contract for release artifact jobs that invoke tracked scripts. It checks that the effective repository checkout is pinned to `github.sha` before the last preceding artifact download and at every guarded script invocation; a later invalid or source-changing conditional checkout breaks that proof until a valid unconditional checkout restores it. Current downstream release artifact jobs validate downloaded files inline and do not invoke tracked repository scripts.
+- `scripts/ReleaseWorkflowSourceGuard.ps1` enforces the pinned workspace-source contract for release artifact jobs that invoke tracked scripts. It checks the source before the last preceding artifact download and at every guarded script invocation. Source-changing or unsupported Git commands invalidate that proof; read-only Git inspection preserves it. An unconditional valid root `actions/checkout` or a standalone root shell `git checkout`/detached `git switch` pinned to `github.sha` (or the matching SHA environment variable in an explicitly supported shell), without `continue-on-error`, restores invalid state. A conditional same-source checkout can preserve valid state but cannot restore invalid state. Current downstream release artifact jobs validate downloaded files inline and do not invoke tracked repository scripts.
 - `tools/NoExecutionProof/` checks the compiled classifier for forbidden execution, MSBuild, and network references.
 
 ## Commands
 
 ```powershell
 pwsh ./scripts/run-local-gate.ps1
+pwsh ./scripts/test-release-contract.ps1 -SourceGuardOnly
 pwsh ./scripts/test-release-contract.ps1
 pwsh ./scripts/test-vulnerability-audit.ps1
 dotnet build ./KeelMatrix.PackageSurface.sln --configuration Release
@@ -22,7 +23,7 @@ dotnet run --project ./tests/KeelMatrix.PackageSurface.Cli.Tests/KeelMatrix.Pack
 dotnet run --project ./tests/KeelMatrix.PackageSurface.Probe.Tests/KeelMatrix.PackageSurface.Probe.Tests.csproj --configuration Release --no-build -- <project.assets.json> <capability-list>
 ```
 
-The local gate is the authoritative validation entrypoint. It uses a controlled package cache, disables telemetry, checks the exact `.nupkg`/`.snupkg` set using the packable project's evaluated version (or an explicit `-ExpectedVersion` supplied by release validation), installs the packed tool in isolation, and exercises passing, changed-surface, incomplete-input, baseline-schema, strict-retry, and real dependency-change cases. The release workflow checks the built artifact set before upload, then checks each downloaded set inline before NuGet OIDC authentication or GitHub Release creation; those downstream jobs do not invoke tracked repository scripts. If a future downstream job needs a tracked script, it must first check out the workflow's exact commit at the workspace root. The source guard accepts only an omitted path or the portable root scalars `.`, `./`, and `./.` (quoted or plain); it rejects backslash or mixed-separator paths and subdirectories.
+The local gate is the authoritative validation entrypoint. It uses a controlled package cache, disables telemetry, checks the exact `.nupkg`/`.snupkg` set using the packable project's evaluated version (or an explicit `-ExpectedVersion` supplied by release validation), installs the packed tool in isolation, and exercises passing, changed-surface, incomplete-input, baseline-schema, strict-retry, and real dependency-change cases. The release workflow checks the built artifact set before upload, then checks each downloaded set inline before NuGet OIDC authentication or GitHub Release creation; those downstream jobs do not invoke tracked repository scripts. If a future downstream job needs a tracked script, it must first check out the workflow's exact commit at the workspace root. The workflow source guard accepts only an omitted action checkout path or the portable root scalars `.`, `./`, and `./.` (quoted or plain); it rejects backslash or mixed-separator paths and subdirectories. It also fails closed on source-changing or unsupported Git commands in shell steps and requires an unconditional valid root checkout action or standalone root Git checkout/switch pinned to the workflow SHA, without `continue-on-error`, to restore invalid source state.
 
 ## Invariants
 

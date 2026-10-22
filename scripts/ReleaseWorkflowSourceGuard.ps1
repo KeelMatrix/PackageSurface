@@ -211,11 +211,19 @@ function ConvertTo-WorkflowStep {
     if ($fields.ContainsKey('working-directory')) {
         $workingDirectory = Get-WorkflowScalarValue -Value ([string]$fields['working-directory']) -Context "job '$JobName' step $StepNumber working-directory"
     }
+    $shell = $null
+    if ($fields.ContainsKey('shell')) { $shell = Get-WorkflowScalarValue -Value ([string]$fields['shell']) -Context "job '$JobName' step $StepNumber shell" }
+    $continueOnError = $null
+    if ($fields.ContainsKey('continue-on-error')) {
+        $continueOnError = Get-WorkflowScalarValue -Value ([string]$fields['continue-on-error']) -Context "job '$JobName' step $StepNumber continue-on-error"
+    }
     return [pscustomobject]@{
         Uses = $uses
         HasIf = $fields.ContainsKey('if')
         With = $withFields
         WorkingDirectory = $workingDirectory
+        Shell = $shell
+        ContinueOnError = $continueOnError
         RunText = $runParts -join [Environment]::NewLine
     }
 }
@@ -306,6 +314,9 @@ function Get-WorkflowCheckoutFailure {
     param([Parameter(Mandatory)] [object] $Checkout, [Parameter(Mandatory)] [string] $Context)
 
     $failures = [Collections.Generic.List[string]]::new()
+    if ($null -ne $Checkout.ContinueOnError -and $Checkout.ContinueOnError -notmatch '^(?i:false|no|0)$') {
+        $failures.Add('checkout can fail and continue without establishing source')
+    }
     $checkoutPath = if ($Checkout.With.ContainsKey('path')) {
         Get-WorkflowScalarValue -Value $Checkout.With['path'] -Context "$Context checkout path"
     }
@@ -327,6 +338,147 @@ function Get-WorkflowCheckoutFailure {
     if ($checkoutRef -notmatch '^\$\{\{\s*github\.sha\s*\}\}$') { $failures.Add('checkout does not pin github.sha') }
 
     return ($failures -join '; ')
+}
+
+function ConvertFrom-WorkflowShellToken {
+    param([Parameter(Mandatory)] [string] $Token)
+
+    $trimmed = $Token.Trim()
+    if ($trimmed.Length -ge 2 -and
+        (($trimmed.StartsWith('"', [StringComparison]::Ordinal) -and $trimmed.EndsWith('"', [StringComparison]::Ordinal)) -or
+            ($trimmed.StartsWith("'", [StringComparison]::Ordinal) -and $trimmed.EndsWith("'", [StringComparison]::Ordinal)))) {
+        return $trimmed.Substring(1, $trimmed.Length - 2)
+    }
+    return $trimmed
+}
+
+function Get-WorkflowShellTokens {
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Text)
+
+    $tokens = [Collections.Generic.List[string]]::new()
+    foreach ($match in [regex]::Matches($Text, '"[^"`r`n]*"|''[^''`r`n]*''|[^\s;&|]+')) {
+        $tokens.Add($match.Value)
+    }
+    return $tokens.ToArray()
+}
+
+function Test-WorkflowRootWorkingDirectory {
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string] $WorkingDirectory)
+
+    $resolved = Resolve-WorkflowRelativePath -BasePath '' -RelativePath $WorkingDirectory
+    return $null -ne $resolved -and $resolved.Length -eq 0
+}
+
+function Test-WorkflowRootGitDirectory {
+    param(
+        [Parameter(Mandatory)] [string] $GitDirectoryToken,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string] $WorkingDirectory,
+        [AllowNull()] [string] $Shell
+    )
+
+    $value = ConvertFrom-WorkflowShellToken -Token $GitDirectoryToken
+    if ($value -match '^\$\{\{\s*github\.workspace\s*\}\}$') { return $true }
+    if ($GitDirectoryToken -notmatch "^'") {
+        if ($Shell -match '^(?i:bash|sh)$' -and $value -in @('$GITHUB_WORKSPACE', '${GITHUB_WORKSPACE}')) { return $true }
+        if ($Shell -match '^(?i:pwsh|powershell)$' -and $value -match '^\$env:GITHUB_WORKSPACE$') { return $true }
+    }
+    if ($value -notin @('.', './', './.')) { return $false }
+    return Test-WorkflowRootWorkingDirectory -WorkingDirectory $WorkingDirectory
+}
+
+function Test-WorkflowPinnedGitRef {
+    param([Parameter(Mandatory)] [string] $RefToken, [AllowNull()] [string] $Shell)
+
+    $value = ConvertFrom-WorkflowShellToken -Token $RefToken
+    if ($value -match '^\$\{\{\s*github\.sha\s*\}\}$') { return $true }
+    if ($RefToken -match "^'") { return $false }
+    if ($Shell -match '^(?i:bash|sh)$') { return $value -in @('$GITHUB_SHA', '${GITHUB_SHA}') }
+    if ($Shell -match '^(?i:pwsh|powershell)$') { return $value -match '^\$env:GITHUB_SHA$' }
+    return $false
+}
+
+function Test-WorkflowStandalonePinnedGitRestore {
+    param(
+        [Parameter(Mandatory)] [object] $Step,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string] $WorkingDirectory
+    )
+
+    $runText = ([string]$Step.RunText).Trim()
+    if ([string]::IsNullOrWhiteSpace($runText) -or $runText -match '[\r\n;&|]') { return $false }
+    if ($runText -notmatch '^(?i:(?:&\s*)?git(?:\.exe)?)\s+') { return $false }
+
+    $words = @(Get-WorkflowShellTokens -Text ($runText -replace '^(?i:(?:&\s*)?git(?:\.exe)?)\s+', ''))
+    if ($words.Count -eq 0) { return $false }
+    $index = 0
+    $gitDirectory = $null
+    if ((ConvertFrom-WorkflowShellToken -Token $words[$index]) -eq '-C') {
+        if ($words.Count -lt 3) { return $false }
+        $gitDirectory = $words[$index + 1]
+        $index += 2
+    }
+    elseif ((ConvertFrom-WorkflowShellToken -Token $words[$index]).StartsWith('-', [StringComparison]::Ordinal)) {
+        return $false
+    }
+
+    if ($gitDirectory) {
+        if (-not (Test-WorkflowRootGitDirectory -GitDirectoryToken $gitDirectory -WorkingDirectory $WorkingDirectory -Shell $Step.Shell)) { return $false }
+    }
+    elseif (-not (Test-WorkflowRootWorkingDirectory -WorkingDirectory $WorkingDirectory)) { return $false }
+
+    $verb = (ConvertFrom-WorkflowShellToken -Token $words[$index]).ToLowerInvariant()
+    $arguments = @($words | Select-Object -Skip ($index + 1) | ForEach-Object { ConvertFrom-WorkflowShellToken -Token $_ })
+    if ($verb -eq 'checkout') {
+        if ($arguments.Count -eq 1) { $refToken = $words[$index + 1] }
+        elseif ($arguments.Count -eq 2 -and $arguments[0] -eq '--detach') { $refToken = $words[$index + 2] }
+        else { return $false }
+    }
+    elseif ($verb -eq 'switch') {
+        if ($arguments.Count -ne 2 -or $arguments[0] -ne '--detach') { return $false }
+        $refToken = $words[$index + 2]
+    }
+    else { return $false }
+
+    return Test-WorkflowPinnedGitRef -RefToken $refToken -Shell $Step.Shell
+}
+
+function Get-WorkflowRunSourceEffect {
+    param(
+        [Parameter(Mandatory)] [object] $Step,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string] $WorkingDirectory
+    )
+
+    $runText = [string]$Step.RunText
+    $gitMatches = [regex]::Matches($runText, '(?i)(?<![A-Za-z0-9_.-])git(?:\.exe)?(?=\s|$)')
+    $hasSourceMutation = $false
+    $nonSourceChangingGitVerbs = @('status', 'log', 'diff', 'show', 'rev-parse', 'ls-files', 'describe', 'cat-file', 'fetch')
+    $sourceChangingGitVerbs = @('checkout', 'switch', 'restore', 'reset', 'pull', 'merge', 'rebase', 'cherry-pick', 'revert', 'am', 'apply', 'read-tree', 'clean', 'worktree', 'submodule', 'clone')
+
+    foreach ($match in $gitMatches) {
+        $tail = $runText.Substring($match.Index + $match.Length)
+        $separator = [regex]::Match($tail, '[;&|\r\n]')
+        if ($separator.Success) { $tail = $tail.Substring(0, $separator.Index) }
+        $words = @(Get-WorkflowShellTokens -Text $tail)
+        if ($words.Count -eq 0) { $hasSourceMutation = $true; continue }
+        $index = 0
+        if ((ConvertFrom-WorkflowShellToken -Token $words[$index]) -eq '-C') {
+            if ($words.Count -lt 3) { $hasSourceMutation = $true; continue }
+            $index += 2
+        }
+        elseif ((ConvertFrom-WorkflowShellToken -Token $words[$index]).StartsWith('-', [StringComparison]::Ordinal)) {
+            $hasSourceMutation = $true
+            continue
+        }
+
+        $verb = (ConvertFrom-WorkflowShellToken -Token $words[$index]).ToLowerInvariant()
+        if ($verb -in $sourceChangingGitVerbs -or $verb -notin $nonSourceChangingGitVerbs) { $hasSourceMutation = $true }
+    }
+
+    if ($runText -match '(?i)(?<![A-Za-z0-9_.-])(?:hg\s+(?:update|checkout|clone|pull)|svn\s+(?:switch|checkout|update)|gh\s+repo\s+clone)\b') {
+        $hasSourceMutation = $true
+    }
+    if (-not $hasSourceMutation) { return 'None' }
+    if ($gitMatches.Count -gt 0 -and (Test-WorkflowStandalonePinnedGitRestore -Step $Step -WorkingDirectory $WorkingDirectory)) { return 'Restore' }
+    return 'Mutation'
 }
 
 function Assert-ArtifactScriptConsumersHaveSource {
@@ -413,31 +565,59 @@ function Assert-ArtifactScriptConsumersHaveSource {
                 $effectiveCheckoutFailure = 'no checkout has established a pinned workspace-root source'
                 $latestDownloadHadValidSource = $false
                 $latestDownloadFailure = $effectiveCheckoutFailure
-                for ($stateIndex = 0; $stateIndex -lt $stepIndex; $stateIndex++) {
+                for ($stateIndex = 0; $stateIndex -le $stepIndex; $stateIndex++) {
                     $stateStep = $steps[$stateIndex]
                     if ($null -ne $stateStep.Uses -and $stateStep.Uses -match '(?i)^actions/download-artifact@') {
                         $latestDownloadHadValidSource = $effectiveCheckoutValid
                         $latestDownloadFailure = $effectiveCheckoutFailure
                         continue
                     }
-                    if ($null -eq $stateStep.Uses -or $stateStep.Uses -notmatch '(?i)^actions/checkout@') { continue }
-
-                    $checkoutFailure = Get-WorkflowCheckoutFailure -Checkout $stateStep -Context "job '$($workflow.Name)/$($job.Name)'"
-                    if ($stateStep.HasIf) {
-                        if (-not $effectiveCheckoutValid -or -not [string]::IsNullOrWhiteSpace($checkoutFailure)) {
-                            $effectiveCheckoutValid = $false
-                            $effectiveCheckoutFailure = if ([string]::IsNullOrWhiteSpace($checkoutFailure)) {
-                                'conditional checkout can leave the source state unchanged'
+                    if ($null -ne $stateStep.Uses -and $stateStep.Uses -match '(?i)^actions/checkout@') {
+                        $checkoutFailure = Get-WorkflowCheckoutFailure -Checkout $stateStep -Context "job '$($workflow.Name)/$($job.Name)'"
+                        if ($stateStep.HasIf) {
+                            if (-not $effectiveCheckoutValid -or -not [string]::IsNullOrWhiteSpace($checkoutFailure)) {
+                                $effectiveCheckoutValid = $false
+                                $effectiveCheckoutFailure = if ([string]::IsNullOrWhiteSpace($checkoutFailure)) {
+                                    'conditional checkout can leave the source state unchanged'
+                                }
+                                else { "conditional checkout may replace the pinned source: $checkoutFailure" }
                             }
-                            else { "conditional checkout may replace the pinned source: $checkoutFailure" }
+                        }
+                        else {
+                            $effectiveCheckoutValid = [string]::IsNullOrWhiteSpace($checkoutFailure)
+                            $effectiveCheckoutFailure = if ($effectiveCheckoutValid) {
+                                ''
+                            }
+                            else { $checkoutFailure }
+                        }
+                        continue
+                    }
+
+                    if ([string]::IsNullOrWhiteSpace($stateStep.RunText)) { continue }
+                    $stateWorkingDirectory = if ($null -ne $stateStep.WorkingDirectory) { $stateStep.WorkingDirectory } else { $resolvedJobWorkingDirectory }
+                    $resolvedStateWorkingDirectory = Resolve-WorkflowRelativePath -BasePath '' -RelativePath $stateWorkingDirectory
+                    if ($null -eq $resolvedStateWorkingDirectory) { throw "Artifact-consuming job '$($workflow.Name)/$($job.Name)' has an unsupported run working-directory." }
+                    $sourceEffect = Get-WorkflowRunSourceEffect -Step $stateStep -WorkingDirectory $resolvedStateWorkingDirectory
+                    if ($sourceEffect -eq 'Restore') {
+                        $restoreCanFailAndContinue = $null -ne $stateStep.ContinueOnError -and $stateStep.ContinueOnError -notmatch '^(?i:false|no|0)$'
+                        if ($restoreCanFailAndContinue) {
+                            $effectiveCheckoutValid = $false
+                            $effectiveCheckoutFailure = 'continue-on-error shell checkout cannot establish source'
+                        }
+                        elseif ($stateStep.HasIf) {
+                            if (-not $effectiveCheckoutValid) {
+                                $effectiveCheckoutValid = $false
+                                $effectiveCheckoutFailure = 'conditional shell checkout cannot restore an invalid source state'
+                            }
+                        }
+                        else {
+                            $effectiveCheckoutValid = $true
+                            $effectiveCheckoutFailure = ''
                         }
                     }
-                    else {
-                        $effectiveCheckoutValid = [string]::IsNullOrWhiteSpace($checkoutFailure)
-                        $effectiveCheckoutFailure = if ($effectiveCheckoutValid) {
-                            ''
-                        }
-                        else { $checkoutFailure }
+                    elseif ($sourceEffect -eq 'Mutation') {
+                        $effectiveCheckoutValid = $false
+                        $effectiveCheckoutFailure = 'a run step contains a source-changing or unsupported Git command'
                     }
                 }
 

@@ -359,11 +359,12 @@ function ConvertFrom-WorkflowShellToken {
 function ConvertTo-WorkflowLogicalRunText {
     param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Text, [AllowNull()] [string] $Shell)
 
-    if ($Shell -match '^(?i:bash|sh)$') { return [regex]::Replace($Text, '\\\r?\n', ' ') }
-    if ($Shell -match '^(?i:pwsh|powershell)$') { return [regex]::Replace($Text, '`\r?\n', ' ') }
-    return $Text
+    $logical = $Text
+    if ($Shell -match '^(?i:bash|sh)$') { $logical = [regex]::Replace($logical, '\\\r?\n', ' ') }
+    elseif ($Shell -match '^(?i:pwsh|powershell)$') { $logical = [regex]::Replace($logical, ([char]96).ToString() + '\r?\n', ' ') }
+    $lines = @($logical -split '\r?\n' | ForEach-Object { ([string]$_).TrimStart() })
+    return $lines -join [Environment]::NewLine
 }
-
 function Get-WorkflowCurlWriteOutTargets {
     param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Format)
 
@@ -406,18 +407,203 @@ function Get-WorkflowShellTokens {
 }
 
 function Test-WorkflowPinnedScriptArgument {
-    param([Parameter(Mandatory)] [string] $Token)
+    param([Parameter(Mandatory)] [string] $Token, [AllowNull()] [string] $Shell)
 
-    $value = (ConvertFrom-WorkflowShellToken -Token $Token).Replace('\', '/')
+    $value = ConvertFrom-WorkflowShellToken -Token $Token
+    if ($Shell -match '^(?i:pwsh|powershell)$') { $value = $value.Replace('\', '/') }
+    elseif ($value.Contains('\')) { return $false }
     $normalized = $value -replace '^\./', ''
-    if ($normalized -match '[\$`*?]' -or $normalized -match '(?:^|/)\.\.?(/|$)') { return $false }
+    $dynamicPathCharacters = '[\$' + [char]96 + '*?]'
+    if ($normalized -match $dynamicPathCharacters -or $normalized -match '(?:^|/)\.\.?(/|$)') { return $false }
     return $normalized -match '(?i)^scripts/(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:ps1|sh|cmd|bat|py|js|rb|pl)$'
 }
 
+function Get-WorkflowShellCommandSegments {
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Text, [AllowNull()] [string] $Shell)
+
+    $segments = [Collections.Generic.List[string]]::new()
+    $start = 0
+    $quote = [char]0
+    for ($index = 0; $index -lt $Text.Length; $index++) {
+        $character = $Text[$index]
+        if ($quote -ne [char]0) {
+            if ($index + 1 -lt $Text.Length -and (Test-WorkflowShellEscapeSequence -Shell $Shell -Quote $quote -Escape $character -Next $Text[$index + 1])) { $index++; continue }
+            if ($character -eq $quote) { $quote = [char]0; continue }
+            continue
+        }
+        if ($character -eq '"' -or $character -eq "'") { $quote = $character; continue }
+        if ($index + 1 -lt $Text.Length -and (Test-WorkflowShellEscapeSequence -Shell $Shell -Quote ([char]0) -Escape $character -Next $Text[$index + 1])) { $index++; continue }
+        if ($character -eq '#' -and ($index -eq 0 -or [char]::IsWhiteSpace($Text[$index - 1]))) {
+            while ($index -lt $Text.Length -and $Text[$index] -ne [char]10) { $index++ }
+            $segments.Add($Text.Substring($start, $index - $start))
+            $start = [Math]::Min($index + 1, $Text.Length)
+            continue
+        }
+        if ($character -notin @(';', '|', '&', [char]13, [char]10, '(', ')')) { continue }
+        $segments.Add($Text.Substring($start, $index - $start))
+        $start = $index + 1
+    }
+    if ($start -lt $Text.Length) { $segments.Add($Text.Substring($start)) }
+    return $segments.ToArray()
+}
+
+function Test-WorkflowRunnerTempReference {
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Value)
+
+    $normalized = $Value.Replace('\', '/')
+    return $normalized -match '(?i)(?:\$\{\{\s*runner\.temp\s*\}\}|\$env:runner_temp|\$\{?runner_temp\}?|%runner_temp%)(?:/|$|"|'')'
+}
+
+function Test-WorkflowInterpreterInvocation {
+    param([Parameter(Mandatory)] [string] $Name, [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]] $Arguments, [AllowNull()] [string] $Shell)
+
+    $arguments = $Arguments -join ' '
+    if ($arguments -match '(?i)(?:^|\s)(?:-s|--stdin|-|/dev/stdin|/dev/fd/\d+|CON)(?=\s|$)|(?:<<?<?\s*(?:/dev/stdin|/dev/fd/\d+|CON))|(?:<<<?)|(?:\$\(|<\()') { return $true }
+    if ($arguments -match '(?i)(?:^|\s)-(?:c|command|commandwithargs|encodedcommand|enc)(?:=|\s|$)|(?:^|\s)(?:-[A-Za-z]*c[A-Za-z]*)(?=\s|$)') { return $true }
+    $scriptArguments = [regex]::Matches($arguments, '(?:"[^"\r\n]+\.(?:ps1|sh|cmd|bat|py|js|rb|pl)"|''[^''\r\n]+\.(?:ps1|sh|cmd|bat|py|js|rb|pl)''|[^\s;&|]+\.(?:ps1|sh|cmd|bat|py|js|rb|pl))')
+    foreach ($scriptArgument in $scriptArguments) {
+        if (-not (Test-WorkflowPinnedScriptArgument -Token $scriptArgument.Value -Shell $Shell)) { return $true }
+    }
+    if ($scriptArguments.Count -gt 0) { return $false }
+    if ($Arguments.Count -eq 0) { return $true }
+    $singleArgument = ConvertFrom-WorkflowShellToken -Token ([string]$Arguments[0])
+    $safeInformationArguments = @('--help', '--version', '-h', '-?')
+    if ($Name -match '^(?i:python(?:\d+(?:\.\d+)*)?)$') { $safeInformationArguments += '-V' }
+    if ($Name -match '^(?i:node(?:js)?)$') { $safeInformationArguments += '-v' }
+    return $Arguments.Count -ne 1 -or $singleArgument -notin $safeInformationArguments
+}
+
+function Test-WorkflowCommandContainsUnsupportedExecution {
+    param([Parameter(Mandatory)] [AllowEmptyCollection()] [string[]] $Tokens, [AllowNull()] [string] $Shell)
+
+    $current = @($Tokens)
+    for ($depth = 0; $depth -lt 16 -and $current.Count -gt 0; $depth++) {
+        while ($current.Count -gt 0) {
+            $leading = ConvertFrom-WorkflowShellToken -Token ([string]$current[0])
+            if ($leading -in @('!', 'if', 'then', 'do', 'while', 'until', 'elif', 'else')) { $current = @($current | Select-Object -Skip 1); continue }
+            if ($leading -match '^[A-Za-z_][A-Za-z0-9_]*=') { $current = @($current | Select-Object -Skip 1); continue }
+            break
+        }
+        if ($current.Count -eq 0) { return $false }
+
+        $program = ConvertFrom-WorkflowShellToken -Token ([string]$current[0])
+        $programName = ($program -split '[\\/]')[-1].ToLowerInvariant()
+        $arguments = @($current | Select-Object -Skip 1)
+
+        if ($programName -eq 'env' -or $programName -eq 'env.exe') {
+            $index = 0
+            $splitCommandFound = $false
+            while ($index -lt $arguments.Count) {
+                $option = ConvertFrom-WorkflowShellToken -Token ([string]$arguments[$index])
+                if ($option -eq '--') { $index++; break }
+                $splitText = $null
+                if ($option -in @('-S', '--split-string')) {
+                    if ($index + 1 -ge $arguments.Count) { return $true }
+                    $splitText = ConvertFrom-WorkflowShellToken -Token ([string]$arguments[++$index])
+                }
+                elseif ($option -match '^--split-string=(?<value>.*)$') { $splitText = $Matches['value'] }
+                elseif ($option -match '^-S=?(?<value>.+)$') { $splitText = $Matches['value'] }
+                if ($null -ne $splitText) {
+                    $nested = @(Get-WorkflowShellTokens -Text $splitText)
+                    $current = @($nested) + @($arguments | Select-Object -Skip ($index + 1))
+                    if ($current.Count -eq 0) { return $true }
+                    $splitCommandFound = $true
+                    break
+                }
+                if ($option -in @('-i', '--ignore-environment', '-0', '--null', '-v', '--debug', '--list-signal-handling')) { $index++; continue }
+                if ($option -match '^(?:-u|--unset|-C|--chdir|-a|--argv0|--block-signal|--default-signal|--ignore-signal)$') { $index += 2; continue }
+                if ($option -match '^(?:--unset|--chdir|--argv0|--block-signal|--default-signal|--ignore-signal)=') { $index++; continue }
+                if ($option -match '^[A-Za-z_][A-Za-z0-9_]*=') { $index++; continue }
+                if ($option.StartsWith('-', [StringComparison]::Ordinal)) { return $true }
+                break
+            }
+            if ($splitCommandFound) { continue }
+            $current = @($arguments | Select-Object -Skip $index)
+            continue
+        }
+        if ($programName -eq 'timeout' -or $programName -eq 'timeout.exe') {
+            $index = 0
+            while ($index -lt $arguments.Count) {
+                $option = ConvertFrom-WorkflowShellToken -Token ([string]$arguments[$index])
+                if ($option -eq '--') { $index++; break }
+                if ($option -in @('--foreground', '--preserve-status', '--verbose')) { $index++; continue }
+                if ($option -match '^(?:-k|--kill-after|-s|--signal)$') { $index += 2; continue }
+                if ($option -match '^(?:--kill-after|--signal)=') { $index++; continue }
+                if ($option -match '^-[ks].+') { $index++; continue }
+                if ($option.StartsWith('-', [StringComparison]::Ordinal)) { return $true }
+                $index++ # timeout duration
+                break
+            }
+            $current = @($arguments | Select-Object -Skip $index)
+            continue
+        }
+        if ($programName -in @('command', 'exec', 'nohup', 'nice', 'stdbuf', 'setsid', 'sudo', 'doas', 'busybox', 'time')) {
+            if ($programName -eq 'command' -and @($arguments | Where-Object { (ConvertFrom-WorkflowShellToken -Token ([string]$_)) -in @('-v', '-V') }).Count -gt 0) { return $false }
+            $index = 0
+            while ($index -lt $arguments.Count) {
+                $option = ConvertFrom-WorkflowShellToken -Token ([string]$arguments[$index])
+                if ($option -eq '--') { $index++; break }
+                if (-not $option.StartsWith('-', [StringComparison]::Ordinal)) { break }
+                if (($programName -eq 'sudo' -or $programName -eq 'doas') -and $option -match '^(?:-u|-g|-h|-p|-C|-D|-R|-T|-U|-r|-a|--user|--group|--host|--pro(?:mpt)|--close-from|--chdir|--chroot|--command-timeout|--other-user|--role|--type)$') { $index += 2; continue }
+                if ($programName -eq 'nice' -and $option -in @('-n', '--adjustment')) { $index += 2; continue }
+                if ($programName -eq 'stdbuf' -and $option -match '^(?:-i|-o|-e)$') { $index += 2; continue }
+                if ($programName -eq 'time' -and $option -in @('-f', '--format')) { $index += 2; continue }
+                if ($programName -eq 'busybox') { $index++; break }
+                if ($option -match '^-[a-zA-Z]+(?:=.*)?$' -or $option -match '^--[a-zA-Z0-9-]+(?:=.*)?$') { $index++; continue }
+                return $true
+            }
+            $current = @($arguments | Select-Object -Skip $index)
+            continue
+        }
+
+        if ($programName -match '^(?:bash|sh|dash|zsh|pwsh|powershell|python(?:\d+(?:\.\d+)*)?|node(?:js)?|ruby|perl)(?:\.exe)?$') {
+            return Test-WorkflowInterpreterInvocation -Name $programName -Arguments $arguments -Shell $Shell
+        }
+        if (Test-WorkflowRunnerTempReference -Value $program) { return $true }
+        return $false
+    }
+    return $false
+}
+
+function Test-WorkflowRunContainsWrappedUnsupportedExecution {
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Text, [AllowNull()] [string] $Shell)
+
+    $runnerTempDirectory = $false
+    $directoryStack = [Collections.Generic.Stack[bool]]::new()
+    foreach ($segment in (Get-WorkflowShellCommandSegments -Text $Text -Shell $Shell)) {
+        $tokens = @(Get-WorkflowShellTokens -Text $segment)
+        if ($tokens.Count -eq 0) { continue }
+        $program = (ConvertFrom-WorkflowShellToken -Token ([string]$tokens[0])).ToLowerInvariant()
+        if ($program -in @('cd', 'chdir', 'sl', 'set-location', 'pushd', 'push-location', 'popd', 'pop-location')) {
+            if ($program -in @('pushd', 'push-location')) { $directoryStack.Push($runnerTempDirectory) }
+            if ($program -in @('popd', 'pop-location')) {
+                if ($directoryStack.Count -gt 0) { $runnerTempDirectory = $directoryStack.Pop() }
+                else { $runnerTempDirectory = $false }
+                continue
+            }
+            if (Test-WorkflowRunnerTempReference -Value $segment) { $runnerTempDirectory = $true }
+            elseif ($segment -match '(?i)GITHUB_WORKSPACE|github\.workspace') { $runnerTempDirectory = $false }
+            continue
+        }
+        $programPath = ConvertFrom-WorkflowShellToken -Token ([string]$tokens[0])
+        if ($runnerTempDirectory -and $programPath -match '^(?:\./|\.\\)[^\\/]+') { return $true }
+        if ($tokens.Count -gt 0 -and (Test-WorkflowCommandContainsUnsupportedExecution -Tokens $tokens -Shell $Shell)) { return $true }
+    }
+    return $false
+}
 function Test-WorkflowRunContainsUnsupportedEvaluator {
     param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Text, [AllowNull()] [string] $Shell)
 
     $runText = ConvertTo-WorkflowLogicalRunText -Text $Text -Shell $Shell
+    $pathMutationPatterns = @(
+        '(?i)(?:^|[;&|({\r\n]\s*)(?:export\s+)?PATH\s*\+?=\s*[^;\r\n]*(?:runner\.temp|runner_temp|%runner_temp%)',
+        '(?i)(?:^|[;&|({\r\n]\s*)\$env:PATH\s*\+?=\s*[^;\r\n]*(?:runner\.temp|runner_temp|%runner_temp%)',
+        '(?i)(?:^|[;&|({\r\n]\s*)env(?:\.exe)?\s+(?:[^;&|\r\n]*\s)?PATH\s*=\s*[^;\r\n]*(?:runner\.temp|runner_temp|%runner_temp%)',
+        '(?i)(?:^|[;&|({\r\n]\s*)(?:Set-Item|New-Item)\s+[^;&|\r\n]*(?:Env:)?PATH\b[^;&|\r\n]*(?:runner\.temp|runner_temp|%runner_temp%)'
+    )
+    foreach ($pattern in $pathMutationPatterns) {
+        if ($runText -match $pattern) { return $true }
+    }
     $patterns = @(
         '(?i)(?<![A-Za-z0-9_.-])(?:bash|sh|dash|zsh)(?:\.exe)?["'']?\s+(?:[^;&|\r\n]*?\s)?(?:-[A-Za-z]*c[A-Za-z]*|--command(?:=|\s))(?=\s|$)',
         '(?i)(?<![A-Za-z0-9_.-])(?:pwsh|powershell)(?:\.exe)?["'']?\s+(?:[^;&|\r\n]*?\s)?-(?:c|commandwithargs|command|encodedcommand|enc|e)(?:=|\s|$)',
@@ -429,6 +615,7 @@ function Test-WorkflowRunContainsUnsupportedEvaluator {
     foreach ($pattern in $patterns) {
         if ($runText -match $pattern) { return $true }
     }
+    if (Test-WorkflowRunContainsWrappedUnsupportedExecution -Text $runText -Shell $Shell) { return $true }
 
     # The source guard cannot inspect code supplied on stdin, through a here-document,
     # or through a script outside the pinned checkout. Only static scripts/ paths are
@@ -442,7 +629,7 @@ function Test-WorkflowRunContainsUnsupportedEvaluator {
         $scriptArguments = [regex]::Matches($arguments, '(?i)(?:"[^"\r\n]+\.(?:ps1|sh|cmd|bat|py|js|rb|pl)"|''[^''\r\n]+\.(?:ps1|sh|cmd|bat|py|js|rb|pl)''|[^\s;&|]+\.(?:ps1|sh|cmd|bat|py|js|rb|pl))')
         $unsafeScriptArgument = $false
         foreach ($scriptArgument in $scriptArguments) {
-            if (-not (Test-WorkflowPinnedScriptArgument -Token $scriptArgument.Value)) { $unsafeScriptArgument = $true; break }
+            if (-not (Test-WorkflowPinnedScriptArgument -Token $scriptArgument.Value -Shell $Shell)) { $unsafeScriptArgument = $true; break }
         }
         if ($unsafeScriptArgument) { return $true }
         if ($scriptArguments.Count -gt 0) { continue }
@@ -455,21 +642,21 @@ function Test-WorkflowRunContainsUnsupportedEvaluator {
 
     if ($Shell -match '^(?i:bash|sh|dash|zsh)$') {
         foreach ($dotSource in [regex]::Matches($runText, '(?im)(?:^|[;&|({]\s*)\.\s+(?<path>"[^"\r\n]+"|''[^''\r\n]+''|[^\s;&|]+)')) {
-            if (-not (Test-WorkflowPinnedScriptArgument -Token $dotSource.Groups['path'].Value)) { return $true }
+            if (-not (Test-WorkflowPinnedScriptArgument -Token $dotSource.Groups['path'].Value -Shell $Shell)) { return $true }
         }
     }
     if ($Shell -match '^(?i:pwsh|powershell)$') {
         foreach ($fileArgument in [regex]::Matches($runText, '(?i)(?<![A-Za-z0-9_.-])(?:pwsh|powershell)(?:\.exe)?[^;&|\r\n]*?\s-(?:file|f)(?:=|\s+)(?<path>"[^"\r\n]*"|''[^''\r\n]*''|[^\s;&|]+)')) {
-            if (-not (Test-WorkflowPinnedScriptArgument -Token $fileArgument.Groups['path'].Value)) { return $true }
+            if (-not (Test-WorkflowPinnedScriptArgument -Token $fileArgument.Groups['path'].Value -Shell $Shell)) { return $true }
         }
         foreach ($dotSource in [regex]::Matches($runText, '(?im)(?:^|[;&|({]\s*)\.\s+(?<path>"[^"\r\n]+"|''[^''\r\n]+''|[^\s;&|]+)')) {
-            if (-not (Test-WorkflowPinnedScriptArgument -Token $dotSource.Groups['path'].Value)) { return $true }
+            if (-not (Test-WorkflowPinnedScriptArgument -Token $dotSource.Groups['path'].Value -Shell $Shell)) { return $true }
         }
         foreach ($scriptInvocation in [regex]::Matches($runText, '(?im)(?:^|[;&|({]\s*)&\s*(?<path>"[^"\r\n]+"|''[^''\r\n]+''|[^\s;&|]+)')) {
-            if (-not (Test-WorkflowPinnedScriptArgument -Token $scriptInvocation.Groups['path'].Value)) { return $true }
+            if (-not (Test-WorkflowPinnedScriptArgument -Token $scriptInvocation.Groups['path'].Value -Shell $Shell)) { return $true }
         }
         foreach ($directScript in [regex]::Matches($runText, '(?im)(?:^|[;&|({]\s*)(?<path>"[^"\r\n]+\.ps1"|''[^''\r\n]+\.ps1''|[^\s;&|]+\.ps1)(?=\s|$|[;&|])')) {
-            if (-not (Test-WorkflowPinnedScriptArgument -Token $directScript.Groups['path'].Value)) { return $true }
+            if (-not (Test-WorkflowPinnedScriptArgument -Token $directScript.Groups['path'].Value -Shell $Shell)) { return $true }
         }
     }
     return $false

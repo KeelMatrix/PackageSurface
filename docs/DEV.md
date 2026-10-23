@@ -43,6 +43,8 @@ If a future artifact job needs a tracked script, scripts/ReleaseWorkflowSourceGu
 
 The local gate derives its expected package version from the evaluated packable project unless a validated release version is supplied with `-ExpectedVersion`.
 
+The guard also rejects wrapped stdin interpreter forms, including env --, env -S, and timeout; indentation-preserving block-scalar script loaders; and downloaded runner-temp executables invoked by absolute or relative path, after changing directory, or through PATH. Bash tracked-script paths must use forward slashes; PowerShell script paths may use backslashes. Unsafe execution or link creation keeps later runner-temp paths untrusted across shell checkout or switch. Ordinary runner-temp output remains allowed while that proof is intact.
+
 ## Project roles
 
 - `src/KeelMatrix.PackageSurface.Cli` is the only shipping packable project and produces the `KeelMatrix.PackageSurface` .NET tool.

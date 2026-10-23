@@ -366,21 +366,61 @@ fi
         if (-not $rejected) { throw "Workflow contract accepted $($case.Name)." }
     }
 
+    $bashContinuation = [char]92 + [Environment]::NewLine
+    $powerShellContinuation = [char]96 + [Environment]::NewLine
     $workspaceWriteCases = @(
         @{ Name = 'curl -o root tracked response'; Text = 'curl https://host/payload -o CHANGELOG.md'; Shell = 'bash' },
+        @{ Name = 'curl bundled short response options to root'; Text = 'curl -fsSLoCHANGELOG.md https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl executable alias bundled response to nested'; Text = 'curl.exe -fsSLo src/KeelMatrix.PackageSurface.Cli/README.md https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl bundled short dump-header option to nested path'; Text = 'curl -fsSLDsrc/KeelMatrix.PackageSurface.Cli/README.md https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl bundled short cookie-jar option to root'; Text = 'curl -fsSLcCHANGELOG.md https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl continued bundled short response options to nested'; Text = ('curl -fsSL' + $bashContinuation + '  -osrc/KeelMatrix.PackageSurface.Cli/README.md https://host/payload'); Shell = 'bash' },
+        @{ Name = 'curl dump-header root response'; Text = 'curl --dump-header CHANGELOG.md https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl dump-header nested response'; Text = 'curl --dump-header=src/KeelMatrix.PackageSurface.Cli/README.md https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl stderr root response'; Text = 'curl --stderr CHANGELOG.md https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl stderr nested response'; Text = 'curl --stderr=src/KeelMatrix.PackageSurface.Cli/README.md https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl alt-svc cache to root'; Text = 'curl --alt-svc CHANGELOG.md https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl ETag save to nested path'; Text = 'curl --etag-save=src/KeelMatrix.PackageSurface.Cli/README.md https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl HSTS cache to nested path'; Text = 'curl --hsts src/KeelMatrix.PackageSurface.Cli/README.md https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl trace short option to root'; Text = 'curl -sSLDCHANGELOG.md https://host/payload --trace-ascii scripts/validate-release.ps1'; Shell = 'bash' },
+        @{ Name = 'curl write-out file sink to nested path'; Text = 'curl -w "%output{src/KeelMatrix.PackageSurface.Cli/README.md}" https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl continued write-out file sink to root'; Text = ('curl --write-out ' + $bashContinuation + '  ''%output{CHANGELOG.md}'' https://host/payload'); Shell = 'bash' },
+        @{ Name = 'curl write-out format loaded from a file'; Text = 'curl --write-out @workflow-format.txt https://host/payload'; Shell = 'bash' },
         @{ Name = 'curl --output nested tracked response'; Text = 'curl --output src/KeelMatrix.PackageSurface.Cli/README.md https://host/payload'; Shell = 'bash' },
         @{ Name = 'curl --output equals quoted root response'; Text = 'curl https://host/payload --output="CHANGELOG.md"'; Shell = 'bash' },
         @{ Name = 'curl attached -o nested response'; Text = 'curl -osrc/KeelMatrix.PackageSurface.Cli/README.md https://host/payload'; Shell = 'bash' },
         @{ Name = 'curl remote-name response'; Text = 'curl -O https://host/validate-release.ps1'; Shell = 'bash' },
         @{ Name = 'curl output directory with remote name'; Text = 'curl --output-dir "$GITHUB_WORKSPACE/scripts" -O https://host/validate-release.ps1'; Shell = 'bash' },
         @{ Name = 'wget -O root tracked response'; Text = 'wget https://host/payload -O CHANGELOG.md'; Shell = 'bash' },
+        @{ Name = 'wget bundled short response options to root'; Text = 'wget -qOCHANGELOG.md https://host/payload'; Shell = 'bash' },
+        @{ Name = 'wget executable alias bundled response to nested'; Text = 'wget.exe -qO src/KeelMatrix.PackageSurface.Cli/README.md https://host/payload'; Shell = 'bash' },
+        @{ Name = 'wget output log to nested tracked file'; Text = 'wget --output-file=src/KeelMatrix.PackageSurface.Cli/README.md -O - https://host/payload'; Shell = 'bash' },
+        @{ Name = 'wget log outside workspace still downloads response in workspace'; Text = 'wget --output-file="${{ runner.temp }}/wget.log" https://host/payload'; Shell = 'bash' },
+        @{ Name = 'wget append log to root tracked file'; Text = 'wget -a CHANGELOG.md -O - https://host/payload'; Shell = 'bash' },
+        @{ Name = 'wget cookie save to nested tracked file'; Text = 'wget --save-cookies=src/KeelMatrix.PackageSurface.Cli/README.md -O - https://host/payload'; Shell = 'bash' },
+        @{ Name = 'wget WARC output to root tracked file'; Text = 'wget --warc-file CHANGELOG.md -O - https://host/payload'; Shell = 'bash' },
+        @{ Name = 'wget WARC temp directory under nested tracked tree'; Text = 'wget --warc-tempdir src/KeelMatrix.PackageSurface.Cli -O - https://host/payload'; Shell = 'bash' },
+        @{ Name = 'wget cookie sink with dash destination'; Text = 'wget --save-cookies - -O - https://host/payload'; Shell = 'bash' },
+        @{ Name = 'wget output log with dash destination'; Text = 'wget --output-file=- -O - https://host/payload'; Shell = 'bash' },
+        @{ Name = 'wget CDX output with implicit file name'; Text = 'wget --warc-cdx -O - https://host/payload'; Shell = 'bash' },
+        @{ Name = 'wget continued output-document to nested path'; Text = ('wget --quiet' + $bashContinuation + '  --output-document src/KeelMatrix.PackageSurface.Cli/README.md https://host/payload'); Shell = 'bash' },
         @{ Name = 'wget output-document nested response'; Text = 'wget --output-document=src/KeelMatrix.PackageSurface.Cli/README.md https://host/payload'; Shell = 'bash' },
         @{ Name = 'Invoke-WebRequest OutFile root response'; Text = 'Invoke-WebRequest -Uri https://host/payload -OutFile CHANGELOG.md'; Shell = 'pwsh' },
+        @{ Name = 'Invoke-WebRequest unique OutFile parameter prefix to root'; Text = 'Invoke-WebRequest -Uri https://host/payload -OutF CHANGELOG.md'; Shell = 'pwsh' },
+        @{ Name = 'Invoke-WebRequest unique OutFile prefix equals nested'; Text = 'Invoke-WebRequest -Uri https://host/payload -OutFi=src/KeelMatrix.PackageSurface.Cli/README.md'; Shell = 'pwsh' },
+        @{ Name = 'Invoke-WebRequest unique OutFile prefix colon root'; Text = 'Invoke-WebRequest -Uri https://host/payload -OutFil:CHANGELOG.md'; Shell = 'pwsh' },
+        @{ Name = 'module-qualified Invoke-WebRequest response to nested'; Text = 'Microsoft.PowerShell.Utility\Invoke-WebRequest -Uri https://host/payload -OutFile src/KeelMatrix.PackageSurface.Cli/README.md'; Shell = 'pwsh' },
+        @{ Name = 'module-qualified Invoke-RestMethod response to root'; Text = 'Microsoft.PowerShell.Utility\Invoke-RestMethod -Uri https://host/payload -OutFile CHANGELOG.md'; Shell = 'pwsh' },
+        @{ Name = 'quoted module-qualified Invoke-WebRequest response to root'; Text = '& ''Microsoft.PowerShell.Utility\Invoke-WebRequest'' -Uri https://host/payload -OutFile CHANGELOG.md'; Shell = 'pwsh' },
+        @{ Name = 'continued module-qualified response to nested'; Text = ('Microsoft.PowerShell.Utility\Invoke-WebRequest -Uri https://host/payload ' + $powerShellContinuation + '  -OutFile src/KeelMatrix.PackageSurface.Cli/README.md'); Shell = 'pwsh' },
+        @{ Name = 'continued abbreviated response parameter to root'; Text = ('Invoke-WebRequest -Uri https://host/payload ' + $powerShellContinuation + '  -OutFi CHANGELOG.md'); Shell = 'pwsh' },
         @{ Name = 'Invoke-WebRequest equals OutFile nested response'; Text = 'Invoke-WebRequest -Uri https://host/payload -OutFile=src/KeelMatrix.PackageSurface.Cli/README.md'; Shell = 'pwsh' },
         @{ Name = 'Invoke-WebRequest colon OutFile root response'; Text = 'Invoke-WebRequest -Uri https://host/payload -OutFile:scripts/validate-release.ps1'; Shell = 'pwsh' },
         @{ Name = 'Invoke-RestMethod OutFile nested response'; Text = 'Invoke-RestMethod -Uri https://host/payload -OutFile src/KeelMatrix.PackageSurface.Cli/README.md'; Shell = 'pwsh' },
         @{ Name = 'irm OutFile root response'; Text = 'irm -Uri https://host/payload -OutFile scripts/validate-release.ps1'; Shell = 'pwsh' },
         @{ Name = 'Bash RUNNER_TEMP reassigned to workspace root'; Text = 'RUNNER_TEMP="$GITHUB_WORKSPACE"; cp source "$RUNNER_TEMP/CHANGELOG.md"'; Shell = 'bash' },
+        @{ Name = 'curl uses mutable Bash RUNNER_TEMP'; Text = 'RUNNER_TEMP="$GITHUB_WORKSPACE"; curl --output "$RUNNER_TEMP/CHANGELOG.md" https://host/payload'; Shell = 'bash' },
+        @{ Name = 'wget uses mutable Bash RUNNER_TEMP'; Text = 'RUNNER_TEMP="$GITHUB_WORKSPACE"; wget --output-document "$RUNNER_TEMP/src/KeelMatrix.PackageSurface.Cli/README.md" https://host/payload'; Shell = 'bash' },
         @{ Name = 'Bash RUNNER_TEMP reassigned to nested tracked path'; Text = 'RUNNER_TEMP="$GITHUB_WORKSPACE"; cp source "$RUNNER_TEMP/src/KeelMatrix.PackageSurface.Cli/README.md"'; Shell = 'bash' },
         @{ Name = 'PowerShell RUNNER_TEMP reassigned to workspace root'; Text = '$env:RUNNER_TEMP = "$env:GITHUB_WORKSPACE"; Copy-Item source "$env:RUNNER_TEMP/CHANGELOG.md"'; Shell = 'pwsh' },
         @{ Name = 'PowerShell RUNNER_TEMP reassigned to nested tracked path'; Text = '$env:RUNNER_TEMP = "$env:GITHUB_WORKSPACE"; Invoke-WebRequest -Uri https://host/payload -OutFile "$env:RUNNER_TEMP/src/KeelMatrix.PackageSurface.Cli/README.md"'; Shell = 'pwsh' },
@@ -411,6 +451,13 @@ fi
         @{ Name = 'touch nested tracked file'; Text = 'touch src/KeelMatrix.PackageSurface.Cli/README.md'; Shell = 'bash' },
         @{ Name = 'sed in-place edit to root tracked file'; Text = 'sed -i s/old/new/ scripts/validate-release.ps1'; Shell = 'bash' },
         @{ Name = 'dynamic direct-writer destination'; Text = 'Copy-Item source $env:TARGET'; Shell = 'pwsh' },
+        @{ Name = 'dynamic abbreviated PowerShell response destination'; Text = 'Invoke-WebRequest -Uri https://host/payload -OutF $env:TARGET'; Shell = 'pwsh' },
+        @{ Name = 'dynamic curl response destination'; Text = 'curl --output "$RUNNER_TEMP/$RELATIVE_PATH" https://host/payload'; Shell = 'bash' },
+        @{ Name = 'dynamic curl dump-header destination'; Text = 'curl --dump-header "$TARGET" https://host/payload'; Shell = 'bash' },
+        @{ Name = 'dynamic curl write-out destination'; Text = 'curl --write-out "%output{$env:TARGET}" https://host/payload'; Shell = 'bash' },
+        @{ Name = 'dynamic wget response destination'; Text = 'wget --output-document "$RUNNER_TEMP/$RELATIVE_PATH" https://host/payload'; Shell = 'bash' },
+        @{ Name = 'dynamic wget WARC temp directory'; Text = 'wget --warc-tempdir "$RUNNER_TEMP/$RELATIVE_PATH" -O - https://host/payload'; Shell = 'bash' },
+        @{ Name = 'ambiguous PowerShell Out parameter prefix'; Text = 'Invoke-WebRequest -Uri https://host/payload -Out CHANGELOG.md'; Shell = 'pwsh' },
         @{ Name = 'dynamic Git output destination'; Text = 'git diff --output=$env:TARGET'; Shell = 'pwsh' },
         @{ Name = 'single-quoted runner-temp-looking destination'; Text = 'Copy-Item source ''$RUNNER_TEMP/package-surface.txt'''; Shell = 'bash' },
         @{ Name = 'runner-temp path that traverses out of the temporary directory'; Text = 'cp source "$RUNNER_TEMP/../PackageSurface/scripts/validate-release.ps1"'; Shell = 'bash' },
@@ -442,22 +489,32 @@ fi
         @{ Name = 'pinned detached checkout'; Text = ('git checkout --detach ''' + [char]36 + '{{ github.sha }}' + '''') },
         @{ Name = 'pinned detached switch'; Text = ('git switch --detach ''' + [char]36 + '{{ github.sha }}' + '''') }
     )
+    $responseWriteThenCheckoutCases = @(
+        @{ Name = 'direct copy writer'; Text = ('cp source ' + $script); Shell = 'bash' },
+        @{ Name = 'bundled curl response writer'; Text = 'curl -fsSLoCHANGELOG.md https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl dump-header writer'; Text = 'curl -fsSLDsrc/KeelMatrix.PackageSurface.Cli/README.md https://host/payload'; Shell = 'bash' },
+        @{ Name = 'wget bundled response writer'; Text = 'wget -qOCHANGELOG.md https://host/payload'; Shell = 'bash' },
+        @{ Name = 'PowerShell alias with abbreviated response parameter'; Text = 'iwr -Uri https://host/payload -OutF CHANGELOG.md'; Shell = 'pwsh' },
+        @{ Name = 'module-qualified PowerShell response writer'; Text = 'Microsoft.PowerShell.Utility\Invoke-WebRequest -Uri https://host/payload -OutFi CHANGELOG.md'; Shell = 'pwsh' }
+    )
     foreach ($restoreCase in $writeThenPinnedShellCheckoutCases) {
-        foreach ($position in @('before artifact download', 'after artifact download', 'between guarded invocations')) {
-            $writeStep = @{ Name = 'Write tracked source'; Text = 'cp source ' + $script; Shell = 'bash' }
-            $restoreStep = @{ Name = $restoreCase.Name; Text = $restoreCase.Text; Shell = 'bash' }
-            $fixtureArguments = @{ ScriptPath = $script }
-            if ($position -eq 'before artifact download') { $fixtureArguments.RunsBeforeDownload = @($writeStep, $restoreStep) }
-            elseif ($position -eq 'after artifact download') { $fixtureArguments.RunsAfterDownload = @($writeStep, $restoreStep) }
-            else {
-                $fixtureArguments.SecondInvocation = $true
-                $fixtureArguments.RunsBetweenInvocations = @($writeStep, $restoreStep)
+        foreach ($writeCase in $responseWriteThenCheckoutCases) {
+            foreach ($position in @('before artifact download', 'after artifact download', 'between guarded invocations')) {
+                $writeStep = @{ Name = $writeCase.Name; Text = $writeCase.Text; Shell = $writeCase.Shell }
+                $restoreStep = @{ Name = $restoreCase.Name; Text = $restoreCase.Text; Shell = $writeCase.Shell }
+                $fixtureArguments = @{ ScriptPath = $script }
+                if ($position -eq 'before artifact download') { $fixtureArguments.RunsBeforeDownload = @($writeStep, $restoreStep) }
+                elseif ($position -eq 'after artifact download') { $fixtureArguments.RunsAfterDownload = @($writeStep, $restoreStep) }
+                else {
+                    $fixtureArguments.SecondInvocation = $true
+                    $fixtureArguments.RunsBetweenInvocations = @($writeStep, $restoreStep)
+                }
+                $fixture = New-WorkflowGitScriptConsumerFixture @fixtureArguments
+                $rejected = $false
+                try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'write-then-shell-checkout.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot }
+                catch { $rejected = $true }
+                if (-not $rejected) { throw "Pinned shell $($restoreCase.Name) falsely restored $($writeCase.Name) $position." }
             }
-            $fixture = New-WorkflowGitScriptConsumerFixture @fixtureArguments
-            $rejected = $false
-            try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'write-then-shell-checkout.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot }
-            catch { $rejected = $true }
-            if (-not $rejected) { throw "Pinned shell $($restoreCase.Name) falsely restored tracked source $position." }
         }
     }
     $runnerTempExpression = ([char]36).ToString() + '{{runner.temp}}'
@@ -470,7 +527,26 @@ fi
         @{ Name = 'Copy outside workspace'; Text = 'Copy-Item source "${{ runner.temp }}/package-surface.txt"'; Shell = 'pwsh' },
         @{ Name = 'Named copy destination outside workspace'; Text = 'Copy-Item source -Destination "${{ runner.temp }}/package-surface.txt"'; Shell = 'pwsh' },
         @{ Name = 'curl response outside workspace'; Text = 'curl --output "${{ runner.temp }}/payload.txt" https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl bundled options with response outside workspace'; Text = 'curl -fsSL -o "${{ runner.temp }}/payload.txt" https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl dump-header outside workspace'; Text = 'curl --dump-header "${{ runner.temp }}/headers.txt" https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl stderr outside workspace'; Text = 'curl --stderr "${{ runner.temp }}/curl.log" https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl alt-svc outside workspace'; Text = 'curl --alt-svc "${{ runner.temp }}/alt-svc.txt" https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl ETag save outside workspace'; Text = 'curl --etag-save "${{ runner.temp }}/etag.txt" https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl HSTS outside workspace'; Text = 'curl --hsts "${{ runner.temp }}/hsts.txt" https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl cookie jar outside workspace'; Text = 'curl --cookie-jar "${{ runner.temp }}/cookies.txt" https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl libcurl output outside workspace'; Text = 'curl --libcurl "${{ runner.temp }}/generated.c" https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl trace output outside workspace'; Text = 'curl --trace "${{ runner.temp }}/trace.txt" https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl trace-ascii output outside workspace'; Text = 'curl --trace-ascii "${{ runner.temp }}/trace-ascii.txt" https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl write-out file sink outside workspace'; Text = 'curl --write-out "%output{${{ runner.temp }}/stats.txt}" https://host/payload'; Shell = 'bash' },
+        @{ Name = 'wget response outside workspace'; Text = 'wget --output-document "${{ runner.temp }}/payload.txt" https://host/payload'; Shell = 'bash' },
+        @{ Name = 'wget cookie save outside workspace'; Text = 'wget --save-cookies "${{ runner.temp }}/cookies.txt" -O - https://host/payload'; Shell = 'bash' },
+        @{ Name = 'wget WARC output outside workspace'; Text = 'wget --warc-file "${{ runner.temp }}/capture" -O - https://host/payload'; Shell = 'bash' },
+        @{ Name = 'wget WARC temp directory outside workspace'; Text = 'wget --warc-tempdir "${{ runner.temp }}/warc-tmp" -O - https://host/payload'; Shell = 'bash' },
+        @{ Name = 'wget log outside workspace with response to stdout'; Text = 'wget --output-file "${{ runner.temp }}/wget.log" -O - https://host/payload'; Shell = 'bash' },
+        @{ Name = 'wget append log outside workspace with response to stdout'; Text = 'wget --append-output "${{ runner.temp }}/wget.log" -O - https://host/payload'; Shell = 'bash' },
         @{ Name = 'Invoke-WebRequest response outside workspace'; Text = 'Invoke-WebRequest -Uri https://host/payload -OutFile "${{ runner.temp }}/payload.txt"'; Shell = 'pwsh' },
+        @{ Name = 'Invoke-WebRequest abbreviated OutFile outside workspace'; Text = 'Invoke-WebRequest -Uri https://host/payload -OutFi "${{ runner.temp }}/payload.txt"'; Shell = 'pwsh' },
+        @{ Name = 'module-qualified response outside workspace'; Text = 'Microsoft.PowerShell.Utility\Invoke-WebRequest -Uri https://host/payload -OutFile "${{ runner.temp }}/payload.txt"'; Shell = 'pwsh' },
         @{ Name = 'Invoke-RestMethod response outside workspace'; Text = 'Invoke-RestMethod -Uri https://host/payload -OutFile "${{ runner.temp }}/payload.txt"'; Shell = 'pwsh' },
         @{ Name = 'curl response to stdout'; Text = 'curl -o - https://host/payload'; Shell = 'bash' },
         @{ Name = 'Invoke-WebRequest response without OutFile'; Text = 'Invoke-WebRequest -Uri https://host/payload'; Shell = 'pwsh' }
@@ -829,7 +905,7 @@ try {
     # exercised through synthetic jobs while the workflow parser below enforces that
     # the real consumers do not invoke repository scripts after downloading artifacts.
     Assert-WorkflowScriptSourceRegressionCoverage -CurrentConsumers @() -RepositoryRoot $root
-    Write-Output 'PASS: checkout-source guard tracks response writers, immutable temp paths, tracked-byte restoration, artifact boundaries, and guarded script invocations.'
+    Write-Output 'PASS: checkout-source guard tracks bundled and continued response/file writers, immutable temp paths, tracked-byte restoration, artifact boundaries, and guarded script invocations.'
     if ($SourceGuardOnly) { return }
     $trackedRepositoryFiles = @(git -C $root ls-files)
     if ($LASTEXITCODE -ne 0) { throw 'Unable to enumerate tracked repository files for workflow-consumer checks.' }

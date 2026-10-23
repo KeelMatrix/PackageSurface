@@ -356,6 +356,45 @@ function ConvertFrom-WorkflowShellToken {
     return $trimmed
 }
 
+function ConvertTo-WorkflowLogicalRunText {
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Text, [AllowNull()] [string] $Shell)
+
+    if ($Shell -match '^(?i:bash|sh)$') { return [regex]::Replace($Text, '\\\r?\n', ' ') }
+    if ($Shell -match '^(?i:pwsh|powershell)$') { return [regex]::Replace($Text, '`\r?\n', ' ') }
+    return $Text
+}
+
+function Get-WorkflowCurlWriteOutTargets {
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Format)
+
+    $value = ConvertFrom-WorkflowShellToken -Token $Format
+    if ($value.StartsWith('@', [StringComparison]::Ordinal)) { return @('') }
+
+    $targets = [Collections.Generic.List[string]]::new()
+    $searchAt = 0
+    while ($searchAt -lt $value.Length) {
+        $directiveAt = $value.IndexOf('%output{', $searchAt, [StringComparison]::OrdinalIgnoreCase)
+        if ($directiveAt -lt 0) { break }
+        $pathStart = $directiveAt + '%output{'.Length
+        $depth = 1
+        $pathEnd = $pathStart
+        while ($pathEnd -lt $value.Length -and $depth -gt 0) {
+            if ($value[$pathEnd] -eq '{') { $depth++ }
+            elseif ($value[$pathEnd] -eq '}') { $depth-- }
+            if ($depth -gt 0) { $pathEnd++ }
+        }
+        if ($depth -ne 0) { $targets.Add(''); break }
+        $path = $value.Substring($pathStart, $pathEnd - $pathStart)
+        if ($path.StartsWith('>>', [StringComparison]::Ordinal)) { $path = $path.Substring(2) }
+        if ([string]::IsNullOrWhiteSpace($path)) { $path = '' }
+        $targets.Add($path)
+        $searchAt = $pathEnd + 1
+    }
+
+    if ($targets.Count -eq 0 -and $value -match '[\$`]|\$\(') { $targets.Add('') }
+    return $targets.ToArray()
+}
+
 function Get-WorkflowShellTokens {
     param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Text)
 
@@ -554,7 +593,13 @@ function Get-WorkflowDirectWriterInvocations {
 
     $names = @('Invoke-RestMethod', 'Invoke-WebRequest', 'Copy-Item', 'Set-Content', 'Add-Content', 'Clear-Content', 'Out-File', 'Tee-Object', 'New-Item', 'Move-Item', 'Remove-Item', 'Rename-Item', 'robocopy', 'xcopy', 'curl.exe', 'wget.exe', 'curl', 'wget', 'truncate', 'install', 'touch', 'erase', 'rename', 'copy', 'move', 'iwr', 'irm', 'cp', 'mv', 'rm', 'del', 'tee', 'sed', 'perl')
     $names = @($names | Sort-Object { $_.Length } -Descending)
-    $matches = [Collections.Generic.List[object]]::new()
+    $invocations = [Collections.Generic.List[object]]::new()
+    if ($Shell -match '^(?i:pwsh|powershell)$') {
+        $quotedCommands = [regex]::Matches($Text, '(?i)&\s*["''](?:[A-Za-z0-9_.-]+\\)?(?<name>Invoke-WebRequest|Invoke-RestMethod|iwr|irm)["''](?=\s|$|[;&|])')
+        foreach ($quotedCommand in $quotedCommands) {
+            $invocations.Add([pscustomobject]@{ Name = $quotedCommand.Groups['name'].Value; End = $quotedCommand.Index + $quotedCommand.Length })
+        }
+    }
     $quote = [char]0
     for ($index = 0; $index -lt $Text.Length; $index++) {
         $character = $Text[$index]
@@ -569,18 +614,18 @@ function Get-WorkflowDirectWriterInvocations {
             while ($index -lt $Text.Length -and $Text[$index] -ne "`n") { $index++ }
             continue
         }
-        if ($index -gt 0 -and -not [char]::IsWhiteSpace($Text[$index - 1]) -and $Text[$index - 1] -notin @(';', '|', '&', '{', '}', '(', ')', '=')) { continue }
+        if ($index -gt 0 -and -not [char]::IsWhiteSpace($Text[$index - 1]) -and $Text[$index - 1] -notin @(';', '|', '&', '{', '}', '(', ')', '=', '\')) { continue }
 
         foreach ($name in $names) {
             if ($index + $name.Length -gt $Text.Length -or -not $Text.Substring($index, $name.Length).Equals($name, [StringComparison]::OrdinalIgnoreCase)) { continue }
             $end = $index + $name.Length
             if ($end -lt $Text.Length -and -not [char]::IsWhiteSpace($Text[$end]) -and $Text[$end] -notin @(';', '|', '&', '}', ')')) { continue }
-            $matches.Add([pscustomobject]@{ Name = $name; End = $end })
+            $invocations.Add([pscustomobject]@{ Name = $name; End = $end })
             $index = $end - 1
             break
         }
     }
-    return $matches.ToArray()
+    return $invocations.ToArray()
 }
 
 function Get-WorkflowDirectWriterTargets {
@@ -589,78 +634,104 @@ function Get-WorkflowDirectWriterTargets {
     $lowerName = $Name.ToLowerInvariant()
     if ($lowerName -in @('curl', 'curl.exe')) {
         $targets = [Collections.Generic.List[string]]::new()
-        $hasOutputDirectory = $false
-        $hasFileOutput = $false
+        $responseTargets = [Collections.Generic.List[string]]::new()
+        $outputDirectory = $null
         $hasRemoteName = $false
         for ($index = 0; $index -lt $Arguments.Count; $index++) {
             $value = ConvertFrom-WorkflowShellToken -Token ([string]$Arguments[$index])
-            if ($value -match '^(?i:--output-dir)(?:=(?<path>.*))?$') {
-                $hasOutputDirectory = $true
-                if ($Matches.ContainsKey('path') -and $value.Contains('=')) {
-                    if ([string]::IsNullOrEmpty($Matches['path']) -and $index + 1 -lt $Arguments.Count) { $index++ }
+            if ($value -notmatch '^-') { continue }
+            if ($value -match '^(?i:--)(?<option>[a-z0-9-]+)(?:=(?<inline>.*))?$') {
+                $option = $Matches['option'].ToLowerInvariant()
+                $inline = if ($Matches.ContainsKey('inline') -and $value.Contains('=')) { [string]$Matches['inline'] } else { $null }
+                if ($option -eq 'remote-name' -or $option -eq 'remote-name-all') { $hasRemoteName = $true; continue }
+                if ($option -eq 'output-dir') {
+                    if ($null -ne $inline) { $outputDirectory = $inline }
+                    elseif ($index + 1 -lt $Arguments.Count) { $outputDirectory = ConvertFrom-WorkflowShellToken -Token ([string]$Arguments[++$index]) }
+                    else { $outputDirectory = '' }
+                    continue
                 }
-                elseif ($index + 1 -lt $Arguments.Count) { $index++ }
-                continue
-            }
-            if ($value -in @('-o', '--output')) {
-                $hasFileOutput = $true
-                if ($index + 1 -lt $Arguments.Count) {
-                    $target = ConvertFrom-WorkflowShellToken -Token ([string]$Arguments[++$index])
-                    if ($target -ne '-') { $targets.Add($target) }
+                if ($option -notin @('output', 'dump-header', 'stderr', 'trace', 'trace-ascii', 'cookie-jar', 'libcurl', 'write-out', 'alt-svc', 'etag-save', 'hsts')) { continue }
+                if ($null -eq $inline) {
+                    if ($index + 1 -lt $Arguments.Count) { $inline = ConvertFrom-WorkflowShellToken -Token ([string]$Arguments[++$index]) }
+                    else { $inline = '' }
                 }
-                else { $targets.Add('') }
+                if ($option -eq 'write-out') { foreach ($target in (Get-WorkflowCurlWriteOutTargets -Format ([string]$inline))) { $targets.Add([string]$target) }; continue }
+                if ($option -eq 'output' -or $option -eq 'dump-header') { $responseTargets.Add([string]$inline); continue }
+                if ($option -in @('libcurl', 'stderr', 'trace', 'trace-ascii', 'cookie-jar', 'alt-svc', 'etag-save', 'hsts')) { $targets.Add([string]$inline); continue }
                 continue
             }
-            if ($value -match '^(?i:--output)=(?<path>.*)$') {
-                $hasFileOutput = $true
-                if ([string]::IsNullOrEmpty($Matches['path']) -and $index + 1 -lt $Arguments.Count) { $target = ConvertFrom-WorkflowShellToken -Token ([string]$Arguments[++$index]) }
-                else { $target = $Matches['path'] }
-                if ($target -ne '-') { $targets.Add([string]$target) }
-                continue
+            if ($value.Length -lt 2 -or $value[0] -ne '-') { continue }
+            $flags = $value.Substring(1)
+            if ($flags.StartsWith('-', [StringComparison]::Ordinal)) { continue }
+            for ($flagIndex = 0; $flagIndex -lt $flags.Length; $flagIndex++) {
+                $flag = [char]::ToString($flags[$flagIndex])
+                if ($flag -ceq 'O') { $hasRemoteName = $true; continue }
+                if ($flag -cnotin @('o', 'D', 'c', 'w')) { continue }
+                $argument = $flags.Substring($flagIndex + 1)
+                if ($argument.StartsWith('=', [StringComparison]::Ordinal)) { $argument = $argument.Substring(1) }
+                if ([string]::IsNullOrEmpty($argument)) {
+                    if ($index + 1 -lt $Arguments.Count) { $argument = ConvertFrom-WorkflowShellToken -Token ([string]$Arguments[++$index]) }
+                    else { $argument = '' }
+                }
+                if ($flag -ceq 'w') { foreach ($target in (Get-WorkflowCurlWriteOutTargets -Format ([string]$argument))) { $targets.Add([string]$target) } }
+                elseif ($flag -ceq 'o' -or $flag -ceq 'D') { $responseTargets.Add([string]$argument) }
+                else { $targets.Add([string]$argument) }
+                break
             }
-            if ($value -match '^(?i:-o)(?<path>.+)$') {
-                $hasFileOutput = $true
-                $target = $Matches['path']
-                if ($target.StartsWith('=', [StringComparison]::Ordinal)) { $target = $target.Substring(1) }
-                if ($target -ne '-') { $targets.Add([string]$target) }
-                continue
-            }
-            if ($value -in @('-O', '--remote-name', '--remote-name-all')) { $hasRemoteName = $true; continue }
         }
-        if ($hasOutputDirectory -and ($hasFileOutput -or $hasRemoteName)) { return @('') }
-        if ($hasRemoteName) { $targets.Add('') }
+        if ($hasRemoteName) { $responseTargets.Add('__remote_name__') }
+        $hasFileResponseTarget = @($responseTargets | Where-Object { $_ -ne '-' }).Count -gt 0
+        if ($null -ne $outputDirectory -and $hasFileResponseTarget) { $targets.Add(''); return $targets.ToArray() }
+        foreach ($target in $responseTargets) {
+            if ($target -eq '-') { continue }
+            if ($target -eq '__remote_name__') { $targets.Add('') }
+            else { $targets.Add([string]$target) }
+        }
         return $targets.ToArray()
     }
 
     if ($lowerName -in @('wget', 'wget.exe')) {
         $targets = [Collections.Generic.List[string]]::new()
-        $hasOutputOption = $false
+        $hasDocumentOutput = $false
+        $hasSpider = $false
         for ($index = 0; $index -lt $Arguments.Count; $index++) {
             $value = ConvertFrom-WorkflowShellToken -Token ([string]$Arguments[$index])
-            if ($value -in @('-O', '--output-document', '-outfile')) {
-                $hasOutputOption = $true
-                if ($index + 1 -lt $Arguments.Count) {
-                    $target = ConvertFrom-WorkflowShellToken -Token ([string]$Arguments[++$index])
-                    if ($target -ne '-') { $targets.Add($target) }
+            if ($value -match '^(?i:--)(?<option>[a-z0-9-]+)(?:=(?<inline>.*))?$') {
+                $option = $Matches['option'].ToLowerInvariant()
+                $inline = if ($Matches.ContainsKey('inline') -and $value.Contains('=')) { [string]$Matches['inline'] } else { $null }
+                if ($option -eq 'spider') { $hasSpider = $true; continue }
+                if ($option -eq 'warc-cdx') { $targets.Add(''); continue }
+                if ($option -notin @('output-document', 'output-file', 'append-output', 'save-cookies', 'warc-file', 'warc-tempdir')) { continue }
+                if ($null -eq $inline) {
+                    if ($index + 1 -lt $Arguments.Count) { $inline = ConvertFrom-WorkflowShellToken -Token ([string]$Arguments[++$index]) }
+                    else { $inline = '' }
                 }
-                else { $targets.Add('') }
+                if ($option -eq 'output-document') { $hasDocumentOutput = $true }
+                # Wget documents `-` as stdout only for --output-document. For all
+                # other file sinks, treat it as a possible workspace filename.
+                if ($option -ne 'output-document' -or $inline -ne '-') { $targets.Add([string]$inline) }
                 continue
             }
-            if ($value -match '^(?i:--output-document)=(?<path>.*)$') {
-                $hasOutputOption = $true
-                if ([string]::IsNullOrEmpty($Matches['path']) -and $index + 1 -lt $Arguments.Count) { $target = ConvertFrom-WorkflowShellToken -Token ([string]$Arguments[++$index]) }
-                else { $target = $Matches['path'] }
-                if ($target -ne '-') { $targets.Add([string]$target) }
-                continue
-            }
-            if ($value -match '^(?i:-O)(?<path>.+)$') {
-                $hasOutputOption = $true
-                $target = $Matches['path']
-                if ($target.StartsWith('=', [StringComparison]::Ordinal)) { $target = $target.Substring(1) }
-                if ($target -ne '-') { $targets.Add([string]$target) }
+            if ($value.Length -lt 2 -or $value[0] -ne '-') { continue }
+            $flags = $value.Substring(1)
+            if ($flags.StartsWith('-', [StringComparison]::Ordinal)) { continue }
+            for ($flagIndex = 0; $flagIndex -lt $flags.Length; $flagIndex++) {
+                $flag = [char]::ToString($flags[$flagIndex])
+                if ($flag -cnotin @('O', 'o', 'a')) { continue }
+                $argument = $flags.Substring($flagIndex + 1)
+                if ($argument.StartsWith('=', [StringComparison]::Ordinal)) { $argument = $argument.Substring(1) }
+                if ([string]::IsNullOrEmpty($argument)) {
+                    if ($index + 1 -lt $Arguments.Count) { $argument = ConvertFrom-WorkflowShellToken -Token ([string]$Arguments[++$index]) }
+                    else { $argument = '' }
+                }
+                if ($flag -ceq 'O') { $hasDocumentOutput = $true }
+                # Only -O - is documented as stdout. Log/cookie sinks may write
+                # a literal file named '-', so keep those targets fail-closed.
+                if ($flag -cne 'O' -or $argument -ne '-') { $targets.Add([string]$argument) }
+                break
             }
         }
-        if (-not $hasOutputOption) { $targets.Add('') }
+        if (-not $hasDocumentOutput -and -not $hasSpider) { $targets.Add('') }
         return $targets.ToArray()
     }
 
@@ -670,7 +741,15 @@ function Get-WorkflowDirectWriterTargets {
             $value = ConvertFrom-WorkflowShellToken -Token ([string]$Arguments[$index])
             $separator = $value.IndexOfAny(@('=', ':'))
             $option = if ($separator -ge 0) { $value.Substring(0, $separator).ToLowerInvariant() } else { $value.ToLowerInvariant() }
-            if ($option -notin @('-outfile', '-out-file')) { continue }
+            if ($option -eq '-out-file') { $matchesOutFile = $true }
+            else {
+                $parameter = $option.TrimStart('-')
+                $parameterCandidates = @('outfile', 'outbuffer', 'outvariable')
+                $matchingParameters = @($parameterCandidates | Where-Object { $_.StartsWith($parameter, [StringComparison]::OrdinalIgnoreCase) })
+                $matchesOutFile = $matchingParameters.Count -eq 1 -and $matchingParameters[0] -eq 'outfile'
+                if (-not $matchesOutFile -and $matchingParameters -contains 'outfile') { $targets.Add(''); continue }
+            }
+            if (-not $matchesOutFile) { continue }
             if ($separator -ge 0) {
                 $target = $value.Substring($separator + 1)
                 if ([string]::IsNullOrEmpty($target) -and $index + 1 -lt $Arguments.Count) {
@@ -739,7 +818,7 @@ function Get-WorkflowDirectWriterTargets {
 function Test-WorkflowRunHasWorkspaceWrite {
     param([Parameter(Mandatory)] [object] $Step, [Parameter(Mandatory)] [AllowEmptyString()] [string] $WorkingDirectory)
 
-    $runText = [string]$Step.RunText
+    $runText = ConvertTo-WorkflowLogicalRunText -Text ([string]$Step.RunText) -Shell $Step.Shell
     foreach ($target in (Get-WorkflowShellRedirectionTargets -Text $runText -Shell $Step.Shell)) {
         if (-not (Test-WorkflowWriteTargetIsOutsideWorkspace -Token $target)) { return $true }
     }
@@ -796,7 +875,7 @@ function Get-WorkflowRunSourceEffect {
         [Parameter(Mandatory)] [AllowEmptyString()] [string] $WorkingDirectory
     )
 
-    $runText = [string]$Step.RunText
+    $runText = ConvertTo-WorkflowLogicalRunText -Text ([string]$Step.RunText) -Shell $Step.Shell
     $gitMatches = [regex]::Matches($runText, '(?i)(?<![A-Za-z0-9_.-])git(?:\.exe)?(?=\s|$)')
     $hasSourceMutation = $false
     $hasWorkspaceWrite = Test-WorkflowRunHasWorkspaceWrite -Step $Step -WorkingDirectory $WorkingDirectory

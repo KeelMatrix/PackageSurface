@@ -405,6 +405,15 @@ function Get-WorkflowShellTokens {
     return $tokens.ToArray()
 }
 
+function Test-WorkflowPinnedScriptArgument {
+    param([Parameter(Mandatory)] [string] $Token)
+
+    $value = (ConvertFrom-WorkflowShellToken -Token $Token).Replace('\', '/')
+    $normalized = $value -replace '^\./', ''
+    if ($normalized -match '[\$`*?]' -or $normalized -match '(?:^|/)\.\.?(/|$)') { return $false }
+    return $normalized -match '(?i)^scripts/(?:[A-Za-z0-9_.-]+/)*[A-Za-z0-9_.-]+\.(?:ps1|sh|cmd|bat|py|js|rb|pl)$'
+}
+
 function Test-WorkflowRunContainsUnsupportedEvaluator {
     param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Text, [AllowNull()] [string] $Shell)
 
@@ -420,8 +429,49 @@ function Test-WorkflowRunContainsUnsupportedEvaluator {
     foreach ($pattern in $patterns) {
         if ($runText -match $pattern) { return $true }
     }
-    if ($Shell -match '^(?i:pwsh|powershell)$' -and $runText -match '(?m)(?:^|[;&|({]\s*)\.\s+\S') { return $true }
-    if ($Shell -match '^(?i:pwsh|powershell)$' -and $runText -match '(?m)(?:^|[;&|({]\s*)&\s*(?:\$|`|\(|["''])') { return $true }
+
+    # The source guard cannot inspect code supplied on stdin, through a here-document,
+    # or through a script outside the pinned checkout. Only static scripts/ paths are
+    # allowed as interpreter inputs; the workflow parser checks those paths are tracked.
+    $supportedInterpreters = '(?:bash|sh|dash|zsh|pwsh|powershell|python(?:\d+(?:\.\d+)*)?|node(?:js)?|ruby|perl)'
+    $absoluteInterpreterPattern = '(?im)(?:^|[;&|({\r\n]\s*|\b(?:then|do|if|while|until)\s+)(?:(?:env|command|exec|time|nohup|sudo)(?:\.exe)?\s+)*(?:&\s*)?(?:''[^''\r\n]*[\\/]' + $supportedInterpreters + '(?:\.exe)?''|"[^"\r\n]*[\\/]' + $supportedInterpreters + '(?:\.exe)?"|(?:[A-Za-z]:)?[\\/](?:[^\\/\s;&|()]+[\\/])*' + $supportedInterpreters + '(?:\.exe)?)(?=\s|$)'
+    if ($runText -match $absoluteInterpreterPattern) { return $true }
+    $interpreterPattern = '(?im)(?:^|[;&|({\r\n]\s*|\b(?:then|do|if|while|until)\s+)(?:!\s*)?(?:(?:env|command|exec|time|nohup|sudo)(?:\.exe)?\s+)*(?:&\s*)?(?<interpreter>' + $supportedInterpreters + ')(?:\.exe)?(?<arguments>[^;&|)\r\n]*)'
+    foreach ($invocation in [regex]::Matches($runText, $interpreterPattern)) {
+        $arguments = [string]$invocation.Groups['arguments'].Value
+        $scriptArguments = [regex]::Matches($arguments, '(?i)(?:"[^"\r\n]+\.(?:ps1|sh|cmd|bat|py|js|rb|pl)"|''[^''\r\n]+\.(?:ps1|sh|cmd|bat|py|js|rb|pl)''|[^\s;&|]+\.(?:ps1|sh|cmd|bat|py|js|rb|pl))')
+        $unsafeScriptArgument = $false
+        foreach ($scriptArgument in $scriptArguments) {
+            if (-not (Test-WorkflowPinnedScriptArgument -Token $scriptArgument.Value)) { $unsafeScriptArgument = $true; break }
+        }
+        if ($unsafeScriptArgument) { return $true }
+        if ($scriptArguments.Count -gt 0) { continue }
+
+        if ($arguments -match '(?i)(?:^|\s)(?:-s|--stdin|-|/dev/stdin|/dev/fd/\d+|CON)(?=\s|$)|(?:<<?<?\s*(?:/dev/stdin|/dev/fd/\d+|CON))|(?:<<<?)|(?:\$\(|<\()') { return $true }
+        if ($runText -match '<<<?' -and [string]::IsNullOrWhiteSpace($arguments)) { return $true }
+        $nonVersionArguments = $arguments.Trim() -replace '(?i)(?:^|\s)(?:--?(?:version|help)|-v)(?=\s|$)', ''
+        if (-not [string]::IsNullOrWhiteSpace($nonVersionArguments) -or [string]::IsNullOrWhiteSpace($arguments)) { return $true }
+    }
+
+    if ($Shell -match '^(?i:bash|sh|dash|zsh)$') {
+        foreach ($dotSource in [regex]::Matches($runText, '(?im)(?:^|[;&|({]\s*)\.\s+(?<path>"[^"\r\n]+"|''[^''\r\n]+''|[^\s;&|]+)')) {
+            if (-not (Test-WorkflowPinnedScriptArgument -Token $dotSource.Groups['path'].Value)) { return $true }
+        }
+    }
+    if ($Shell -match '^(?i:pwsh|powershell)$') {
+        foreach ($fileArgument in [regex]::Matches($runText, '(?i)(?<![A-Za-z0-9_.-])(?:pwsh|powershell)(?:\.exe)?[^;&|\r\n]*?\s-(?:file|f)(?:=|\s+)(?<path>"[^"\r\n]*"|''[^''\r\n]*''|[^\s;&|]+)')) {
+            if (-not (Test-WorkflowPinnedScriptArgument -Token $fileArgument.Groups['path'].Value)) { return $true }
+        }
+        foreach ($dotSource in [regex]::Matches($runText, '(?im)(?:^|[;&|({]\s*)\.\s+(?<path>"[^"\r\n]+"|''[^''\r\n]+''|[^\s;&|]+)')) {
+            if (-not (Test-WorkflowPinnedScriptArgument -Token $dotSource.Groups['path'].Value)) { return $true }
+        }
+        foreach ($scriptInvocation in [regex]::Matches($runText, '(?im)(?:^|[;&|({]\s*)&\s*(?<path>"[^"\r\n]+"|''[^''\r\n]+''|[^\s;&|]+)')) {
+            if (-not (Test-WorkflowPinnedScriptArgument -Token $scriptInvocation.Groups['path'].Value)) { return $true }
+        }
+        foreach ($directScript in [regex]::Matches($runText, '(?im)(?:^|[;&|({]\s*)(?<path>"[^"\r\n]+\.ps1"|''[^''\r\n]+\.ps1''|[^\s;&|]+\.ps1)(?=\s|$|[;&|])')) {
+            if (-not (Test-WorkflowPinnedScriptArgument -Token $directScript.Groups['path'].Value)) { return $true }
+        }
+    }
     return $false
 }
 

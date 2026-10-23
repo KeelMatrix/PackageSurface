@@ -354,6 +354,76 @@ fi
         if (-not $rejected) { throw "Workflow contract accepted $($case.Name)." }
     }
 
+    $workspaceWriteCases = @(
+        @{ Name = 'git diff output option to root tracked file'; Text = 'git diff --output=scripts/validate-release.ps1' },
+        @{ Name = 'git diff output option with separate nested tracked path'; Text = 'git diff --output src/KeelMatrix.PackageSurface.Cli/README.md' },
+        @{ Name = 'git diff quoted output option to root tracked file'; Text = 'git diff --output="scripts/validate-release.ps1"' },
+        @{ Name = 'git show output option with separate root tracked path'; Text = 'git show HEAD --output scripts/validate-release.ps1' },
+        @{ Name = 'git show output option to nested tracked file'; Text = 'git show HEAD --output=src/KeelMatrix.PackageSurface.Cli/README.md' },
+        @{ Name = 'git status redirected to root tracked file'; Text = 'git status --short > scripts/validate-release.ps1' },
+        @{ Name = 'shell append redirection to nested tracked file'; Text = 'printf payload >> src/KeelMatrix.PackageSurface.Cli/README.md'; Shell = 'bash' },
+        @{ Name = 'shell stderr redirection to root tracked file'; Text = 'printf payload 2> scripts/validate-release.ps1'; Shell = 'bash' },
+        @{ Name = 'shell combined redirection to nested tracked file'; Text = 'printf payload &> src/KeelMatrix.PackageSurface.Cli/README.md'; Shell = 'bash' },
+        @{ Name = 'shell append combined redirection to root tracked file'; Text = 'printf payload &>> scripts/validate-release.ps1'; Shell = 'bash' },
+        @{ Name = 'PowerShell redirection to root tracked file'; Text = 'Write-Output payload > scripts/validate-release.ps1'; Shell = 'pwsh' },
+        @{ Name = 'PowerShell redirection after quoted Windows path ending in backslash'; Text = 'Write-Output payload "C:\folder\" > scripts/validate-release.ps1'; Shell = 'pwsh' },
+        @{ Name = 'PowerShell append redirection to nested tracked file'; Text = 'Write-Output payload >> src/KeelMatrix.PackageSurface.Cli/README.md'; Shell = 'pwsh' },
+        @{ Name = 'PowerShell all-stream redirection to root tracked file'; Text = 'Write-Output payload *> scripts/validate-release.ps1'; Shell = 'pwsh' },
+        @{ Name = 'dynamic redirection destination'; Text = 'Write-Output payload > $env:TARGET'; Shell = 'pwsh' },
+        @{ Name = 'workspace-variable redirection destination'; Text = 'printf payload > "$GITHUB_WORKSPACE/scripts/validate-release.ps1"'; Shell = 'bash' },
+        @{ Name = 'Copy-Item to root tracked file'; Text = 'Copy-Item source scripts/validate-release.ps1'; Shell = 'pwsh' },
+        @{ Name = 'cp to nested tracked file'; Text = 'cp source src/KeelMatrix.PackageSurface.Cli/README.md'; Shell = 'bash' },
+        @{ Name = 'Set-Content to root tracked file'; Text = 'Set-Content -Path scripts/validate-release.ps1 -Value payload'; Shell = 'pwsh' },
+        @{ Name = 'Set-Content equals-form path option to nested tracked file'; Text = 'Set-Content -Path="src/KeelMatrix.PackageSurface.Cli/README.md" -Value payload'; Shell = 'pwsh' },
+        @{ Name = 'Add-Content to nested tracked file'; Text = 'Add-Content -LiteralPath src/KeelMatrix.PackageSurface.Cli/README.md -Value payload'; Shell = 'pwsh' },
+        @{ Name = 'Out-File to nested tracked file'; Text = 'Out-File -FilePath src/KeelMatrix.PackageSurface.Cli/README.md -InputObject payload'; Shell = 'pwsh' },
+        @{ Name = 'New-Item to root tracked file'; Text = 'New-Item -ItemType File -Path scripts/validate-release.ps1 -Force'; Shell = 'pwsh' },
+        @{ Name = 'Remove-Item from nested tracked file'; Text = 'Remove-Item -LiteralPath src/KeelMatrix.PackageSurface.Cli/README.md'; Shell = 'pwsh' },
+        @{ Name = 'touch nested tracked file'; Text = 'touch src/KeelMatrix.PackageSurface.Cli/README.md'; Shell = 'bash' },
+        @{ Name = 'sed in-place edit to root tracked file'; Text = 'sed -i s/old/new/ scripts/validate-release.ps1'; Shell = 'bash' },
+        @{ Name = 'dynamic direct-writer destination'; Text = 'Copy-Item source $env:TARGET'; Shell = 'pwsh' },
+        @{ Name = 'dynamic Git output destination'; Text = 'git diff --output=$env:TARGET'; Shell = 'pwsh' },
+        @{ Name = 'single-quoted runner-temp-looking destination'; Text = 'Copy-Item source ''$RUNNER_TEMP/package-surface.txt'''; Shell = 'bash' },
+        @{ Name = 'runner-temp path that traverses out of the temporary directory'; Text = 'cp source "$RUNNER_TEMP/../PackageSurface/scripts/validate-release.ps1"'; Shell = 'bash' },
+        @{ Name = 'dynamic runner-temp suffix'; Text = 'cp source "$RUNNER_TEMP/$RELATIVE_PATH"'; Shell = 'bash' },
+        @{ Name = 'unsupported direct-writer destination'; Text = 'cp source'; Shell = 'bash' }
+    )
+    foreach ($case in $workspaceWriteCases) {
+        foreach ($position in @('before artifact download', 'after artifact download', 'between guarded invocations')) {
+            $runStep = @{ Name = $case.Name; Text = $case.Text }
+            if ($case.ContainsKey('Shell')) { $runStep.Shell = $case.Shell }
+            $fixtureArguments = @{ ScriptPath = $script }
+            if ($position -eq 'before artifact download') { $fixtureArguments.RunsBeforeDownload = @($runStep) }
+            elseif ($position -eq 'after artifact download') { $fixtureArguments.RunsAfterDownload = @($runStep) }
+            else {
+                $fixtureArguments.SecondInvocation = $true
+                $fixtureArguments.RunsBetweenInvocations = @($runStep)
+            }
+            $fixture = New-WorkflowGitScriptConsumerFixture @fixtureArguments
+            $rejected = $false
+            try {
+                $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'workspace-write.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot
+            }
+            catch { $rejected = $true }
+            if (-not $rejected) { throw "Workflow contract accepted $($case.Name) $position." }
+        }
+    }
+
+    $safeExternalWriteCases = @(
+        @{ Name = 'Git output outside workspace'; Text = 'git diff --output=$RUNNER_TEMP/package-surface.patch'; Shell = 'bash' },
+        @{ Name = 'Quoted Git output outside workspace'; Text = 'git diff --output="$RUNNER_TEMP/package-surface.patch"'; Shell = 'bash' },
+        @{ Name = 'Shell output outside workspace'; Text = 'printf payload > "$RUNNER_TEMP/package-surface.txt"'; Shell = 'bash' },
+        @{ Name = 'Copy outside workspace'; Text = 'Copy-Item source $env:RUNNER_TEMP/package-surface.txt'; Shell = 'pwsh' },
+        @{ Name = 'Named copy destination outside workspace'; Text = 'Copy-Item source -Destination "$env:RUNNER_TEMP/package-surface.txt"'; Shell = 'pwsh' }
+    )
+    foreach ($case in $safeExternalWriteCases) {
+        $fixture = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @($case)
+        $result = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'safe-external-write.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('safe-external-write.yml/future-consumer'))
+        if ($result.Count -ne 1 -or $result[0].Scripts -notcontains $script) {
+            throw "File write '$($case.Name)' to a destination under runner.temp must preserve pinned workspace source."
+        }
+    }
+
     $sameStepCommandChain = New-WorkflowGitScriptConsumerFixture -ScriptPath $script
     $scriptCommand = '          pwsh -NoLogo -NoProfile -File ./' + $script
     $sameStepCommandChain = $sameStepCommandChain.Replace($scriptCommand, '          git fetch origin main; git checkout FETCH_HEAD' + [Environment]::NewLine + $scriptCommand)
@@ -702,7 +772,7 @@ try {
     # exercised through synthetic jobs while the workflow parser below enforces that
     # the real consumers do not invoke repository scripts after downloading artifacts.
     Assert-WorkflowScriptSourceRegressionCoverage -CurrentConsumers @() -RepositoryRoot $root
-    Write-Output 'PASS: checkout-source guard tracks action and shell source state through artifact boundaries, command chains, and guarded script invocations.'
+    Write-Output 'PASS: checkout-source guard tracks action and shell source state, file-output side effects, artifact boundaries, command chains, and guarded script invocations.'
     if ($SourceGuardOnly) { return }
     $trackedRepositoryFiles = @(git -C $root ls-files)
     if ($LASTEXITCODE -ne 0) { throw 'Unable to enumerate tracked repository files for workflow-consumer checks.' }

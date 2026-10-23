@@ -441,6 +441,250 @@ function Test-WorkflowStandalonePinnedGitRestore {
     return Test-WorkflowPinnedGitRef -RefToken $refToken -Shell $Step.Shell
 }
 
+function Test-WorkflowWriteTargetIsOutsideWorkspace {
+    param([AllowEmptyString()] [string] $Token)
+
+    if ([string]::IsNullOrWhiteSpace($Token)) { return $false }
+    $raw = $Token.Trim()
+    $value = ConvertFrom-WorkflowShellToken -Token $raw
+    $normalized = $value.Replace('\', '/')
+    $singleQuotedLiteral = $raw.StartsWith("'", [StringComparison]::Ordinal) -and $raw.EndsWith("'", [StringComparison]::Ordinal)
+    if ($singleQuotedLiteral -and $normalized -match '(?:\$|%[A-Za-z_][A-Za-z0-9_]*%)') { return $false }
+
+    if ($normalized -match '^(?i:NUL(?::)?|/dev/null)$') { return $true }
+    $safeExternalRoot = $null
+
+    # GitHub runner.temp is outside github.workspace on every supported runner.
+    if ($null -eq $safeExternalRoot -and $normalized -match '^(?i:(?<root>\$env:RUNNER_TEMP|\$RUNNER_TEMP|\$\{(?:env:)?RUNNER_TEMP\}|%RUNNER_TEMP%|\$\{\{\s*runner\.temp\s*\}\})(?<suffix>/.*)?$)') {
+        if ($singleQuotedLiteral) { return $false }
+        $safeExternalRoot = $Matches['root']
+        $suffix = $Matches['suffix']
+    }
+    if ($null -ne $safeExternalRoot) {
+        if ([string]$suffix -match '[\$`%*?\[\]{}]') { return $false }
+        $depth = 0
+        foreach ($component in ([string]$suffix).TrimStart('/') -split '/') {
+            if ([string]::IsNullOrEmpty($component) -or $component -eq '.') { continue }
+            if ($component -eq '..') { $depth--; if ($depth -lt 0) { return $false }; continue }
+            $depth++
+        }
+        return $true
+    }
+
+    # Workspace expressions are known to target the checked-out source tree.
+    if ($normalized -match '^(?i:\$env:GITHUB_WORKSPACE|\$GITHUB_WORKSPACE|\$\{GITHUB_WORKSPACE\}|\$\{\{\s*github\.workspace\s*\}\})(?:/|$)') { return $false }
+
+    # A dynamic, absolute, or otherwise unrecognized target cannot be proven safe.
+    return $false
+}
+
+function Test-WorkflowShellEscapeSequence {
+    param([AllowNull()] [string] $Shell, [char] $Quote, [char] $Escape, [char] $Next)
+
+    if ($Shell -match '^(?i:pwsh|powershell)$') { return $Escape -eq '`' }
+    if ($Shell -match '^(?i:bash|sh)$' -and $Escape -eq '\') {
+        if ($Quote -eq "'") { return $false }
+        if ($Quote -eq '"') { return $Next -in @('"', '$', '\', '`', "`n") }
+        return $true
+    }
+    return $false
+}
+
+function Get-WorkflowShellRedirectionTargets {
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Text, [AllowNull()] [string] $Shell)
+
+    $targets = [Collections.Generic.List[string]]::new()
+    $quote = [char]0
+    for ($index = 0; $index -lt $Text.Length; $index++) {
+        $character = $Text[$index]
+        if ($quote -ne [char]0) {
+            if ($index + 1 -lt $Text.Length -and (Test-WorkflowShellEscapeSequence -Shell $Shell -Quote $quote -Escape $character -Next $Text[$index + 1])) { $index++; continue }
+            if ($character -eq $quote) { $quote = [char]0; continue }
+            continue
+        }
+        if ($character -eq '"' -or $character -eq "'") { $quote = $character; continue }
+        if ($index + 1 -lt $Text.Length -and (Test-WorkflowShellEscapeSequence -Shell $Shell -Quote ([char]0) -Escape $character -Next $Text[$index + 1])) { $index++; continue }
+        if ($character -eq '#' -and ($index -eq 0 -or [char]::IsWhiteSpace($Text[$index - 1]))) {
+            while ($index -lt $Text.Length -and $Text[$index] -ne "`n") { $index++ }
+            continue
+        }
+        if ($character -ne '>' -or ($index -gt 0 -and $Text[$index - 1] -eq '<')) { continue }
+
+        $operatorEnd = $index + 1
+        if ($operatorEnd -lt $Text.Length -and $Text[$operatorEnd] -eq '>') { $operatorEnd++ }
+        $targetStart = $operatorEnd
+        while ($targetStart -lt $Text.Length -and [char]::IsWhiteSpace($Text[$targetStart])) { $targetStart++ }
+        if ($targetStart -lt $Text.Length -and $Text[$targetStart] -eq '&') {
+            $descriptor = [regex]::Match($Text.Substring($targetStart), '^&(?:\d+|-)(?=$|[\s;&|])')
+            if ($descriptor.Success) { $index = $targetStart + $descriptor.Length - 1; continue }
+        }
+
+        if ($targetStart -ge $Text.Length -or $Text[$targetStart] -in @(';', '|', '&', "`r", "`n")) {
+            $targets.Add('')
+            $index = $operatorEnd - 1
+            continue
+        }
+
+        $targetEnd = $targetStart
+        if ($Text[$targetStart] -eq '"' -or $Text[$targetStart] -eq "'") {
+            $targetQuote = $Text[$targetStart]
+            $targetEnd++
+            while ($targetEnd -lt $Text.Length) {
+                if ($targetEnd + 1 -lt $Text.Length -and (Test-WorkflowShellEscapeSequence -Shell $Shell -Quote $targetQuote -Escape $Text[$targetEnd] -Next $Text[$targetEnd + 1])) { $targetEnd += 2; continue }
+                if ($Text[$targetEnd] -eq $targetQuote) { $targetEnd++; break }
+                $targetEnd++
+            }
+            $targets.Add($Text.Substring($targetStart, [Math]::Min($targetEnd, $Text.Length) - $targetStart))
+        }
+        else {
+            while ($targetEnd -lt $Text.Length -and -not [char]::IsWhiteSpace($Text[$targetEnd]) -and $Text[$targetEnd] -notin @(';', '|', '&')) { $targetEnd++ }
+            $targets.Add($Text.Substring($targetStart, $targetEnd - $targetStart))
+        }
+        $index = [Math]::Max($index, $targetEnd - 1)
+    }
+    return $targets.ToArray()
+}
+
+function Get-WorkflowDirectWriterInvocations {
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Text, [AllowNull()] [string] $Shell)
+
+    $names = @('Copy-Item', 'Set-Content', 'Add-Content', 'Clear-Content', 'Out-File', 'Tee-Object', 'New-Item', 'Move-Item', 'Remove-Item', 'Rename-Item', 'robocopy', 'xcopy', 'truncate', 'install', 'touch', 'erase', 'rename', 'copy', 'move', 'cp', 'mv', 'rm', 'del', 'tee', 'sed', 'perl')
+    $names = @($names | Sort-Object { $_.Length } -Descending)
+    $matches = [Collections.Generic.List[object]]::new()
+    $quote = [char]0
+    for ($index = 0; $index -lt $Text.Length; $index++) {
+        $character = $Text[$index]
+        if ($quote -ne [char]0) {
+            if ($index + 1 -lt $Text.Length -and (Test-WorkflowShellEscapeSequence -Shell $Shell -Quote $quote -Escape $character -Next $Text[$index + 1])) { $index++; continue }
+            if ($character -eq $quote) { $quote = [char]0; continue }
+            continue
+        }
+        if ($character -eq '"' -or $character -eq "'") { $quote = $character; continue }
+        if ($index + 1 -lt $Text.Length -and (Test-WorkflowShellEscapeSequence -Shell $Shell -Quote ([char]0) -Escape $character -Next $Text[$index + 1])) { $index++; continue }
+        if ($character -eq '#' -and ($index -eq 0 -or [char]::IsWhiteSpace($Text[$index - 1]))) {
+            while ($index -lt $Text.Length -and $Text[$index] -ne "`n") { $index++ }
+            continue
+        }
+        if ($index -gt 0 -and -not [char]::IsWhiteSpace($Text[$index - 1]) -and $Text[$index - 1] -notin @(';', '|', '&', '{', '}', '(', ')')) { continue }
+
+        foreach ($name in $names) {
+            if ($index + $name.Length -gt $Text.Length -or -not $Text.Substring($index, $name.Length).Equals($name, [StringComparison]::OrdinalIgnoreCase)) { continue }
+            $end = $index + $name.Length
+            if ($end -lt $Text.Length -and -not [char]::IsWhiteSpace($Text[$end]) -and $Text[$end] -notin @(';', '|', '&', '}', ')')) { continue }
+            $matches.Add([pscustomobject]@{ Name = $name; End = $end })
+            $index = $end - 1
+            break
+        }
+    }
+    return $matches.ToArray()
+}
+
+function Get-WorkflowDirectWriterTargets {
+    param([Parameter(Mandatory)] [string] $Name, [Parameter(Mandatory)] [string[]] $Arguments)
+
+    $pathOptions = @('-path', '-literalpath', '-filepath', '-destination', '-target', '--target-directory', '-t')
+    $namedTargets = [Collections.Generic.List[string]]::new()
+    for ($index = 0; $index -lt $Arguments.Count; $index++) {
+        $argument = [string]$Arguments[$index]
+        $value = ConvertFrom-WorkflowShellToken -Token $argument
+        $separator = $value.IndexOfAny(@('=', ':'))
+        $option = if ($separator -ge 0) { $value.Substring(0, $separator).ToLowerInvariant() } else { $value.ToLowerInvariant() }
+        if ($option -notin $pathOptions) { continue }
+        if ($separator -ge 0) {
+            $target = $value.Substring($separator + 1)
+            if ([string]::IsNullOrEmpty($target) -and $index + 1 -lt $Arguments.Count) {
+                $index++
+                $target = [string]$Arguments[$index]
+            }
+            $namedTargets.Add($target)
+        }
+        elseif ($index + 1 -lt $Arguments.Count) {
+            $index++
+            $namedTargets.Add([string]$Arguments[$index])
+        }
+        else { $namedTargets.Add('') }
+    }
+    if ($namedTargets.Count -gt 0) { return $namedTargets.ToArray() }
+
+    $positional = [Collections.Generic.List[string]]::new()
+    for ($index = 0; $index -lt $Arguments.Count; $index++) {
+        $value = ConvertFrom-WorkflowShellToken -Token ([string]$Arguments[$index])
+        if ([string]::IsNullOrWhiteSpace($value) -or $value.StartsWith('-', [StringComparison]::Ordinal) -or $value -in @('{', '}', 'then', 'fi', 'do', 'done')) { continue }
+        $positional.Add([string]$Arguments[$index])
+    }
+
+    $lowerName = $Name.ToLowerInvariant()
+    if ($lowerName -in @('copy-item', 'copy', 'cp', 'xcopy', 'robocopy')) {
+        if ($positional.Count -lt 2) { return @('') }
+        return @($positional[$positional.Count - 1])
+    }
+    if ($lowerName -in @('set-content', 'add-content', 'clear-content', 'out-file', 'tee-object', 'new-item')) {
+        if ($positional.Count -eq 0) { return @('') }
+        return @($positional[0])
+    }
+    if ($lowerName -in @('sed', 'perl')) {
+        if (@($Arguments | Where-Object { (ConvertFrom-WorkflowShellToken -Token ([string]$_)) -match '^-i(?:.*)?$' }).Count -eq 0) { return @() }
+        if ($positional.Count -eq 0) { return @('') }
+        return $positional.ToArray()
+    }
+    if ($positional.Count -eq 0) { return @('') }
+    return $positional.ToArray()
+}
+
+function Test-WorkflowRunHasWorkspaceWrite {
+    param([Parameter(Mandatory)] [object] $Step, [Parameter(Mandatory)] [AllowEmptyString()] [string] $WorkingDirectory)
+
+    $runText = [string]$Step.RunText
+    foreach ($target in (Get-WorkflowShellRedirectionTargets -Text $runText -Shell $Step.Shell)) {
+        if (-not (Test-WorkflowWriteTargetIsOutsideWorkspace -Token $target)) { return $true }
+    }
+
+    $gitMatches = [regex]::Matches($runText, '(?i)(?<![A-Za-z0-9_.-])git(?:\.exe)?(?=\s|$)')
+    foreach ($match in $gitMatches) {
+        $tail = $runText.Substring($match.Index + $match.Length)
+        $separator = [regex]::Match($tail, '[;&|\r\n]')
+        if ($separator.Success) { $tail = $tail.Substring(0, $separator.Index) }
+        $words = @(Get-WorkflowShellTokens -Text $tail)
+        for ($index = 0; $index -lt $words.Count; $index++) {
+            $word = ConvertFrom-WorkflowShellToken -Token ([string]$words[$index])
+            $target = $null
+            if ($word -match '^(?i:--out(?:put(?:-file)?)?)(?:=(?<path>.*))?$') {
+                if ($Matches.ContainsKey('path') -and $word.Contains('=')) {
+                    $target = $Matches['path']
+                    if ([string]::IsNullOrEmpty($target) -and $index + 1 -lt $words.Count) { $index++; $target = [string]$words[$index] }
+                }
+                elseif ($index + 1 -lt $words.Count) { $index++; $target = [string]$words[$index] }
+                else { return $true }
+            }
+            if ($null -ne $target -and -not (Test-WorkflowWriteTargetIsOutsideWorkspace -Token $target)) { return $true }
+        }
+    }
+
+    foreach ($invocation in (Get-WorkflowDirectWriterInvocations -Text $runText -Shell $Step.Shell)) {
+        $tailStart = [int]$invocation.End
+        $tailEnd = $runText.Length
+        $quote = [char]0
+        for ($index = $tailStart; $index -lt $runText.Length; $index++) {
+            $character = $runText[$index]
+            if ($quote -ne [char]0) {
+                if ($index + 1 -lt $runText.Length -and (Test-WorkflowShellEscapeSequence -Shell $Step.Shell -Quote $quote -Escape $character -Next $runText[$index + 1])) { $index++; continue }
+                if ($character -eq $quote) { $quote = [char]0; continue }
+                continue
+            }
+            if ($character -eq '"' -or $character -eq "'") { $quote = $character; continue }
+            if ($index + 1 -lt $runText.Length -and (Test-WorkflowShellEscapeSequence -Shell $Step.Shell -Quote ([char]0) -Escape $character -Next $runText[$index + 1])) { $index++; continue }
+            if ($character -in @(';', '|', '&', "`r", "`n")) { $tailEnd = $index; break }
+        }
+        $argumentsText = $runText.Substring($tailStart, $tailEnd - $tailStart)
+        $arguments = @(Get-WorkflowShellTokens -Text $argumentsText)
+        $targets = @(Get-WorkflowDirectWriterTargets -Name ([string]$invocation.Name) -Arguments $arguments)
+        foreach ($target in $targets) {
+            if (-not (Test-WorkflowWriteTargetIsOutsideWorkspace -Token ([string]$target))) { return $true }
+        }
+    }
+    return $false
+}
+
 function Get-WorkflowRunSourceEffect {
     param(
         [Parameter(Mandatory)] [object] $Step,
@@ -450,6 +694,7 @@ function Get-WorkflowRunSourceEffect {
     $runText = [string]$Step.RunText
     $gitMatches = [regex]::Matches($runText, '(?i)(?<![A-Za-z0-9_.-])git(?:\.exe)?(?=\s|$)')
     $hasSourceMutation = $false
+    $hasWorkspaceWrite = Test-WorkflowRunHasWorkspaceWrite -Step $Step -WorkingDirectory $WorkingDirectory
     $nonSourceChangingGitVerbs = @('status', 'log', 'diff', 'show', 'rev-parse', 'ls-files', 'describe', 'cat-file', 'fetch')
     $sourceChangingGitVerbs = @('checkout', 'switch', 'restore', 'reset', 'pull', 'merge', 'rebase', 'cherry-pick', 'revert', 'am', 'apply', 'read-tree', 'clean', 'worktree', 'submodule', 'clone')
 
@@ -476,7 +721,8 @@ function Get-WorkflowRunSourceEffect {
     if ($runText -match '(?i)(?<![A-Za-z0-9_.-])(?:hg\s+(?:update|checkout|clone|pull)|svn\s+(?:switch|checkout|update)|gh\s+repo\s+clone)\b') {
         $hasSourceMutation = $true
     }
-    if (-not $hasSourceMutation) { return 'None' }
+    if (-not $hasSourceMutation -and -not $hasWorkspaceWrite) { return 'None' }
+    if ($hasWorkspaceWrite) { return 'Mutation' }
     if ($gitMatches.Count -gt 0 -and (Test-WorkflowStandalonePinnedGitRestore -Step $Step -WorkingDirectory $WorkingDirectory)) { return 'Restore' }
     return 'Mutation'
 }
@@ -617,7 +863,7 @@ function Assert-ArtifactScriptConsumersHaveSource {
                     }
                     elseif ($sourceEffect -eq 'Mutation') {
                         $effectiveCheckoutValid = $false
-                        $effectiveCheckoutFailure = 'a run step contains a source-changing or unsupported Git command'
+                        $effectiveCheckoutFailure = 'a run step can change workspace source or has an unsupported write destination'
                     }
                 }
 

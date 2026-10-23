@@ -275,6 +275,18 @@ function Assert-WorkflowScriptSourceRegressionCoverage {
         }
     }
 
+    $cleanTrueFixture = New-WorkflowScriptConsumerFixture -ScriptPath $script
+    $cleanTrueFixture = $cleanTrueFixture.Replace('          ref: ${{ github.sha }}', ('          clean: true' + [Environment]::NewLine + '          ref: ${{ github.sha }}'))
+    $cleanTrueResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'clean-true.yml'; Text = $cleanTrueFixture }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('clean-true.yml/future-consumer'))
+    if ($cleanTrueResult.Count -ne 1 -or $cleanTrueResult[0].Scripts -notcontains $script) { throw 'An explicit clean: true checkout must remain a valid pinned-source control.' }
+    foreach ($cleanValue in @('false', '${{ inputs.clean }}')) {
+        $uncleanFixture = New-WorkflowScriptConsumerFixture -ScriptPath $script
+        $uncleanFixture = $uncleanFixture.Replace('          ref: ${{ github.sha }}', ('          clean: ' + $cleanValue + [Environment]::NewLine + '          ref: ${{ github.sha }}'))
+        $rejected = $false
+        try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'unclean-checkout.yml'; Text = $uncleanFixture }) -RepositoryRoot $RepositoryRoot }
+        catch { $rejected = $true }
+        if (-not $rejected) { throw "Checkout clean value '$cleanValue' must not claim restored tracked content." }
+    }
     $quotedUses = New-WorkflowScriptConsumerFixture -ScriptPath $script -CheckoutUses "'actions/checkout@v4'" -CheckoutPath "'./.'"
     $quotedResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'quoted-uses.yml'; Text = $quotedUses }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('quoted-uses.yml/future-consumer'))
     if ($quotedResult.Count -ne 1 -or $quotedResult[0].Scripts -notcontains $script) { throw 'Quoted action uses and a quoted portable workspace-root path must pass.' }
@@ -355,6 +367,23 @@ fi
     }
 
     $workspaceWriteCases = @(
+        @{ Name = 'curl -o root tracked response'; Text = 'curl https://host/payload -o CHANGELOG.md'; Shell = 'bash' },
+        @{ Name = 'curl --output nested tracked response'; Text = 'curl --output src/KeelMatrix.PackageSurface.Cli/README.md https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl --output equals quoted root response'; Text = 'curl https://host/payload --output="CHANGELOG.md"'; Shell = 'bash' },
+        @{ Name = 'curl attached -o nested response'; Text = 'curl -osrc/KeelMatrix.PackageSurface.Cli/README.md https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl remote-name response'; Text = 'curl -O https://host/validate-release.ps1'; Shell = 'bash' },
+        @{ Name = 'curl output directory with remote name'; Text = 'curl --output-dir "$GITHUB_WORKSPACE/scripts" -O https://host/validate-release.ps1'; Shell = 'bash' },
+        @{ Name = 'wget -O root tracked response'; Text = 'wget https://host/payload -O CHANGELOG.md'; Shell = 'bash' },
+        @{ Name = 'wget output-document nested response'; Text = 'wget --output-document=src/KeelMatrix.PackageSurface.Cli/README.md https://host/payload'; Shell = 'bash' },
+        @{ Name = 'Invoke-WebRequest OutFile root response'; Text = 'Invoke-WebRequest -Uri https://host/payload -OutFile CHANGELOG.md'; Shell = 'pwsh' },
+        @{ Name = 'Invoke-WebRequest equals OutFile nested response'; Text = 'Invoke-WebRequest -Uri https://host/payload -OutFile=src/KeelMatrix.PackageSurface.Cli/README.md'; Shell = 'pwsh' },
+        @{ Name = 'Invoke-WebRequest colon OutFile root response'; Text = 'Invoke-WebRequest -Uri https://host/payload -OutFile:scripts/validate-release.ps1'; Shell = 'pwsh' },
+        @{ Name = 'Invoke-RestMethod OutFile nested response'; Text = 'Invoke-RestMethod -Uri https://host/payload -OutFile src/KeelMatrix.PackageSurface.Cli/README.md'; Shell = 'pwsh' },
+        @{ Name = 'irm OutFile root response'; Text = 'irm -Uri https://host/payload -OutFile scripts/validate-release.ps1'; Shell = 'pwsh' },
+        @{ Name = 'Bash RUNNER_TEMP reassigned to workspace root'; Text = 'RUNNER_TEMP="$GITHUB_WORKSPACE"; cp source "$RUNNER_TEMP/CHANGELOG.md"'; Shell = 'bash' },
+        @{ Name = 'Bash RUNNER_TEMP reassigned to nested tracked path'; Text = 'RUNNER_TEMP="$GITHUB_WORKSPACE"; cp source "$RUNNER_TEMP/src/KeelMatrix.PackageSurface.Cli/README.md"'; Shell = 'bash' },
+        @{ Name = 'PowerShell RUNNER_TEMP reassigned to workspace root'; Text = '$env:RUNNER_TEMP = "$env:GITHUB_WORKSPACE"; Copy-Item source "$env:RUNNER_TEMP/CHANGELOG.md"'; Shell = 'pwsh' },
+        @{ Name = 'PowerShell RUNNER_TEMP reassigned to nested tracked path'; Text = '$env:RUNNER_TEMP = "$env:GITHUB_WORKSPACE"; Invoke-WebRequest -Uri https://host/payload -OutFile "$env:RUNNER_TEMP/src/KeelMatrix.PackageSurface.Cli/README.md"'; Shell = 'pwsh' },
         @{ Name = 'git diff output option to root tracked file'; Text = 'git diff --output=scripts/validate-release.ps1' },
         @{ Name = 'git diff output option with separate nested tracked path'; Text = 'git diff --output src/KeelMatrix.PackageSurface.Cli/README.md' },
         @{ Name = 'git diff quoted output option to root tracked file'; Text = 'git diff --output="scripts/validate-release.ps1"' },
@@ -409,12 +438,42 @@ fi
         }
     }
 
+    $writeThenPinnedShellCheckoutCases = @(
+        @{ Name = 'pinned detached checkout'; Text = ('git checkout --detach ''' + [char]36 + '{{ github.sha }}' + '''') },
+        @{ Name = 'pinned detached switch'; Text = ('git switch --detach ''' + [char]36 + '{{ github.sha }}' + '''') }
+    )
+    foreach ($restoreCase in $writeThenPinnedShellCheckoutCases) {
+        foreach ($position in @('before artifact download', 'after artifact download', 'between guarded invocations')) {
+            $writeStep = @{ Name = 'Write tracked source'; Text = 'cp source ' + $script; Shell = 'bash' }
+            $restoreStep = @{ Name = $restoreCase.Name; Text = $restoreCase.Text; Shell = 'bash' }
+            $fixtureArguments = @{ ScriptPath = $script }
+            if ($position -eq 'before artifact download') { $fixtureArguments.RunsBeforeDownload = @($writeStep, $restoreStep) }
+            elseif ($position -eq 'after artifact download') { $fixtureArguments.RunsAfterDownload = @($writeStep, $restoreStep) }
+            else {
+                $fixtureArguments.SecondInvocation = $true
+                $fixtureArguments.RunsBetweenInvocations = @($writeStep, $restoreStep)
+            }
+            $fixture = New-WorkflowGitScriptConsumerFixture @fixtureArguments
+            $rejected = $false
+            try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'write-then-shell-checkout.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot }
+            catch { $rejected = $true }
+            if (-not $rejected) { throw "Pinned shell $($restoreCase.Name) falsely restored tracked source $position." }
+        }
+    }
+    $runnerTempExpression = ([char]36).ToString() + '{{runner.temp}}'
+    $runnerTempSpacedExpression = ([char]36).ToString() + '{{ runner.temp }}'
     $safeExternalWriteCases = @(
-        @{ Name = 'Git output outside workspace'; Text = 'git diff --output=$RUNNER_TEMP/package-surface.patch'; Shell = 'bash' },
-        @{ Name = 'Quoted Git output outside workspace'; Text = 'git diff --output="$RUNNER_TEMP/package-surface.patch"'; Shell = 'bash' },
-        @{ Name = 'Shell output outside workspace'; Text = 'printf payload > "$RUNNER_TEMP/package-surface.txt"'; Shell = 'bash' },
-        @{ Name = 'Copy outside workspace'; Text = 'Copy-Item source $env:RUNNER_TEMP/package-surface.txt'; Shell = 'pwsh' },
-        @{ Name = 'Named copy destination outside workspace'; Text = 'Copy-Item source -Destination "$env:RUNNER_TEMP/package-surface.txt"'; Shell = 'pwsh' }
+        @{ Name = 'Git output outside workspace'; Text = 'git diff --output=' + $runnerTempExpression + '/package-surface.patch'; Shell = 'bash' },
+        @{ Name = 'Quoted Git output outside workspace'; Text = 'git diff --output "' + $runnerTempSpacedExpression + '/package-surface.patch"'; Shell = 'bash' },
+        @{ Name = 'Quoted Git output compact expression'; Text = 'git diff --output "' + $runnerTempExpression + '/package-surface.patch"'; Shell = 'bash' },
+        @{ Name = 'Shell output outside workspace'; Text = 'printf payload > "${{ runner.temp }}/package-surface.txt"'; Shell = 'bash' },
+        @{ Name = 'Copy outside workspace'; Text = 'Copy-Item source "${{ runner.temp }}/package-surface.txt"'; Shell = 'pwsh' },
+        @{ Name = 'Named copy destination outside workspace'; Text = 'Copy-Item source -Destination "${{ runner.temp }}/package-surface.txt"'; Shell = 'pwsh' },
+        @{ Name = 'curl response outside workspace'; Text = 'curl --output "${{ runner.temp }}/payload.txt" https://host/payload'; Shell = 'bash' },
+        @{ Name = 'Invoke-WebRequest response outside workspace'; Text = 'Invoke-WebRequest -Uri https://host/payload -OutFile "${{ runner.temp }}/payload.txt"'; Shell = 'pwsh' },
+        @{ Name = 'Invoke-RestMethod response outside workspace'; Text = 'Invoke-RestMethod -Uri https://host/payload -OutFile "${{ runner.temp }}/payload.txt"'; Shell = 'pwsh' },
+        @{ Name = 'curl response to stdout'; Text = 'curl -o - https://host/payload'; Shell = 'bash' },
+        @{ Name = 'Invoke-WebRequest response without OutFile'; Text = 'Invoke-WebRequest -Uri https://host/payload'; Shell = 'pwsh' }
     )
     foreach ($case in $safeExternalWriteCases) {
         $fixture = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @($case)
@@ -439,19 +498,17 @@ fi
     $safeGitResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'safe-git.yml'; Text = $safeGitFixture }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('safe-git.yml/future-consumer'))
     if ($safeGitResult.Count -ne 1 -or $safeGitResult[0].Scripts -notcontains $script) { throw 'Read-only Git status and diff commands must preserve the pinned source state.' }
 
-    $shellRestoreBeforeDownload = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsBeforeDownload @(
-        @{ Name = 'Replace source'; Text = 'git checkout main' },
-        @{ Name = 'Restore pinned source'; Text = 'git checkout --detach ''${{ github.sha }}''' }
+    $shellPinnedBeforeDownload = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsBeforeDownload @(
+        @{ Name = 'Keep pinned source'; Text = 'git checkout --detach ''${{ github.sha }}''' }
     )
-    $shellRestoreBeforeResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'restore-before-download.yml'; Text = $shellRestoreBeforeDownload }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('restore-before-download.yml/future-consumer'))
-    if ($shellRestoreBeforeResult.Count -ne 1 -or $shellRestoreBeforeResult[0].Scripts -notcontains $script) { throw 'An unconditional root checkout pinned to github.sha must restore source before artifact download.' }
+    $shellPinnedBeforeResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'pinned-before-download.yml'; Text = $shellPinnedBeforeDownload }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('pinned-before-download.yml/future-consumer'))
+    if ($shellPinnedBeforeResult.Count -ne 1 -or $shellPinnedBeforeResult[0].Scripts -notcontains $script) { throw 'A pinned shell checkout must preserve already-valid source before artifact download.' }
 
-    $shellRestoreAfterDownload = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @(
-        @{ Name = 'Replace source'; Text = 'git checkout main' },
-        @{ Name = 'Restore pinned source'; Text = 'git -C "$GITHUB_WORKSPACE" switch --detach $GITHUB_SHA'; Shell = 'bash' }
+    $shellPinnedAfterDownload = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @(
+        @{ Name = 'Keep pinned source'; Text = 'git -C "$GITHUB_WORKSPACE" switch --detach $GITHUB_SHA'; Shell = 'bash' }
     )
-    $shellRestoreAfterResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'restore-after-download.yml'; Text = $shellRestoreAfterDownload }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('restore-after-download.yml/future-consumer'))
-    if ($shellRestoreAfterResult.Count -ne 1 -or $shellRestoreAfterResult[0].Scripts -notcontains $script) { throw 'An unconditional root git -C switch to GITHUB_SHA must restore source before script invocation.' }
+    $shellPinnedAfterResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'pinned-after-download.yml'; Text = $shellPinnedAfterDownload }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('pinned-after-download.yml/future-consumer'))
+    if ($shellPinnedAfterResult.Count -ne 1 -or $shellPinnedAfterResult[0].Scripts -notcontains $script) { throw 'A pinned shell switch must preserve already-valid source after artifact download.' }
 
     $conditionalSameSource = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @(
         @{ Name = 'Conditional pinned source'; If = $true; Text = 'git checkout --detach ''${{ github.sha }}''' }
@@ -772,7 +829,7 @@ try {
     # exercised through synthetic jobs while the workflow parser below enforces that
     # the real consumers do not invoke repository scripts after downloading artifacts.
     Assert-WorkflowScriptSourceRegressionCoverage -CurrentConsumers @() -RepositoryRoot $root
-    Write-Output 'PASS: checkout-source guard tracks action and shell source state, file-output side effects, artifact boundaries, command chains, and guarded script invocations.'
+    Write-Output 'PASS: checkout-source guard tracks response writers, immutable temp paths, tracked-byte restoration, artifact boundaries, and guarded script invocations.'
     if ($SourceGuardOnly) { return }
     $trackedRepositoryFiles = @(git -C $root ls-files)
     if ($LASTEXITCODE -ne 0) { throw 'Unable to enumerate tracked repository files for workflow-consumer checks.' }

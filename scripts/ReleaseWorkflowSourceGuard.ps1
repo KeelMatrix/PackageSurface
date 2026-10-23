@@ -317,6 +317,10 @@ function Get-WorkflowCheckoutFailure {
     if ($null -ne $Checkout.ContinueOnError -and $Checkout.ContinueOnError -notmatch '^(?i:false|no|0)$') {
         $failures.Add('checkout can fail and continue without establishing source')
     }
+    if ($Checkout.With.ContainsKey('clean')) {
+        $cleanInput = Get-WorkflowScalarValue -Value $Checkout.With['clean'] -Context "$Context checkout clean"
+        if ($cleanInput -notmatch '^(?i:true|yes|1)$') { $failures.Add('checkout does not prove that tracked workspace content is restored') }
+    }
     $checkoutPath = if ($Checkout.With.ContainsKey('path')) {
         Get-WorkflowScalarValue -Value $Checkout.With['path'] -Context "$Context checkout path"
     }
@@ -356,7 +360,7 @@ function Get-WorkflowShellTokens {
     param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Text)
 
     $tokens = [Collections.Generic.List[string]]::new()
-    foreach ($match in [regex]::Matches($Text, '"[^"`r`n]*"|''[^''`r`n]*''|[^\s;&|]+')) {
+    foreach ($match in [regex]::Matches($Text, '"[^"\r\n]*"|''[^''\r\n]*''|[^\s;&|]+')) {
         $tokens.Add($match.Value)
     }
     return $tokens.ToArray()
@@ -454,8 +458,8 @@ function Test-WorkflowWriteTargetIsOutsideWorkspace {
     if ($normalized -match '^(?i:NUL(?::)?|/dev/null)$') { return $true }
     $safeExternalRoot = $null
 
-    # GitHub runner.temp is outside github.workspace on every supported runner.
-    if ($null -eq $safeExternalRoot -and $normalized -match '^(?i:(?<root>\$env:RUNNER_TEMP|\$RUNNER_TEMP|\$\{(?:env:)?RUNNER_TEMP\}|%RUNNER_TEMP%|\$\{\{\s*runner\.temp\s*\}\})(?<suffix>/.*)?$)') {
+    # Only the immutable workflow expression proves an external temp path. Shell RUNNER_TEMP is mutable.
+    if ($null -eq $safeExternalRoot -and $normalized -match '^(?i:(?<root>\$\{\{\s*runner\.temp\s*\}\})(?<suffix>/.*)?$)') {
         if ($singleQuotedLiteral) { return $false }
         $safeExternalRoot = $Matches['root']
         $suffix = $Matches['suffix']
@@ -548,7 +552,7 @@ function Get-WorkflowShellRedirectionTargets {
 function Get-WorkflowDirectWriterInvocations {
     param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Text, [AllowNull()] [string] $Shell)
 
-    $names = @('Copy-Item', 'Set-Content', 'Add-Content', 'Clear-Content', 'Out-File', 'Tee-Object', 'New-Item', 'Move-Item', 'Remove-Item', 'Rename-Item', 'robocopy', 'xcopy', 'truncate', 'install', 'touch', 'erase', 'rename', 'copy', 'move', 'cp', 'mv', 'rm', 'del', 'tee', 'sed', 'perl')
+    $names = @('Invoke-RestMethod', 'Invoke-WebRequest', 'Copy-Item', 'Set-Content', 'Add-Content', 'Clear-Content', 'Out-File', 'Tee-Object', 'New-Item', 'Move-Item', 'Remove-Item', 'Rename-Item', 'robocopy', 'xcopy', 'curl.exe', 'wget.exe', 'curl', 'wget', 'truncate', 'install', 'touch', 'erase', 'rename', 'copy', 'move', 'iwr', 'irm', 'cp', 'mv', 'rm', 'del', 'tee', 'sed', 'perl')
     $names = @($names | Sort-Object { $_.Length } -Descending)
     $matches = [Collections.Generic.List[object]]::new()
     $quote = [char]0
@@ -565,7 +569,7 @@ function Get-WorkflowDirectWriterInvocations {
             while ($index -lt $Text.Length -and $Text[$index] -ne "`n") { $index++ }
             continue
         }
-        if ($index -gt 0 -and -not [char]::IsWhiteSpace($Text[$index - 1]) -and $Text[$index - 1] -notin @(';', '|', '&', '{', '}', '(', ')')) { continue }
+        if ($index -gt 0 -and -not [char]::IsWhiteSpace($Text[$index - 1]) -and $Text[$index - 1] -notin @(';', '|', '&', '{', '}', '(', ')', '=')) { continue }
 
         foreach ($name in $names) {
             if ($index + $name.Length -gt $Text.Length -or -not $Text.Substring($index, $name.Length).Equals($name, [StringComparison]::OrdinalIgnoreCase)) { continue }
@@ -582,6 +586,107 @@ function Get-WorkflowDirectWriterInvocations {
 function Get-WorkflowDirectWriterTargets {
     param([Parameter(Mandatory)] [string] $Name, [Parameter(Mandatory)] [string[]] $Arguments)
 
+    $lowerName = $Name.ToLowerInvariant()
+    if ($lowerName -in @('curl', 'curl.exe')) {
+        $targets = [Collections.Generic.List[string]]::new()
+        $hasOutputDirectory = $false
+        $hasFileOutput = $false
+        $hasRemoteName = $false
+        for ($index = 0; $index -lt $Arguments.Count; $index++) {
+            $value = ConvertFrom-WorkflowShellToken -Token ([string]$Arguments[$index])
+            if ($value -match '^(?i:--output-dir)(?:=(?<path>.*))?$') {
+                $hasOutputDirectory = $true
+                if ($Matches.ContainsKey('path') -and $value.Contains('=')) {
+                    if ([string]::IsNullOrEmpty($Matches['path']) -and $index + 1 -lt $Arguments.Count) { $index++ }
+                }
+                elseif ($index + 1 -lt $Arguments.Count) { $index++ }
+                continue
+            }
+            if ($value -in @('-o', '--output')) {
+                $hasFileOutput = $true
+                if ($index + 1 -lt $Arguments.Count) {
+                    $target = ConvertFrom-WorkflowShellToken -Token ([string]$Arguments[++$index])
+                    if ($target -ne '-') { $targets.Add($target) }
+                }
+                else { $targets.Add('') }
+                continue
+            }
+            if ($value -match '^(?i:--output)=(?<path>.*)$') {
+                $hasFileOutput = $true
+                if ([string]::IsNullOrEmpty($Matches['path']) -and $index + 1 -lt $Arguments.Count) { $target = ConvertFrom-WorkflowShellToken -Token ([string]$Arguments[++$index]) }
+                else { $target = $Matches['path'] }
+                if ($target -ne '-') { $targets.Add([string]$target) }
+                continue
+            }
+            if ($value -match '^(?i:-o)(?<path>.+)$') {
+                $hasFileOutput = $true
+                $target = $Matches['path']
+                if ($target.StartsWith('=', [StringComparison]::Ordinal)) { $target = $target.Substring(1) }
+                if ($target -ne '-') { $targets.Add([string]$target) }
+                continue
+            }
+            if ($value -in @('-O', '--remote-name', '--remote-name-all')) { $hasRemoteName = $true; continue }
+        }
+        if ($hasOutputDirectory -and ($hasFileOutput -or $hasRemoteName)) { return @('') }
+        if ($hasRemoteName) { $targets.Add('') }
+        return $targets.ToArray()
+    }
+
+    if ($lowerName -in @('wget', 'wget.exe')) {
+        $targets = [Collections.Generic.List[string]]::new()
+        $hasOutputOption = $false
+        for ($index = 0; $index -lt $Arguments.Count; $index++) {
+            $value = ConvertFrom-WorkflowShellToken -Token ([string]$Arguments[$index])
+            if ($value -in @('-O', '--output-document', '-outfile')) {
+                $hasOutputOption = $true
+                if ($index + 1 -lt $Arguments.Count) {
+                    $target = ConvertFrom-WorkflowShellToken -Token ([string]$Arguments[++$index])
+                    if ($target -ne '-') { $targets.Add($target) }
+                }
+                else { $targets.Add('') }
+                continue
+            }
+            if ($value -match '^(?i:--output-document)=(?<path>.*)$') {
+                $hasOutputOption = $true
+                if ([string]::IsNullOrEmpty($Matches['path']) -and $index + 1 -lt $Arguments.Count) { $target = ConvertFrom-WorkflowShellToken -Token ([string]$Arguments[++$index]) }
+                else { $target = $Matches['path'] }
+                if ($target -ne '-') { $targets.Add([string]$target) }
+                continue
+            }
+            if ($value -match '^(?i:-O)(?<path>.+)$') {
+                $hasOutputOption = $true
+                $target = $Matches['path']
+                if ($target.StartsWith('=', [StringComparison]::Ordinal)) { $target = $target.Substring(1) }
+                if ($target -ne '-') { $targets.Add([string]$target) }
+            }
+        }
+        if (-not $hasOutputOption) { $targets.Add('') }
+        return $targets.ToArray()
+    }
+
+    if ($lowerName -in @('invoke-webrequest', 'invoke-restmethod', 'iwr', 'irm')) {
+        $targets = [Collections.Generic.List[string]]::new()
+        for ($index = 0; $index -lt $Arguments.Count; $index++) {
+            $value = ConvertFrom-WorkflowShellToken -Token ([string]$Arguments[$index])
+            $separator = $value.IndexOfAny(@('=', ':'))
+            $option = if ($separator -ge 0) { $value.Substring(0, $separator).ToLowerInvariant() } else { $value.ToLowerInvariant() }
+            if ($option -notin @('-outfile', '-out-file')) { continue }
+            if ($separator -ge 0) {
+                $target = $value.Substring($separator + 1)
+                if ([string]::IsNullOrEmpty($target) -and $index + 1 -lt $Arguments.Count) {
+                    $index++
+                    $target = [string]$Arguments[$index]
+                }
+                $targets.Add($target)
+            }
+            elseif ($index + 1 -lt $Arguments.Count) {
+                $index++
+                $targets.Add([string]$Arguments[$index])
+            }
+            else { $targets.Add('') }
+        }
+        return $targets.ToArray()
+    }
     $pathOptions = @('-path', '-literalpath', '-filepath', '-destination', '-target', '--target-directory', '-t')
     $namedTargets = [Collections.Generic.List[string]]::new()
     for ($index = 0; $index -lt $Arguments.Count; $index++) {
@@ -857,8 +962,10 @@ function Assert-ArtifactScriptConsumersHaveSource {
                             }
                         }
                         else {
-                            $effectiveCheckoutValid = $true
-                            $effectiveCheckoutFailure = ''
+                            if (-not $effectiveCheckoutValid) {
+                                $effectiveCheckoutFailure = 'pinned shell checkout does not restore modified tracked bytes'
+                            }
+
                         }
                     }
                     elseif ($sourceEffect -eq 'Mutation') {

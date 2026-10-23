@@ -489,6 +489,7 @@ function Test-WorkflowCommandContainsUnsupportedExecution {
         $program = ConvertFrom-WorkflowShellToken -Token ([string]$current[0])
         $programName = ($program -split '[\\/]')[-1].ToLowerInvariant()
         $arguments = @($current | Select-Object -Skip 1)
+        if ($program.Contains('$') -or $program.Contains([char]96)) { return $true }
 
         if ($programName -eq 'env' -or $programName -eq 'env.exe') {
             $index = 0
@@ -504,6 +505,9 @@ function Test-WorkflowCommandContainsUnsupportedExecution {
                 elseif ($option -match '^--split-string=(?<value>.*)$') { $splitText = $Matches['value'] }
                 elseif ($option -match '^-S=?(?<value>.+)$') { $splitText = $Matches['value'] }
                 if ($null -ne $splitText) {
+                    # GNU env expands brace-delimited values from its environment before executing.
+                    # Do not guess through inherited or inline environment values here.
+                    if ($splitText.Contains('$')) { return $true }
                     $nested = @(Get-WorkflowShellTokens -Text $splitText)
                     $current = @($nested) + @($arguments | Select-Object -Skip ($index + 1))
                     if ($current.Count -eq 0) { return $true }
@@ -537,7 +541,60 @@ function Test-WorkflowCommandContainsUnsupportedExecution {
             $current = @($arguments | Select-Object -Skip $index)
             continue
         }
-        if ($programName -in @('command', 'exec', 'nohup', 'nice', 'stdbuf', 'setsid', 'sudo', 'doas', 'busybox', 'time')) {
+        if ($programName -eq 'exec') {
+            $index = 0
+            while ($index -lt $arguments.Count) {
+                $option = ConvertFrom-WorkflowShellToken -Token ([string]$arguments[$index])
+                if ($option -eq '--') { $index++; break }
+                if ($option -match '^-[cl]+$') { $index++; continue }
+                if ($option -eq '-a' -or $option -match '^-[cl]*a$') {
+                    if ($index + 1 -ge $arguments.Count) { return $true }
+                    $index += 2
+                    continue
+                }
+                if ($option -match '^-[cl]*a.+$') { $index++; continue }
+                if ($option.StartsWith('-', [StringComparison]::Ordinal)) { return $true }
+                break
+            }
+            $current = @($arguments | Select-Object -Skip $index)
+            continue
+        }
+        if ($programName -eq 'time' -or $programName -eq 'time.exe') {
+            $index = 0
+            while ($index -lt $arguments.Count) {
+                $option = ConvertFrom-WorkflowShellToken -Token ([string]$arguments[$index])
+                if ($option -eq '--') { $index++; break }
+                if ($option -match '^(?:--append|--portability|--verbose|--quiet|--help|--version)$') { $index++; continue }
+                if ($option -match '^(?:--output|--format)$') {
+                    if ($index + 1 -ge $arguments.Count) { return $true }
+                    $index += 2
+                    continue
+                }
+                if ($option -match '^(?:--output|--format)=') { $index++; continue }
+                if ($option.StartsWith('--', [StringComparison]::Ordinal)) { return $true }
+                if ($option.StartsWith('-', [StringComparison]::Ordinal)) {
+                    $shortOptions = $option.Substring(1)
+                    for ($shortIndex = 0; $shortIndex -lt $shortOptions.Length; $shortIndex++) {
+                        $shortOption = [char]::ToString($shortOptions[$shortIndex])
+                        if ($shortOption -in @('a', 'p', 'v')) { continue }
+                        if ($shortOption -in @('o', 'f')) {
+                            if ($shortIndex -eq $shortOptions.Length - 1) {
+                                if ($index + 1 -ge $arguments.Count) { return $true }
+                                $index++
+                            }
+                            break
+                        }
+                        return $true
+                    }
+                    $index++
+                    continue
+                }
+                break
+            }
+            $current = @($arguments | Select-Object -Skip $index)
+            continue
+        }
+        if ($programName -in @('command', 'nohup', 'nice', 'stdbuf', 'setsid', 'sudo', 'doas', 'busybox')) {
             if ($programName -eq 'command' -and @($arguments | Where-Object { (ConvertFrom-WorkflowShellToken -Token ([string]$_)) -in @('-v', '-V') }).Count -gt 0) { return $false }
             $index = 0
             while ($index -lt $arguments.Count) {
@@ -547,7 +604,6 @@ function Test-WorkflowCommandContainsUnsupportedExecution {
                 if (($programName -eq 'sudo' -or $programName -eq 'doas') -and $option -match '^(?:-u|-g|-h|-p|-C|-D|-R|-T|-U|-r|-a|--user|--group|--host|--pro(?:mpt)|--close-from|--chdir|--chroot|--command-timeout|--other-user|--role|--type)$') { $index += 2; continue }
                 if ($programName -eq 'nice' -and $option -in @('-n', '--adjustment')) { $index += 2; continue }
                 if ($programName -eq 'stdbuf' -and $option -match '^(?:-i|-o|-e)$') { $index += 2; continue }
-                if ($programName -eq 'time' -and $option -in @('-f', '--format')) { $index += 2; continue }
                 if ($programName -eq 'busybox') { $index++; break }
                 if ($option -match '^-[a-zA-Z]+(?:=.*)?$' -or $option -match '^--[a-zA-Z0-9-]+(?:=.*)?$') { $index++; continue }
                 return $true
@@ -562,7 +618,7 @@ function Test-WorkflowCommandContainsUnsupportedExecution {
         if (Test-WorkflowRunnerTempReference -Value $program) { return $true }
         return $false
     }
-    return $false
+    return $current.Count -gt 0
 }
 
 function Test-WorkflowRunContainsWrappedUnsupportedExecution {
@@ -874,7 +930,7 @@ function Get-WorkflowShellRedirectionTargets {
 function Get-WorkflowDirectWriterInvocations {
     param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Text, [AllowNull()] [string] $Shell)
 
-    $names = @('Invoke-RestMethod', 'Invoke-WebRequest', 'Copy-Item', 'Set-Content', 'Add-Content', 'Clear-Content', 'Out-File', 'Tee-Object', 'New-Item', 'Move-Item', 'Remove-Item', 'Rename-Item', 'robocopy', 'xcopy', 'curl.exe', 'wget.exe', 'curl', 'wget', 'truncate', 'install', 'touch', 'erase', 'rename', 'copy', 'move', 'iwr', 'irm', 'cp', 'mv', 'rm', 'del', 'tee', 'sed', 'perl')
+    $names = @('Invoke-RestMethod', 'Invoke-WebRequest', 'Copy-Item', 'Set-Content', 'Add-Content', 'Clear-Content', 'Out-File', 'Tee-Object', 'New-Item', 'Move-Item', 'Remove-Item', 'Rename-Item', 'robocopy', 'xcopy', 'curl.exe', 'wget.exe', 'curl', 'wget', 'truncate', 'install', 'touch', 'erase', 'rename', 'copy', 'move', 'iwr', 'irm', 'cp', 'mv', 'rm', 'del', 'tee', 'sed', 'perl', 'time.exe', 'time')
     $names = @($names | Sort-Object { $_.Length } -Descending)
     $invocations = [Collections.Generic.List[object]]::new()
     if ($Shell -match '^(?i:pwsh|powershell)$') {
@@ -897,7 +953,7 @@ function Get-WorkflowDirectWriterInvocations {
             while ($index -lt $Text.Length -and $Text[$index] -ne "`n") { $index++ }
             continue
         }
-        if ($index -gt 0 -and -not [char]::IsWhiteSpace($Text[$index - 1]) -and $Text[$index - 1] -notin @(';', '|', '&', '{', '}', '(', ')', '=', '\')) { continue }
+        if ($index -gt 0 -and -not [char]::IsWhiteSpace($Text[$index - 1]) -and $Text[$index - 1] -notin @(';', '|', '&', '{', '}', '(', ')', '=', '\', '/')) { continue }
 
         foreach ($name in $names) {
             if ($index + $name.Length -gt $Text.Length -or -not $Text.Substring($index, $name.Length).Equals($name, [StringComparison]::OrdinalIgnoreCase)) { continue }
@@ -915,6 +971,25 @@ function Get-WorkflowDirectWriterTargets {
     param([Parameter(Mandatory)] [string] $Name, [Parameter(Mandatory)] [string[]] $Arguments)
 
     $lowerName = $Name.ToLowerInvariant()
+    if ($lowerName -in @('time', 'time.exe')) {
+        $targets = [Collections.Generic.List[string]]::new()
+        for ($index = 0; $index -lt $Arguments.Count; $index++) {
+            $value = ConvertFrom-WorkflowShellToken -Token ([string]$Arguments[$index])
+            if ($value -match '^(?i:--output)=(?<path>.*)$') {
+                $targets.Add([string]$Matches['path'])
+                continue
+            }
+            if ($value -eq '--output' -or $value -eq '-o') {
+                if ($index + 1 -lt $Arguments.Count) { $targets.Add((ConvertFrom-WorkflowShellToken -Token ([string]$Arguments[++$index]))) }
+                else { $targets.Add('') }
+                continue
+            }
+            if ($value -match '^(?i:-o)(?<path>.+)$') {
+                $targets.Add([string]$Matches['path'])
+            }
+        }
+        return $targets.ToArray()
+    }
     if ($lowerName -in @('curl', 'curl.exe')) {
         $targets = [Collections.Generic.List[string]]::new()
         $responseTargets = [Collections.Generic.List[string]]::new()

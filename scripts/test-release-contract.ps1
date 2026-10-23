@@ -540,6 +540,11 @@ fi
         @{ Name = 'dynamic curl write-out destination'; Text = 'curl --write-out "%output{$env:TARGET}" https://host/payload'; Shell = 'bash' },
         @{ Name = 'dynamic wget response destination'; Text = 'wget --output-document "$RUNNER_TEMP/$RELATIVE_PATH" https://host/payload'; Shell = 'bash' },
         @{ Name = 'dynamic wget WARC temp directory'; Text = 'wget --warc-tempdir "$RUNNER_TEMP/$RELATIVE_PATH" -O - https://host/payload'; Shell = 'bash' },
+        @{ Name = 'GNU time output option to tracked root'; Text = 'time -o CHANGELOG.md printf payload'; Shell = 'bash' },
+        @{ Name = 'GNU time equals output option to nested tracked file'; Text = 'time --output=src/KeelMatrix.PackageSurface.Cli/README.md printf payload'; Shell = 'bash' },
+        @{ Name = 'GNU time separate long output option to tracked root'; Text = 'time --output CHANGELOG.md printf payload'; Shell = 'bash' },
+        @{ Name = 'GNU time attached output option to tracked root'; Text = 'time -oCHANGELOG.md printf payload'; Shell = 'bash' },
+        @{ Name = 'absolute GNU time output option to tracked root'; Text = '/usr/bin/time -o CHANGELOG.md printf payload'; Shell = 'bash' },
         @{ Name = 'ambiguous PowerShell Out parameter prefix'; Text = 'Invoke-WebRequest -Uri https://host/payload -Out CHANGELOG.md'; Shell = 'pwsh' },
         @{ Name = 'dynamic Git output destination'; Text = 'git diff --output=$env:TARGET'; Shell = 'pwsh' },
         @{ Name = 'single-quoted runner-temp-looking destination'; Text = 'Copy-Item source ''$RUNNER_TEMP/package-surface.txt'''; Shell = 'bash' },
@@ -633,6 +638,9 @@ fi
         @{ Name = 'Invoke-WebRequest abbreviated OutFile outside workspace'; Text = 'Invoke-WebRequest -Uri https://host/payload -OutFi "${{ runner.temp }}/payload.txt"'; Shell = 'pwsh' },
         @{ Name = 'module-qualified response outside workspace'; Text = 'Microsoft.PowerShell.Utility\Invoke-WebRequest -Uri https://host/payload -OutFile "${{ runner.temp }}/payload.txt"'; Shell = 'pwsh' },
         @{ Name = 'Invoke-RestMethod response outside workspace'; Text = 'Invoke-RestMethod -Uri https://host/payload -OutFile "${{ runner.temp }}/payload.txt"'; Shell = 'pwsh' },
+        @{ Name = 'GNU time output outside workspace'; Text = ('time -o "' + $runnerTempSpacedExpression + '/time.log" printf payload'); Shell = 'bash' },
+        @{ Name = 'GNU time attached output outside workspace'; Text = ('time -o' + $runnerTempExpression + '/time.log printf payload'); Shell = 'bash' },
+        @{ Name = 'GNU time equals output outside workspace'; Text = ('time --output=' + $runnerTempExpression + '/time.log printf payload'); Shell = 'bash' },
         @{ Name = 'curl response to stdout'; Text = 'curl -o - https://host/payload'; Shell = 'bash' },
         @{ Name = 'Invoke-WebRequest response without OutFile'; Text = 'Invoke-WebRequest -Uri https://host/payload'; Shell = 'pwsh' }
     )
@@ -671,6 +679,10 @@ fi
 
     $newline = [Environment]::NewLine
     $workflowRunnerTemp = ([char]36).ToString() + '{{ runner.temp }}'
+    $fooExpansion = ([char]36).ToString() + '{FOO}'
+    $escapedFooExpansion = [char]92 + $fooExpansion
+    $wrapperExpansion = ([char]36).ToString() + '{WRAPPERS}'
+    $helperExpansion = ([char]36).ToString() + '{helper}'
     $encodedRootCurl = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('curl --output CHANGELOG.md https://host/payload'))
     $encodedNestedCurl = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('curl --output src/KeelMatrix.PackageSurface.Cli/README.md https://host/payload'))
     $hiddenInterpreterCases = @(
@@ -682,6 +694,27 @@ fi
         @{ Name = 'timeout wrapper hides Bash stdin execution'; Text = "printf '%s\n' 'curl --output CHANGELOG.md https://host/payload' | timeout 2 bash -s"; Shell = 'bash' },
         @{ Name = 'wrapper chain and option arguments hide Bash stdin execution'; Text = "printf '%s\n' 'curl --output src/KeelMatrix.PackageSurface.Cli/README.md https://host/payload' | env -u SAFE_VALUE -- timeout --signal=TERM 2 bash -s"; Shell = 'bash' },
         @{ Name = 'env split-string wraps timeout and Bash stdin execution'; Text = "printf '%s\n' 'curl --output CHANGELOG.md https://host/payload' | env -S 'timeout 2 bash -s'"; Shell = 'bash' },
+        @{ Name = 'exec argv-zero option hides Bash stdin execution'; Text = "printf '%s\n' 'curl --output CHANGELOG.md https://host/payload' | exec -a alias bash -s"; Shell = 'bash' },
+        @{ Name = 'exec attached argv-zero option hides nested Bash stdin execution'; Text = "printf '%s\n' 'curl --output src/KeelMatrix.PackageSurface.Cli/README.md https://host/payload' | exec -aalias bash -s"; Shell = 'bash' },
+        @{ Name = 'exec combined flags and argv-zero option hide Bash stdin execution'; Text = "printf '%s\n' 'curl --output CHANGELOG.md https://host/payload' | exec -cla alias bash -s"; Shell = 'bash' },
+        @{ Name = 'GNU time output option hides Bash stdin execution'; Text = ('printf x | /usr/bin/time -o "' + $workflowRunnerTemp + '/timing.txt" bash -s'); Shell = 'bash' },
+        @{ Name = 'GNU time attached output option hides Bash stdin execution'; Text = ('printf x | time -o' + $workflowRunnerTemp + '/timing.txt bash -s'); Shell = 'bash' },
+        @{ Name = 'GNU time equals output option hides nested Bash stdin execution'; Text = ('printf x | time --output=' + $workflowRunnerTemp + '/timing.txt bash -s'); Shell = 'bash' },
+        @{ Name = 'GNU time output option wraps timeout and Bash stdin execution'; Text = ('printf x | time --output "' + $workflowRunnerTemp + '/timing.txt" timeout --kill-after=1 --signal=TERM 1 bash -s'); Shell = 'bash' },
+        @{ Name = 'GNU time format option hides Bash stdin execution'; Text = "printf x | time -f '%e' bash -s"; Shell = 'bash' },
+        @{ Name = 'GNU time equals format option hides Bash stdin execution'; Text = 'printf x | time --format=%e bash -s'; Shell = 'bash' },
+        @{ Name = 'timeout kill and signal options with separate values hide Bash stdin execution'; Text = 'printf x | timeout -k 1 -s TERM 2 bash -s'; Shell = 'bash' },
+        @{ Name = 'timeout kill and signal options with attached values hide Bash stdin execution'; Text = 'printf x | timeout -k1 -sTERM 2 bash -s'; Shell = 'bash' },
+        @{ Name = 'timeout long options with equals values hide Bash stdin execution'; Text = 'printf x | timeout --kill-after=1 --signal=TERM 2 bash -s'; Shell = 'bash' },
+        @{ Name = 'env split-string expands an inherited interpreter name'; Text = ('printf x | env -S ''' + $fooExpansion + ' -s'''); Shell = 'bash' },
+        @{ Name = 'env split-string expands an inline assigned interpreter name'; Text = ('printf x | FOO=bash env -S ''' + $fooExpansion + ' -s'''); Shell = 'bash' },
+        @{ Name = 'env long split-string expands an inherited interpreter name'; Text = ('printf x | env --split-string ''' + $fooExpansion + ' -s'''); Shell = 'bash' },
+        @{ Name = 'env attached split-string expands an interpreter name'; Text = ('printf x | env -S=' + $fooExpansion); Shell = 'bash' },
+        @{ Name = 'env concatenated split-string expands an interpreter name'; Text = ('printf x | env -S' + $fooExpansion); Shell = 'bash' },
+        @{ Name = 'env equals split-string expands an interpreter name'; Text = ('printf x | env --split-string=' + $fooExpansion); Shell = 'bash' },
+        @{ Name = 'env split-string retains expansion through inner quotes'; Text = ('printf x | env -S ''"' + $fooExpansion + '" -s'''); Shell = 'bash' },
+        @{ Name = 'env split-string retains escaped expansion syntax'; Text = ('printf x | env -S ''' + $escapedFooExpansion + ' -s'''); Shell = 'bash' },
+        @{ Name = 'env split-string expansion can produce a wrapper chain'; Text = ('printf x | env -S ''' + $wrapperExpansion + ' bash -s'''); Shell = 'bash' },
         @{ Name = 'sudo and nice option chains hide Bash stdin execution'; Text = "printf '%s\n' 'curl --output CHANGELOG.md https://host/payload' | sudo -u runner -- nice -n 4 bash -s"; Shell = 'bash' },
         @{ Name = 'Bash verbose option still executes stdin'; Text = 'bash -v'; Shell = 'bash' },
         @{ Name = 'env split-string hides Bash verbose stdin execution'; Text = "env -S 'bash -v'"; Shell = 'bash' },
@@ -709,6 +742,14 @@ fi
         @{ Name = 'PowerShell dot-source loads an external script'; Text = '. $env:RUNNER_TEMP\rewrite-source.ps1'; Shell = 'pwsh' },
         @{ Name = 'PowerShell call operator runs an external script path'; Text = '& $env:RUNNER_TEMP\rewrite-source.ps1'; Shell = 'pwsh' }
     )
+    foreach ($depth in @(14, 15, 16, 17)) {
+        $timeoutChain = 'timeout 1 ' * $depth
+        $hiddenInterpreterCases += @{
+            Name = "Bash stdin wrapper chain at timeout depth $depth"
+            Text = ("printf x | " + $timeoutChain + 'bash -s')
+            Shell = 'bash'
+        }
+    }
     foreach ($case in $hiddenInterpreterCases) {
         foreach ($position in @('before artifact download', 'after artifact download', 'between guarded invocations')) {
             $runStep = @{ Name = $case.Name; Text = $case.Text; Shell = $case.Shell }
@@ -803,6 +844,74 @@ fi
             try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'downloaded-executable-link.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot }
             catch { $rejected = $true }
             if (-not $rejected) { throw "Workflow contract accepted $($case.Name) $position after a pinned checkout and artifact download." }
+        }
+    }
+
+    $bashVariableExecutableWriterCases = @(
+        @{
+            Name = 'downloaded Bash helper in quoted variable writes tracked root'
+            Text = ('curl --output "' + $workflowRunnerTemp + '/rewrite" https://host/payload; chmod +x "' + $workflowRunnerTemp + '/rewrite"; helper="' + $workflowRunnerTemp + '/rewrite"; "$helper" CHANGELOG.md')
+        },
+        @{
+            Name = 'downloaded Bash helper in braced variable writes nested tracked source'
+            Text = ('curl --output "' + $workflowRunnerTemp + '/rewrite" https://host/payload; chmod +x "' + $workflowRunnerTemp + '/rewrite"; helper="' + $workflowRunnerTemp + '/rewrite"; ' + $helperExpansion + ' src/KeelMatrix.PackageSurface.Cli/README.md')
+        },
+        @{
+            Name = 'downloaded Bash helper reached through env wrapper writes tracked root'
+            Text = ('curl --output "' + $workflowRunnerTemp + '/rewrite" https://host/payload; chmod +x "' + $workflowRunnerTemp + '/rewrite"; helper="' + $workflowRunnerTemp + '/rewrite"; env -- "$helper" CHANGELOG.md')
+        }
+    )
+    foreach ($case in $bashVariableExecutableWriterCases) {
+        foreach ($position in @('before artifact download', 'after artifact download', 'between guarded invocations')) {
+            $runStep = @{ Name = $case.Name; Text = $case.Text; Shell = 'bash' }
+            $fixtureArguments = @{ ScriptPath = $script }
+            if ($position -eq 'before artifact download') { $fixtureArguments.RunsBeforeDownload = @($runStep) }
+            elseif ($position -eq 'after artifact download') { $fixtureArguments.RunsAfterDownload = @($runStep) }
+            else { $fixtureArguments.SecondInvocation = $true; $fixtureArguments.RunsBetweenInvocations = @($runStep) }
+            $fixture = New-WorkflowGitScriptConsumerFixture @fixtureArguments
+            $rejected = $false
+            try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'bash-variable-runner-temp-writer.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot }
+            catch { $rejected = $true }
+            if (-not $rejected) { throw "Workflow contract accepted $($case.Name) $position before the next guarded script invocation." }
+        }
+    }
+    foreach ($restoreText in @(
+        ('git checkout --detach ''' + [char]36 + '{{ github.sha }}' + ''''),
+        ('git switch --detach ''' + [char]36 + '{{ github.sha }}' + '''')
+    )) {
+        $helperStep = @{ Name = 'Run a downloaded Bash helper from a variable'; Text = $bashVariableExecutableWriterCases[0].Text; Shell = 'bash' }
+        $restoreStep = @{ Name = 'Attempt pinned shell restoration'; Text = $restoreText; Shell = 'bash' }
+        $fixture = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @($helperStep, $restoreStep)
+        $rejected = $false
+        try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'bash-variable-shell-restore.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot }
+        catch { $rejected = $true }
+        if (-not $rejected) { throw 'A pinned shell checkout or switch falsely restored source after a variable-invoked Bash helper.' }
+    }
+    $actionRestoreFixture = New-WorkflowRunnerTempRedirectFixture -ScriptPath $script -LinkText $bashVariableExecutableWriterCases[0].Text -WriteText 'printf payload' -Shell 'bash' -Position 'after artifact download'
+    $actionRestoreResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'bash-variable-action-restore.yml'; Text = $actionRestoreFixture }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('bash-variable-action-restore.yml/future-consumer'))
+    if ($actionRestoreResult.Count -ne 1 -or $actionRestoreResult[0].Scripts -notcontains $script) {
+        throw 'A clean unconditional root action checkout must restore direct tracked writes from a variable-invoked helper.'
+    }
+
+    $bashVariableExecutableLinkCases = @(
+        @{
+            Name = 'downloaded Bash helper in variable creates root link'
+            Text = ('curl --output "' + $workflowRunnerTemp + '/prepare" https://host/payload; chmod +x "' + $workflowRunnerTemp + '/prepare"; helper="' + $workflowRunnerTemp + '/prepare"; "$helper" "$GITHUB_WORKSPACE" "$RUNNER_TEMP/escape"');
+            Write = ('curl --output "' + $workflowRunnerTemp + '/escape/CHANGELOG.md" https://host/payload')
+        },
+        @{
+            Name = 'downloaded Bash helper in variable creates nested link'
+            Text = ('curl --output "' + $workflowRunnerTemp + '/prepare" https://host/payload; chmod +x "' + $workflowRunnerTemp + '/prepare"; helper="' + $workflowRunnerTemp + '/prepare"; ' + $helperExpansion + ' "$GITHUB_WORKSPACE/src/KeelMatrix.PackageSurface.Cli" "$RUNNER_TEMP/escape"');
+            Write = ('Copy-Item source "' + $workflowRunnerTemp + '\escape\README.md"')
+        }
+    )
+    foreach ($case in $bashVariableExecutableLinkCases) {
+        foreach ($position in @('before artifact download', 'after artifact download', 'between guarded invocations')) {
+            $fixture = New-WorkflowRunnerTempRedirectFixture -ScriptPath $script -LinkText $case.Text -WriteText $case.Write -Shell 'bash' -Position $position -IncludeShellCheckout
+            $rejected = $false
+            try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'bash-variable-runner-temp-executable.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot }
+            catch { $rejected = $true }
+            if (-not $rejected) { throw "Workflow contract accepted $($case.Name) $position around shell and action checkout ordering." }
         }
     }
 

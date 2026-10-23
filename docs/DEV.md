@@ -45,6 +45,8 @@ The local gate derives its expected package version from the evaluated packable 
 
 The guard also rejects wrapped stdin interpreter forms, including env --, env -S, and timeout; indentation-preserving block-scalar script loaders; and downloaded runner-temp executables invoked by absolute or relative path, after changing directory, or through PATH. Bash tracked-script paths must use forward slashes; PowerShell script paths may use backslashes. Unsafe execution or link creation keeps later runner-temp paths untrusted across shell checkout or switch. Ordinary runner-temp output remains allowed while that proof is intact.
 
+The guard parses exec -a and GNU time -o/--output wrapper options, rejects env -S values containing environment expansion, rejects variable-expanded executable names (including Bash variables that name downloaded runner-temp helpers), and fails closed when wrapper parsing reaches its depth bound. GNU time output destinations are checked as file sinks; immutable runner.temp expression paths with safe suffixes remain allowed while no path redirect is active.
+
 ## Project roles
 
 - `src/KeelMatrix.PackageSurface.Cli` is the only shipping packable project and produces the `KeelMatrix.PackageSurface` .NET tool.

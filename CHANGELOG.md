@@ -4,8 +4,6 @@ PackageSurface release history.
 
 ## [Unreleased]
 
-- Strengthens the release workflow source guard to reject script code loaded from stdin, pipelines, here-documents, dot-sourced files, or untracked external interpreter paths while retaining pinned tracked scripts.
-
 ## [0.1.0] - 2026-10-16
 
 ### Added

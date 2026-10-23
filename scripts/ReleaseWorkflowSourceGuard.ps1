@@ -405,6 +405,26 @@ function Get-WorkflowShellTokens {
     return $tokens.ToArray()
 }
 
+function Test-WorkflowRunContainsUnsupportedEvaluator {
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Text, [AllowNull()] [string] $Shell)
+
+    $runText = ConvertTo-WorkflowLogicalRunText -Text $Text -Shell $Shell
+    $patterns = @(
+        '(?i)(?<![A-Za-z0-9_.-])(?:bash|sh|dash|zsh)(?:\.exe)?["'']?\s+(?:[^;&|\r\n]*?\s)?(?:-[A-Za-z]*c[A-Za-z]*|--command(?:=|\s))(?=\s|$)',
+        '(?i)(?<![A-Za-z0-9_.-])(?:pwsh|powershell)(?:\.exe)?["'']?\s+(?:[^;&|\r\n]*?\s)?-(?:c|commandwithargs|command|encodedcommand|enc|e)(?:=|\s|$)',
+        '(?i)(?<![A-Za-z0-9_.-])cmd(?:\.exe)?["'']?\s+(?:[^;&|\r\n]*?\s)?/(?:c|k)(?=\s|$)',
+        '(?i)(?<![A-Za-z0-9_.-])(?:python(?:\d+(?:\.\d+)*)?|node|ruby|perl)(?:\.exe)?["'']?\s+(?:[^;&|\r\n]*?\s)?-(?:c|e)(?=\s|$)',
+        '(?im)(?:^|[;&|({]\s*|\b(?:then|do|if|while|until)\s+)(?:&\s*)?(?:Invoke-Expression|iex|Invoke-Command|icm|Start-Process|eval|source)(?=\s|$|[;&|])',
+        '(?i)(?<![A-Za-z0-9_.-])ScriptBlock\s*::\s*Create\s*\('
+    )
+    foreach ($pattern in $patterns) {
+        if ($runText -match $pattern) { return $true }
+    }
+    if ($Shell -match '^(?i:pwsh|powershell)$' -and $runText -match '(?m)(?:^|[;&|({]\s*)\.\s+\S') { return $true }
+    if ($Shell -match '^(?i:pwsh|powershell)$' -and $runText -match '(?m)(?:^|[;&|({]\s*)&\s*(?:\$|`|\(|["''])') { return $true }
+    return $false
+}
+
 function Test-WorkflowRootWorkingDirectory {
     param([Parameter(Mandatory)] [AllowEmptyString()] [string] $WorkingDirectory)
 
@@ -485,7 +505,7 @@ function Test-WorkflowStandalonePinnedGitRestore {
 }
 
 function Test-WorkflowWriteTargetIsOutsideWorkspace {
-    param([AllowEmptyString()] [string] $Token)
+    param([AllowEmptyString()] [string] $Token, [switch] $RunnerTempMayBeRedirected)
 
     if ([string]::IsNullOrWhiteSpace($Token)) { return $false }
     $raw = $Token.Trim()
@@ -500,6 +520,7 @@ function Test-WorkflowWriteTargetIsOutsideWorkspace {
     # Only the immutable workflow expression proves an external temp path. Shell RUNNER_TEMP is mutable.
     if ($null -eq $safeExternalRoot -and $normalized -match '^(?i:(?<root>\$\{\{\s*runner\.temp\s*\}\})(?<suffix>/.*)?$)') {
         if ($singleQuotedLiteral) { return $false }
+        if ($RunnerTempMayBeRedirected) { return $false }
         $safeExternalRoot = $Matches['root']
         $suffix = $Matches['suffix']
     }
@@ -519,6 +540,31 @@ function Test-WorkflowWriteTargetIsOutsideWorkspace {
 
     # A dynamic, absolute, or otherwise unrecognized target cannot be proven safe.
     return $false
+}
+
+function Test-WorkflowRunCreatesPathRedirect {
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Text, [AllowNull()] [string] $Shell)
+
+    $runText = ConvertTo-WorkflowLogicalRunText -Text $Text -Shell $Shell
+    if ($runText -match '(?i)(?<![A-Za-z0-9_.-])(?:ln|mklink)(?:\.exe)?["'']?(?=\s|$|[;&|])') { return $true }
+    if ($runText -match '(?i)(?<![A-Za-z0-9_.-])fsutil(?:\.exe)?\s+hardlink\s+create\b') { return $true }
+    if ($runText -match '(?i)(?<![A-Za-z0-9_.-])mount(?:\.exe)?\s+[^;&|\r\n]*(?:--bind\b|-o\s*(?:=\s*)?bind\b)') { return $true }
+    if ($runText -match '(?i)(?<![A-Za-z0-9_.-])cp(?:\.exe)?\s+[^;&|\r\n]*(?:--link\b|-[A-Za-z]*l[A-Za-z]*\b)') { return $true }
+    if ($runText -match '(?i)(?:CreateSymbolicLink|CreateHardLink|CreateJunction)\s*\(') { return $true }
+    if ($runText -match '(?is)(?<![A-Za-z0-9_.-])(?:New-Item|ni)(?:\.exe)?\b(?:(?![;&|\r\n]).)*?-(?:I(?:t(?:e(?:m(?:t(?:y(?:p(?:e)?)?)?)?)?)?)?|T(?:y(?:p(?:e)?)?)?)\s*(?:=|:)?\s*["'']?(?:Junction|SymbolicLink|HardLink|ReparsePoint)(?=["'']?\s|$|[;&|])') { return $true }
+    if ($runText -match '(?is)(?<![A-Za-z0-9_.-])(?:New-Item|ni)(?:\.exe)?\b(?:(?![;&|\r\n]).)*?-(?:I(?:t(?:e(?:m(?:t(?:y(?:p(?:e)?)?)?)?)?)?)?|T(?:y(?:p(?:e)?)?)?)\s*(?:=|:)?\s*["'']?\$(?:env:)?[A-Za-z_]') { return $true }
+    return $false
+}
+
+function Test-WorkflowRunMayRedirectRunnerTemp {
+    param([Parameter(Mandatory)] [object] $Step)
+
+    $runText = ConvertTo-WorkflowLogicalRunText -Text ([string]$Step.RunText) -Shell $Step.Shell
+    if (Test-WorkflowRunContainsUnsupportedEvaluator -Text $runText -Shell $Step.Shell) { return $true }
+    if (-not (Test-WorkflowRunCreatesPathRedirect -Text $runText -Shell $Step.Shell)) { return $false }
+    $workingDirectory = if ($null -ne $Step.WorkingDirectory) { [string]$Step.WorkingDirectory } else { '' }
+    $pathContext = $runText + "`n" + $workingDirectory
+    return $pathContext -match '(?i)runner[._-]temp|runner\.temp'
 }
 
 function Test-WorkflowShellEscapeSequence {
@@ -643,6 +689,14 @@ function Get-WorkflowDirectWriterTargets {
             if ($value -match '^(?i:--)(?<option>[a-z0-9-]+)(?:=(?<inline>.*))?$') {
                 $option = $Matches['option'].ToLowerInvariant()
                 $inline = if ($Matches.ContainsKey('inline') -and $value.Contains('=')) { [string]$Matches['inline'] } else { $null }
+                if ($option -eq 'config') {
+                    if ($null -eq $inline -and $index + 1 -lt $Arguments.Count) { $index++ }
+                    # A config file can redirect the response, headers, stderr, and
+                    # other curl sinks. Its contents are not part of this command's
+                    # statically proven arguments, so fail closed.
+                    $targets.Add('')
+                    continue
+                }
                 if ($option -eq 'remote-name' -or $option -eq 'remote-name-all') { $hasRemoteName = $true; continue }
                 if ($option -eq 'output-dir') {
                     if ($null -ne $inline) { $outputDirectory = $inline }
@@ -666,6 +720,11 @@ function Get-WorkflowDirectWriterTargets {
             for ($flagIndex = 0; $flagIndex -lt $flags.Length; $flagIndex++) {
                 $flag = [char]::ToString($flags[$flagIndex])
                 if ($flag -ceq 'O') { $hasRemoteName = $true; continue }
+                if ($flag -ceq 'K') {
+                    if ($flagIndex -eq $flags.Length - 1 -and $index + 1 -lt $Arguments.Count) { $index++ }
+                    $targets.Add('')
+                    break
+                }
                 if ($flag -cnotin @('o', 'D', 'c', 'w')) { continue }
                 $argument = $flags.Substring($flagIndex + 1)
                 if ($argument.StartsWith('=', [StringComparison]::Ordinal)) { $argument = $argument.Substring(1) }
@@ -816,11 +875,17 @@ function Get-WorkflowDirectWriterTargets {
 }
 
 function Test-WorkflowRunHasWorkspaceWrite {
-    param([Parameter(Mandatory)] [object] $Step, [Parameter(Mandatory)] [AllowEmptyString()] [string] $WorkingDirectory)
+    param(
+        [Parameter(Mandatory)] [object] $Step,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string] $WorkingDirectory,
+        [switch] $RunnerTempMayBeRedirected
+    )
 
     $runText = ConvertTo-WorkflowLogicalRunText -Text ([string]$Step.RunText) -Shell $Step.Shell
+    if (Test-WorkflowRunContainsUnsupportedEvaluator -Text $runText -Shell $Step.Shell) { return $true }
+    if (Test-WorkflowRunCreatesPathRedirect -Text $runText -Shell $Step.Shell) { return $true }
     foreach ($target in (Get-WorkflowShellRedirectionTargets -Text $runText -Shell $Step.Shell)) {
-        if (-not (Test-WorkflowWriteTargetIsOutsideWorkspace -Token $target)) { return $true }
+        if (-not (Test-WorkflowWriteTargetIsOutsideWorkspace -Token $target -RunnerTempMayBeRedirected:$RunnerTempMayBeRedirected)) { return $true }
     }
 
     $gitMatches = [regex]::Matches($runText, '(?i)(?<![A-Za-z0-9_.-])git(?:\.exe)?(?=\s|$)')
@@ -840,7 +905,7 @@ function Test-WorkflowRunHasWorkspaceWrite {
                 elseif ($index + 1 -lt $words.Count) { $index++; $target = [string]$words[$index] }
                 else { return $true }
             }
-            if ($null -ne $target -and -not (Test-WorkflowWriteTargetIsOutsideWorkspace -Token $target)) { return $true }
+            if ($null -ne $target -and -not (Test-WorkflowWriteTargetIsOutsideWorkspace -Token $target -RunnerTempMayBeRedirected:$RunnerTempMayBeRedirected)) { return $true }
         }
     }
 
@@ -863,7 +928,7 @@ function Test-WorkflowRunHasWorkspaceWrite {
         $arguments = @(Get-WorkflowShellTokens -Text $argumentsText)
         $targets = @(Get-WorkflowDirectWriterTargets -Name ([string]$invocation.Name) -Arguments $arguments)
         foreach ($target in $targets) {
-            if (-not (Test-WorkflowWriteTargetIsOutsideWorkspace -Token ([string]$target))) { return $true }
+            if (-not (Test-WorkflowWriteTargetIsOutsideWorkspace -Token ([string]$target) -RunnerTempMayBeRedirected:$RunnerTempMayBeRedirected)) { return $true }
         }
     }
     return $false
@@ -872,13 +937,14 @@ function Test-WorkflowRunHasWorkspaceWrite {
 function Get-WorkflowRunSourceEffect {
     param(
         [Parameter(Mandatory)] [object] $Step,
-        [Parameter(Mandatory)] [AllowEmptyString()] [string] $WorkingDirectory
+        [Parameter(Mandatory)] [AllowEmptyString()] [string] $WorkingDirectory,
+        [switch] $RunnerTempMayBeRedirected
     )
 
     $runText = ConvertTo-WorkflowLogicalRunText -Text ([string]$Step.RunText) -Shell $Step.Shell
     $gitMatches = [regex]::Matches($runText, '(?i)(?<![A-Za-z0-9_.-])git(?:\.exe)?(?=\s|$)')
     $hasSourceMutation = $false
-    $hasWorkspaceWrite = Test-WorkflowRunHasWorkspaceWrite -Step $Step -WorkingDirectory $WorkingDirectory
+    $hasWorkspaceWrite = Test-WorkflowRunHasWorkspaceWrite -Step $Step -WorkingDirectory $WorkingDirectory -RunnerTempMayBeRedirected:$RunnerTempMayBeRedirected
     $nonSourceChangingGitVerbs = @('status', 'log', 'diff', 'show', 'rev-parse', 'ls-files', 'describe', 'cat-file', 'fetch')
     $sourceChangingGitVerbs = @('checkout', 'switch', 'restore', 'reset', 'pull', 'merge', 'rebase', 'cherry-pick', 'revert', 'am', 'apply', 'read-tree', 'clean', 'worktree', 'submodule', 'clone')
 
@@ -995,6 +1061,7 @@ function Assert-ArtifactScriptConsumersHaveSource {
                 $effectiveCheckoutFailure = 'no checkout has established a pinned workspace-root source'
                 $latestDownloadHadValidSource = $false
                 $latestDownloadFailure = $effectiveCheckoutFailure
+                $runnerTempMayBeRedirected = $false
                 for ($stateIndex = 0; $stateIndex -le $stepIndex; $stateIndex++) {
                     $stateStep = $steps[$stateIndex]
                     if ($null -ne $stateStep.Uses -and $stateStep.Uses -match '(?i)^actions/download-artifact@') {
@@ -1027,7 +1094,8 @@ function Assert-ArtifactScriptConsumersHaveSource {
                     $stateWorkingDirectory = if ($null -ne $stateStep.WorkingDirectory) { $stateStep.WorkingDirectory } else { $resolvedJobWorkingDirectory }
                     $resolvedStateWorkingDirectory = Resolve-WorkflowRelativePath -BasePath '' -RelativePath $stateWorkingDirectory
                     if ($null -eq $resolvedStateWorkingDirectory) { throw "Artifact-consuming job '$($workflow.Name)/$($job.Name)' has an unsupported run working-directory." }
-                    $sourceEffect = Get-WorkflowRunSourceEffect -Step $stateStep -WorkingDirectory $resolvedStateWorkingDirectory
+                    if (Test-WorkflowRunMayRedirectRunnerTemp -Step $stateStep) { $runnerTempMayBeRedirected = $true }
+                    $sourceEffect = Get-WorkflowRunSourceEffect -Step $stateStep -WorkingDirectory $resolvedStateWorkingDirectory -RunnerTempMayBeRedirected:$runnerTempMayBeRedirected
                     if ($sourceEffect -eq 'Restore') {
                         $restoreCanFailAndContinue = $null -ne $stateStep.ContinueOnError -and $stateStep.ContinueOnError -notmatch '^(?i:false|no|0)$'
                         if ($restoreCanFailAndContinue) {

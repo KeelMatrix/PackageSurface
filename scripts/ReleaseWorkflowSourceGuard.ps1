@@ -525,7 +525,7 @@ function Test-WorkflowCommandContainsUnsupportedExecution {
             $current = @($arguments | Select-Object -Skip $index)
             continue
         }
-        if ($programName -eq 'timeout' -or $programName -eq 'timeout.exe') {
+        if ($programName -in @('timeout', 'timeout.exe', 'gtimeout', 'gtimeout.exe')) {
             $index = 0
             $durationFound = $false
             while ($index -lt $arguments.Count) {

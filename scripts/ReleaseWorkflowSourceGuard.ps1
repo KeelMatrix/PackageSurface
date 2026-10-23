@@ -527,17 +527,40 @@ function Test-WorkflowCommandContainsUnsupportedExecution {
         }
         if ($programName -eq 'timeout' -or $programName -eq 'timeout.exe') {
             $index = 0
+            $durationFound = $false
             while ($index -lt $arguments.Count) {
                 $option = ConvertFrom-WorkflowShellToken -Token ([string]$arguments[$index])
-                if ($option -eq '--') { $index++; break }
+                if ($option -eq '--') {
+                    # The terminator ends option parsing, but timeout still consumes
+                    # its duration operand before the command that must be inspected.
+                    $index++
+                    if ($index -ge $arguments.Count) { return $true }
+                    $duration = ConvertFrom-WorkflowShellToken -Token ([string]$arguments[$index])
+                    if ($duration.StartsWith('-', [StringComparison]::Ordinal)) { return $true }
+                    $index++
+                    $durationFound = $true
+                    break
+                }
                 if ($option -in @('--foreground', '--preserve-status', '--verbose')) { $index++; continue }
-                if ($option -match '^(?:-k|--kill-after|-s|--signal)$') { $index += 2; continue }
-                if ($option -match '^(?:--kill-after|--signal)=') { $index++; continue }
+                if ($option -in @('-k', '--kill-after', '-s', '--signal')) {
+                    if ($index + 1 -ge $arguments.Count) { return $true }
+                    $optionValue = ConvertFrom-WorkflowShellToken -Token ([string]$arguments[$index + 1])
+                    if ($optionValue.StartsWith('-', [StringComparison]::Ordinal)) { return $true }
+                    $index += 2
+                    continue
+                }
+                if ($option -match '^(?:--kill-after|--signal)=') {
+                    if ($option -match '^(?:--kill-after|--signal)=$') { return $true }
+                    $index++
+                    continue
+                }
                 if ($option -match '^-[ks].+') { $index++; continue }
                 if ($option.StartsWith('-', [StringComparison]::Ordinal)) { return $true }
                 $index++ # timeout duration
+                $durationFound = $true
                 break
             }
+            if (-not $durationFound -or $index -ge $arguments.Count) { return $true }
             $current = @($arguments | Select-Object -Skip $index)
             continue
         }

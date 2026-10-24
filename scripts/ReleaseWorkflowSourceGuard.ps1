@@ -3,6 +3,255 @@ function Get-WorkflowIndent([string] $Line) {
     return ([regex]::Match($Line, '^ *')).Length
 }
 
+function Remove-WorkflowYamlComment([string] $Text) {
+    $quote = [char]0
+    for ($index = 0; $index -lt $Text.Length; $index++) {
+        $character = $Text[$index]
+        if ($quote -eq '"') {
+            if ($character -eq '\' -and ($index + 1) -lt $Text.Length) { $index++; continue }
+            if ($character -eq '"') { $quote = [char]0 }
+            continue
+        }
+        if ($quote -eq [char]39) {
+            if ($character -eq [char]39 -and ($index + 1) -lt $Text.Length -and $Text[$index + 1] -eq [char]39) { $index++; continue }
+            if ($character -eq [char]39) { $quote = [char]0 }
+            continue
+        }
+        if ($character -eq '"' -or $character -eq [char]39) { $quote = $character; continue }
+        if ($character -eq '#' -and ($index -eq 0 -or [char]::IsWhiteSpace($Text[$index - 1]))) {
+            return $Text.Substring(0, $index)
+        }
+    }
+    return $Text
+}
+
+function ConvertFrom-WorkflowMappingKeyToken {
+    param([Parameter(Mandatory)] [string] $Text, [Parameter(Mandatory)] [string] $Context)
+
+    $candidate = (Remove-WorkflowYamlComment -Text $Text).Trim()
+    $key = $null
+    $tail = ''
+    if ($candidate.StartsWith("'", [StringComparison]::Ordinal)) {
+        $single = [regex]::Match($candidate, '^''(?<value>(?:[^'']|'''')*)''(?<tail>.*)$')
+        if (-not $single.Success) { throw "Workflow $Context has an unsupported single-quoted mapping key." }
+        $key = Get-WorkflowScalarValue -Value ("'" + $single.Groups['value'].Value + "'") -Context "$Context key"
+        $tail = $single.Groups['tail'].Value
+    }
+    elseif ($candidate.StartsWith('"', [StringComparison]::Ordinal)) {
+        $double = [regex]::Match($candidate, '^"(?<value>(?:\\.|[^"\\])*)"(?<tail>.*)$')
+        if (-not $double.Success) { throw "Workflow $Context has an unsupported double-quoted mapping key." }
+        $key = Get-WorkflowScalarValue -Value ('"' + $double.Groups['value'].Value + '"') -Context "$Context key"
+        $tail = $double.Groups['tail'].Value
+    }
+    else {
+        $plain = [regex]::Match($candidate, '^(?<key>[A-Za-z_][A-Za-z0-9_-]*|<<)(?<tail>.*)$')
+        if (-not $plain.Success) { throw "Workflow $Context has an unsupported mapping key." }
+        $key = $plain.Groups['key'].Value
+        $tail = $plain.Groups['tail'].Value
+    }
+
+    $tail = $tail.TrimStart()
+    $hasValueSeparator = $false
+    if ($tail.Length -gt 0) {
+        if ($tail[0] -ne ':') { throw "Workflow $Context has unsupported content after a mapping key." }
+        if ($tail.Length -gt 1 -and -not [char]::IsWhiteSpace($tail[1])) {
+            throw "Workflow $Context has an unsupported mapping value separator."
+        }
+        $hasValueSeparator = $true
+    }
+    return [pscustomobject]@{ Key = [string]$key; HasValueSeparator = $hasValueSeparator }
+}
+
+function Get-WorkflowFlowCollectionText {
+    param(
+        [Parameter(Mandatory)] [string] $InitialText,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]] $ScopeLines,
+        [Parameter(Mandatory)] [int] $StartIndex,
+        [Parameter(Mandatory)] [string] $Context
+    )
+
+    $text = [Text.StringBuilder]::new()
+    $quote = [char]0
+    $depth = 0
+    $opened = $false
+    $lineIndex = $StartIndex - 1
+    $lineText = $InitialText
+    while ($true) {
+        for ($characterIndex = 0; $characterIndex -lt $lineText.Length; $characterIndex++) {
+            $character = $lineText[$characterIndex]
+            if ($quote -eq '"') {
+                [void]$text.Append($character)
+                if ($character -eq '\' -and ($characterIndex + 1) -lt $lineText.Length) {
+                    $characterIndex++
+                    [void]$text.Append($lineText[$characterIndex])
+                }
+                elseif ($character -eq '"') { $quote = [char]0 }
+                continue
+            }
+            if ($quote -eq [char]39) {
+                [void]$text.Append($character)
+                if ($character -eq [char]39 -and ($characterIndex + 1) -lt $lineText.Length -and $lineText[$characterIndex + 1] -eq [char]39) {
+                    $characterIndex++
+                    [void]$text.Append($lineText[$characterIndex])
+                }
+                elseif ($character -eq [char]39) { $quote = [char]0 }
+                continue
+            }
+
+            if ($character -eq '#' -and ($characterIndex -eq 0 -or [char]::IsWhiteSpace($lineText[$characterIndex - 1]))) { break }
+            if ($character -eq '"' -or $character -eq [char]39) {
+                $quote = $character
+                [void]$text.Append($character)
+                continue
+            }
+            if ($character -eq '{') {
+                $opened = $true
+                $depth++
+                [void]$text.Append($character)
+                continue
+            }
+            if ($character -eq '}') {
+                if (-not $opened -or $depth -le 0) { throw "Workflow $Context has an unexpected closing brace." }
+                $depth--
+                [void]$text.Append($character)
+                if ($depth -eq 0) {
+                    $tail = Remove-WorkflowYamlComment -Text $lineText.Substring($characterIndex + 1)
+                    if (-not [string]::IsNullOrWhiteSpace($tail)) { throw "Workflow $Context has content after its flow mapping." }
+                    return [pscustomobject]@{ Text = $text.ToString(); EndIndex = $lineIndex }
+                }
+                continue
+            }
+            [void]$text.Append($character)
+        }
+
+        if ($quote -ne [char]0) { throw "Workflow $Context uses an unsupported multiline quoted scalar." }
+        [void]$text.Append(' ')
+        $lineIndex++
+        if ($lineIndex -ge $ScopeLines.Count) { break }
+        $lineText = [string]$ScopeLines[$lineIndex]
+    }
+
+    throw "Workflow $Context has an incomplete flow mapping."
+}
+
+function Find-WorkflowFlowMappingKeySeparator([string] $Text) {
+    $quote = [char]0
+    $mappingDepth = 0
+    $sequenceDepth = 0
+    for ($index = 0; $index -lt $Text.Length; $index++) {
+        $character = $Text[$index]
+        if ($quote -eq '"') {
+            if ($character -eq '\' -and ($index + 1) -lt $Text.Length) { $index++; continue }
+            if ($character -eq '"') { $quote = [char]0 }
+            continue
+        }
+        if ($quote -eq [char]39) {
+            if ($character -eq [char]39 -and ($index + 1) -lt $Text.Length -and $Text[$index + 1] -eq [char]39) { $index++; continue }
+            if ($character -eq [char]39) { $quote = [char]0 }
+            continue
+        }
+        if ($character -eq '"' -or $character -eq [char]39) { $quote = $character; continue }
+        if ($character -eq '{') { $mappingDepth++; continue }
+        if ($character -eq '}') {
+            if ($mappingDepth -eq 0) { throw 'Workflow flow mapping has an unexpected closing brace.' }
+            $mappingDepth--
+            continue
+        }
+        if ($character -eq '[') { $sequenceDepth++; continue }
+        if ($character -eq ']') {
+            if ($sequenceDepth -eq 0) { throw 'Workflow flow mapping has an unexpected closing bracket.' }
+            $sequenceDepth--
+            continue
+        }
+        if ($character -eq ':' -and $mappingDepth -eq 0 -and $sequenceDepth -eq 0) { return $index }
+    }
+    if ($quote -ne [char]0 -or $mappingDepth -ne 0 -or $sequenceDepth -ne 0) { throw 'Workflow flow mapping has an incomplete key.' }
+    return -1
+}
+
+function Get-WorkflowFlowMappingKeys {
+    param([Parameter(Mandatory)] [string] $FlowText, [Parameter(Mandatory)] [string] $Context)
+
+    $flow = (Remove-WorkflowYamlComment -Text $FlowText).Trim()
+    if (-not $flow.StartsWith('{', [StringComparison]::Ordinal) -or -not $flow.EndsWith('}', [StringComparison]::Ordinal)) {
+        throw "Workflow $Context is not a complete flow mapping."
+    }
+    $inner = $flow.Substring(1, $flow.Length - 2)
+    $segments = [Collections.Generic.List[string]]::new()
+    $segment = [Text.StringBuilder]::new()
+    $quote = [char]0
+    $mappingDepth = 0
+    $sequenceDepth = 0
+    for ($index = 0; $index -lt $inner.Length; $index++) {
+        $character = $inner[$index]
+        if ($quote -eq '"') {
+            [void]$segment.Append($character)
+            if ($character -eq '\' -and ($index + 1) -lt $inner.Length) {
+                $index++
+                [void]$segment.Append($inner[$index])
+            }
+            elseif ($character -eq '"') { $quote = [char]0 }
+            continue
+        }
+        if ($quote -eq [char]39) {
+            [void]$segment.Append($character)
+            if ($character -eq [char]39 -and ($index + 1) -lt $inner.Length -and $inner[$index + 1] -eq [char]39) {
+                $index++
+                [void]$segment.Append($inner[$index])
+            }
+            elseif ($character -eq [char]39) { $quote = [char]0 }
+            continue
+        }
+        if ($character -eq '#' -and ($index -eq 0 -or [char]::IsWhiteSpace($inner[$index - 1]))) {
+            while ($index -lt $inner.Length -and $inner[$index] -ne [char]10 -and $inner[$index] -ne [char]13) { $index++ }
+            [void]$segment.Append(' ')
+            continue
+        }
+        if ($character -eq '"' -or $character -eq [char]39) {
+            $quote = $character
+            [void]$segment.Append($character)
+            continue
+        }
+        if ($character -eq '{') { $mappingDepth++; [void]$segment.Append($character); continue }
+        if ($character -eq '}') {
+            if ($mappingDepth -eq 0) { throw "Workflow $Context has an unexpected nested mapping terminator." }
+            $mappingDepth--
+            [void]$segment.Append($character)
+            continue
+        }
+        if ($character -eq '[') { $sequenceDepth++; [void]$segment.Append($character); continue }
+        if ($character -eq ']') {
+            if ($sequenceDepth -eq 0) { throw "Workflow $Context has an unexpected sequence terminator." }
+            $sequenceDepth--
+            [void]$segment.Append($character)
+            continue
+        }
+        if ($character -eq ',' -and $mappingDepth -eq 0 -and $sequenceDepth -eq 0) {
+            $segments.Add($segment.ToString())
+            $segment = [Text.StringBuilder]::new()
+            continue
+        }
+        [void]$segment.Append($character)
+    }
+    if ($quote -ne [char]0 -or $mappingDepth -ne 0 -or $sequenceDepth -ne 0) { throw "Workflow $Context has an incomplete flow entry." }
+    $segments.Add($segment.ToString())
+    if ($segments.Count -gt 0 -and [string]::IsNullOrWhiteSpace($segments[$segments.Count - 1])) { $segments.RemoveAt($segments.Count - 1) }
+
+    $keys = [Collections.Generic.List[string]]::new()
+    foreach ($entry in $segments) {
+        $entryText = ([string]$entry).Trim()
+        if ([string]::IsNullOrWhiteSpace($entryText)) { throw "Workflow $Context contains an empty flow entry." }
+        if ($entryText -match '^\?(?:\s|$)') { $entryText = $entryText.Substring(1).TrimStart() }
+        $separatorIndex = Find-WorkflowFlowMappingKeySeparator -Text $entryText
+        if ($separatorIndex -lt 0) { throw "Workflow $Context contains a flow entry without a mapping value separator." }
+        $keyText = $entryText.Substring(0, $separatorIndex).Trim()
+        $key = ConvertFrom-WorkflowMappingKeyToken -Text $keyText -Context $Context
+        if ($key.HasValueSeparator) { throw "Workflow $Context has a malformed flow mapping key." }
+        $keys.Add([string]$key.Key)
+    }
+    return $keys.ToArray()
+}
+
 function Get-WorkflowJobs {
     param([Parameter(Mandatory)] [string] $WorkflowText)
 
@@ -34,8 +283,22 @@ function Get-WorkflowJobs {
         if ($indent -lt $jobIndent) { throw 'Workflow jobs mapping contains an unsupported indentation form.' }
 
         if ($indent -eq $jobIndent) {
-            $jobMatch = [regex]::Match($line, '^(?<indent> *)(?<name>[A-Za-z0-9_-]+):\s*(?:#.*)?$')
+            $jobMatch = [regex]::Match($line, '^(?<indent> *)(?<name>[A-Za-z0-9_-]+):(?<value>.*)$')
             if (-not $jobMatch.Success) { throw 'Workflow jobs mapping contains an unsupported job key or flow-style value.' }
+            $jobHeaderValue = (Remove-WorkflowYamlComment -Text $jobMatch.Groups['value'].Value).Trim()
+            if ($jobHeaderValue.StartsWith('{', [StringComparison]::Ordinal)) {
+                $flowMapping = Get-WorkflowFlowCollectionText -InitialText $jobHeaderValue -ScopeLines $lines -StartIndex ($index + 1) -Context "job '$($jobMatch.Groups['name'].Value)'"
+                foreach ($flowKey in (Get-WorkflowFlowMappingKeys -FlowText $flowMapping.Text -Context "job '$($jobMatch.Groups['name'].Value)'")) {
+                    if ([string]::Equals([string]$flowKey, 'container', [StringComparison]::OrdinalIgnoreCase)) {
+                        throw "Workflow job '$($jobMatch.Groups['name'].Value)' declares a job container; image-defined and container-injected Bash startup environment cannot be proven safe."
+                    }
+                    if ([string]::Equals([string]$flowKey, '<<', [StringComparison]::Ordinal)) {
+                        throw "Workflow job '$($jobMatch.Groups['name'].Value)' uses a job-level YAML merge; inherited container or Bash startup environment cannot be proven safe."
+                    }
+                }
+                throw 'Workflow jobs mapping contains an unsupported flow-style job mapping.'
+            }
+            if (-not [string]::IsNullOrWhiteSpace($jobHeaderValue)) { throw 'Workflow jobs mapping contains an unsupported job key or flow-style value.' }
             if ($null -ne $jobName) {
                 $directIndent = [int]::MaxValue
                 foreach ($jobLine in $jobLines) {
@@ -1965,30 +2228,64 @@ function Assert-WorkflowEnvironmentHasNoBashStartupOverride {
     }
 }
 
+function Get-WorkflowJobMappingKeys {
+    param(
+        [Parameter(Mandatory)] [object] $Job,
+        [Parameter(Mandatory)] [string] $Context
+    )
+
+    $keys = [Collections.Generic.List[object]]::new()
+    for ($index = 0; $index -lt $Job.Lines.Count; $index++) {
+        $line = [string]$Job.Lines[$index]
+        if ([string]::IsNullOrWhiteSpace($line) -or $line.TrimStart().StartsWith('#', [StringComparison]::Ordinal)) { continue }
+        $indent = Get-WorkflowIndent $line
+        if ($indent -lt $Job.DirectIndent) { throw "$Context contains an unsupported job mapping indentation." }
+        if ($indent -gt $Job.DirectIndent) { continue }
+        $entryText = $line.Substring($indent)
+        $explicit = [regex]::Match($entryText, '^\?(?:\s(?<key>.*)|$)')
+        if ($explicit.Success) {
+            $keyText = [string]$explicit.Groups['key'].Value
+            if ([string]::IsNullOrWhiteSpace((Remove-WorkflowYamlComment -Text $keyText))) {
+                $keyLineIndex = -1
+                for ($lookahead = $index + 1; $lookahead -lt $Job.Lines.Count; $lookahead++) {
+                    $candidateLine = [string]$Job.Lines[$lookahead]
+                    if ([string]::IsNullOrWhiteSpace($candidateLine) -or $candidateLine.TrimStart().StartsWith('#', [StringComparison]::Ordinal)) { continue }
+                    if ((Get-WorkflowIndent $candidateLine) -le $Job.DirectIndent) { throw "$Context has an incomplete explicit job mapping key." }
+                    $keyLineIndex = $lookahead
+                    $keyText = $candidateLine.Substring((Get-WorkflowIndent $candidateLine))
+                    break
+                }
+                if ($keyLineIndex -lt 0) { throw "$Context has an incomplete explicit job mapping key." }
+            }
+
+            $parsedExplicitKey = ConvertFrom-WorkflowMappingKeyToken -Text $keyText -Context "$Context explicit job mapping"
+            if ([string]::Equals([string]$parsedExplicitKey.Key, 'container', [StringComparison]::OrdinalIgnoreCase)) {
+                throw "$Context declares a job container; image-defined and container-injected Bash startup environment cannot be proven safe."
+            }
+            if ([string]::Equals([string]$parsedExplicitKey.Key, '<<', [StringComparison]::Ordinal)) {
+                throw "$Context uses a job-level YAML merge; inherited container or Bash startup environment cannot be proven safe."
+            }
+            throw "$Context uses an unsupported explicit job mapping key."
+        }
+
+        $parsedKey = ConvertFrom-WorkflowMappingKeyToken -Text $entryText -Context "$Context job mapping"
+        if (-not $parsedKey.HasValueSeparator) { throw "$Context has a job mapping entry without a value separator." }
+        $keys.Add([pscustomobject]@{ Key = [string]$parsedKey.Key; Explicit = $false })
+    }
+    return $keys.ToArray()
+}
+
 function Assert-ArtifactConsumerHasNoUnprovenJobStartupEnvironment {
     param(
         [Parameter(Mandatory)] [object] $Job,
         [Parameter(Mandatory)] [string] $Context
     )
 
-    foreach ($line in $Job.Lines) {
-        $text = [string]$line
-        $mapping = [regex]::Match($text, '^(?<indent> *)(?:"(?<double>(?:\\.|[^"\\])*)"|''(?<single>(?:[^'']|'''')*)''|(?<bare>[A-Za-z_][A-Za-z0-9_-]*|<<))\s*:\s*(?<value>.*)$')
-        if (-not $mapping.Success -or $mapping.Groups['indent'].Value.Length -ne $Job.DirectIndent) { continue }
-
-        $key = if ($mapping.Groups['double'].Success) {
-            Get-WorkflowScalarValue -Value ('"' + $mapping.Groups['double'].Value + '"') -Context 'job key'
-        }
-        elseif ($mapping.Groups['single'].Success) {
-            Get-WorkflowScalarValue -Value ("'" + $mapping.Groups['single'].Value + "'") -Context 'job key'
-        }
-        else { $mapping.Groups['bare'].Value }
-
-        if ([string]::Equals([string]$key, 'container', [StringComparison]::OrdinalIgnoreCase)) {
+    foreach ($entry in (Get-WorkflowJobMappingKeys -Job $Job -Context $Context)) {
+        if ([string]::Equals([string]$entry.Key, 'container', [StringComparison]::OrdinalIgnoreCase)) {
             throw "$Context declares a job container; image-defined and container-injected Bash startup environment cannot be proven safe."
         }
-        if (-not $mapping.Groups['bare'].Success -and [string]::Equals([string]$key, '<<', [StringComparison]::Ordinal)) { continue }
-        if ([string]::Equals([string]$key, '<<', [StringComparison]::Ordinal)) {
+        if ([string]::Equals([string]$entry.Key, '<<', [StringComparison]::Ordinal)) {
             throw "$Context uses a job-level YAML merge; inherited container or Bash startup environment cannot be proven safe."
         }
     }

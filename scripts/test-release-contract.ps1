@@ -1685,6 +1685,84 @@ fi
         }
     }
 
+    $explicitBlockContainerCases = @(
+        @{ Name = 'plain explicit key with scalar container value'; Lines = @('?    container', ': ubuntu:latest') },
+        @{ Name = 'single-quoted explicit key with block container value and artifact startup path'; Lines = @("? 'container'", ':', '  image: ubuntu:latest', '  env:', '    BASH_ENV: artifacts/prelude.sh') },
+        @{ Name = 'double-quoted explicit key with flow container value and workspace startup paths'; Lines = @('? "container"', ': { image: ubuntu:latest, env: { BASH_ENV: ''${{ github.workspace }}/.ci/prelude.sh'', BASHOPTS: expand_aliases } }') },
+        @{ Name = 'line-broken explicit quoted key with an aliased container value and runner-temp startup path'; Lines = @('?', '  "container"', ': *startup_container'); AddAliasSource = $true; FinalValidCheckout = $true }
+    )
+    foreach ($case in $explicitBlockContainerCases) {
+        $containerFixture = New-WorkflowScriptConsumerFixture -ScriptPath $script -FinalValidCheckout:$case.FinalValidCheckout
+        if ($case.AddAliasSource) {
+            $aliasSource = @(
+                '  container-source:',
+                '    runs-on: ubuntu-latest',
+                '    container: &startup_container',
+                '      image: ubuntu:latest',
+                '      env:',
+                '        BASH_ENV: ${{ runner.temp }}/prelude.sh',
+                '        BASHOPTS: expand_aliases',
+                '    steps:',
+                '      - name: Static anchor source',
+                '        run: echo static'
+            ) -join [Environment]::NewLine
+            $containerFixture = $containerFixture.Replace('  future-consumer:', $aliasSource + [Environment]::NewLine + '  future-consumer:')
+        }
+        $containerFixture = Add-WorkflowFixtureJobSettings -Fixture $containerFixture -Lines $case.Lines
+        $failureMessage = ''
+        try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'explicit-block-container-key.yml'; Text = $containerFixture }) -RepositoryRoot $RepositoryRoot }
+        catch { $failureMessage = $_.Exception.Message }
+        if ($failureMessage -notmatch 'job container|job-level container') {
+            throw "Workflow contract did not reject $($case.Name); observed '$failureMessage'."
+        }
+    }
+
+    $unsupportedExplicitKeyFixture = New-WorkflowScriptConsumerFixture -ScriptPath $script
+    $unsupportedExplicitKeyFixture = Add-WorkflowFixtureJobSettings -Fixture $unsupportedExplicitKeyFixture -Lines @('? unsupported-field', ': true')
+    $unsupportedExplicitKeyFailure = ''
+    try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'unsupported-explicit-job-key.yml'; Text = $unsupportedExplicitKeyFixture }) -RepositoryRoot $RepositoryRoot }
+    catch { $unsupportedExplicitKeyFailure = $_.Exception.Message }
+    if ($unsupportedExplicitKeyFailure -notmatch 'unsupported explicit job mapping key') {
+        throw "Workflow contract accepted an unsupported explicit job mapping key; observed '$unsupportedExplicitKeyFailure'."
+    }
+
+    $flowExplicitContainerFixture = @'
+jobs:
+  future-consumer: {
+    ? "container"
+    : { image: ubuntu-latest, env: { BASH_ENV: 'artifacts/prelude.sh', BASHOPTS: expand_aliases } },
+    runs-on: ubuntu-latest,
+    steps: [
+      { uses: actions/checkout@v4, with: { ref: ${{ github.sha }} } },
+      { uses: actions/download-artifact@v4, with: { path: artifacts } },
+      { run: 'pwsh ./scripts/validate-release.ps1' }
+    ]
+  }
+'@
+    $flowExplicitContainerFailure = ''
+    try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'explicit-flow-container-key.yml'; Text = $flowExplicitContainerFixture }) -RepositoryRoot $RepositoryRoot }
+    catch { $flowExplicitContainerFailure = $_.Exception.Message }
+    if ($flowExplicitContainerFailure -notmatch 'job container|job-level container') {
+        throw "Workflow contract did not identify a quoted explicit key in a flow-style job mapping; observed '$flowExplicitContainerFailure'."
+    }
+
+    $flowAliasSource = @'
+jobs:
+  container-source:
+    runs-on: ubuntu-latest
+    container: &startup_container ubuntu:latest
+    steps:
+      - name: Static anchor source
+        run: echo static
+  future-consumer: { ? container : *startup_container, runs-on: ubuntu-latest, steps: [{ uses: actions/checkout@v4 }, { uses: actions/download-artifact@v4, with: { path: artifacts } }, { run: 'pwsh ./scripts/validate-release.ps1' }] }
+'@
+    $flowAliasContainerFailure = ''
+    try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'explicit-flow-alias-container-key.yml'; Text = $flowAliasSource }) -RepositoryRoot $RepositoryRoot }
+    catch { $flowAliasContainerFailure = $_.Exception.Message }
+    if ($flowAliasContainerFailure -notmatch 'job container|job-level container') {
+        throw "Workflow contract did not identify a plain explicit key with an aliased container value in flow style; observed '$flowAliasContainerFailure'."
+    }
+
     $inheritedContainerFixture = New-WorkflowScriptConsumerFixture -ScriptPath $script
     $inheritedContainerPrefix = @(
         '  startup-source:',

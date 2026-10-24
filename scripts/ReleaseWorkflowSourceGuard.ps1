@@ -1434,6 +1434,66 @@ function Test-WorkflowWriteTargetIsOutsideWorkspace {
     return $false
 }
 
+function Test-WorkflowCpInvocationCreatesPathRedirect {
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Text, [AllowNull()] [string] $Shell)
+
+    $runText = ConvertTo-WorkflowLogicalRunText -Text $Text -Shell $Shell
+    foreach ($segment in (Get-WorkflowShellCommandSegments -Text $runText -Shell $Shell)) {
+        $tokens = @(Get-WorkflowShellTokens -Text $segment)
+        for ($commandIndex = 0; $commandIndex -lt $tokens.Count; $commandIndex++) {
+            $program = (ConvertFrom-WorkflowShellToken -Token ([string]$tokens[$commandIndex])).Replace('\', '/')
+            $programName = ($program -split '/')[-1]
+            if ($programName -notmatch '^(?i:cp)(?:\.exe)?$') { continue }
+
+            for ($optionIndex = $commandIndex + 1; $optionIndex -lt $tokens.Count; $optionIndex++) {
+                $option = ConvertFrom-WorkflowShellToken -Token ([string]$tokens[$optionIndex])
+                if ($option -ceq '--') { break }
+
+                $skipNextToken = $false
+                if ($option.StartsWith('--', [StringComparison]::Ordinal)) {
+                    $longOption = ($option -split '=', 2)[0]
+                    if ($longOption -ceq '--link' -or
+                        ($longOption.Length -ge 3 -and '--link'.StartsWith($longOption, [StringComparison]::Ordinal)) -or
+                        $longOption -ceq '--symbolic-link' -or
+                        ($longOption.Length -ge 4 -and '--symbolic-link'.StartsWith($longOption, [StringComparison]::Ordinal))) {
+                        return $true
+                    }
+
+                    # GNU getopt_long accepts unique prefixes. Keep the minimum
+                    # unique prefixes for these argument-taking cp options here:
+                    # --t, --su, and --refe (not the ambiguous --ref).
+                    if ($option -notmatch '=' -and (
+                        $longOption -ceq '--target-directory' -or
+                        ($longOption.Length -ge 3 -and '--target-directory'.StartsWith($longOption, [StringComparison]::Ordinal)) -or
+                        $longOption -ceq '--suffix' -or
+                        ($longOption.Length -ge 4 -and '--suffix'.StartsWith($longOption, [StringComparison]::Ordinal)) -or
+                        $longOption -ceq '--reference' -or
+                        ($longOption.Length -ge 6 -and '--reference'.StartsWith($longOption, [StringComparison]::Ordinal))
+                    )) {
+                        $skipNextToken = $true
+                    }
+                }
+                elseif ($option.Length -gt 1 -and $option.StartsWith('-', [StringComparison]::Ordinal)) {
+                    $shortOptions = $option.Substring(1)
+                    for ($shortIndex = 0; $shortIndex -lt $shortOptions.Length; $shortIndex++) {
+                        $shortOption = [char]::ToString($shortOptions[$shortIndex])
+                        if ($shortOption -ceq 'l' -or $shortOption -ceq 's') { return $true }
+                        if ($shortOption -ceq 'S' -or $shortOption -ceq 't') {
+                            $skipNextToken = $shortIndex -eq ($shortOptions.Length - 1)
+                            break
+                        }
+                        if ($shortOption -ceq 'Z') { break }
+                    }
+                }
+                else { continue }
+
+                if ($skipNextToken) { $optionIndex++ }
+            }
+        }
+    }
+    return $false
+}
+
 function Test-WorkflowRunCreatesPathRedirect {
     param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Text, [AllowNull()] [string] $Shell)
 
@@ -1441,7 +1501,7 @@ function Test-WorkflowRunCreatesPathRedirect {
     if ($runText -match '(?i)(?<![A-Za-z0-9_.-])(?:ln|mklink)(?:\.exe)?["'']?(?=\s|$|[;&|])') { return $true }
     if ($runText -match '(?i)(?<![A-Za-z0-9_.-])fsutil(?:\.exe)?\s+hardlink\s+create\b') { return $true }
     if ($runText -match '(?i)(?<![A-Za-z0-9_.-])mount(?:\.exe)?\s+[^;&|\r\n]*(?:--bind\b|-o\s*(?:=\s*)?bind\b)') { return $true }
-    if ($runText -match '(?i)(?<![A-Za-z0-9_.-])cp(?:\.exe)?\s+[^;&|\r\n]*(?:--link\b|-[A-Za-z]*l[A-Za-z]*\b)') { return $true }
+    if (Test-WorkflowCpInvocationCreatesPathRedirect -Text $runText -Shell $Shell) { return $true }
     if ($runText -match '(?i)(?:CreateSymbolicLink|CreateHardLink|CreateJunction)\s*\(') { return $true }
     if ($runText -match '(?is)(?<![A-Za-z0-9_.-])(?:New-Item|ni)(?:\.exe)?\b(?:(?![;&|\r\n]).)*?-(?:I(?:t(?:e(?:m(?:t(?:y(?:p(?:e)?)?)?)?)?)?)?|T(?:y(?:p(?:e)?)?)?)\s*(?:=|:)?\s*["'']?(?:Junction|SymbolicLink|HardLink|ReparsePoint)(?=["'']?\s|$|[;&|])') { return $true }
     if ($runText -match '(?is)(?<![A-Za-z0-9_.-])(?:New-Item|ni)(?:\.exe)?\b(?:(?![;&|\r\n]).)*?-(?:I(?:t(?:e(?:m(?:t(?:y(?:p(?:e)?)?)?)?)?)?)?|T(?:y(?:p(?:e)?)?)?)\s*(?:=|:)?\s*["'']?\$(?:env:)?[A-Za-z_]') { return $true }
@@ -1892,6 +1952,19 @@ function Get-WorkflowRunSourceEffect {
     return 'Mutation'
 }
 
+function Assert-WorkflowEnvironmentHasNoBashStartupOverride {
+    param(
+        [Parameter(Mandatory)] [Collections.Generic.Dictionary[string, string]] $Environment,
+        [Parameter(Mandatory)] [string] $Context
+    )
+
+    foreach ($name in @('BASH_ENV', 'BASHOPTS')) {
+        if ($Environment.ContainsKey($name)) {
+            throw "$Context defines '$name'; Bash startup behavior cannot be proven safe."
+        }
+    }
+}
+
 function Assert-ArtifactScriptConsumersHaveSource {
     param(
         [Parameter(Mandatory)] [object[]] $Workflows,
@@ -1949,8 +2022,10 @@ function Assert-ArtifactScriptConsumersHaveSource {
                 }
             }
             if ($downloadIndexes.Count -eq 0) { continue }
+            Assert-WorkflowEnvironmentHasNoBashStartupOverride -Environment $workflowEnvironment -Context "Workflow '$($workflow.Name)' environment"
             $runnerPathFlavor = Get-WorkflowRunnerPathFlavor -Job $job
             $jobEnvironment = Get-WorkflowScopeEnvironmentEntries -ScopeLines $job.Lines -DirectIndent $job.DirectIndent
+            Assert-WorkflowEnvironmentHasNoBashStartupOverride -Environment $jobEnvironment -Context "Artifact-consuming job '$($workflow.Name)/$($job.Name)' environment"
             if ($workflowDefinesPath -or $jobEnvironment.ContainsKey('PATH')) {
                 throw "Artifact-consuming job '$($workflow.Name)/$($job.Name)' defines PATH in workflow YAML; executable lookup cannot be proven safe."
             }
@@ -1989,6 +2064,10 @@ function Assert-ArtifactScriptConsumersHaveSource {
                 $persistentPathMayResolveArtifact = $false
                 for ($stateIndex = 0; $stateIndex -le $stepIndex; $stateIndex++) {
                     $stateStep = $steps[$stateIndex]
+                    Assert-WorkflowEnvironmentHasNoBashStartupOverride -Environment $stateStep.EnvironmentValues -Context "Artifact-consuming job '$($workflow.Name)/$($job.Name)' step $($stateIndex + 1) environment"
+                    if ($stateStep.RunText -match '(?i)\bGITHUB_ENV\b') {
+                        throw "Artifact-consuming job '$($workflow.Name)/$($job.Name)' step $($stateIndex + 1) references GITHUB_ENV; persistent Bash startup state cannot be proven safe."
+                    }
                     if ($stateStep.EnvironmentValues.ContainsKey('PATH')) {
                         throw "Artifact-consuming job '$($workflow.Name)/$($job.Name)' step $($stateIndex + 1) defines PATH in its environment."
                     }

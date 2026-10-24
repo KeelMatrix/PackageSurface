@@ -17,6 +17,8 @@ Artifact outputs and executable paths use the consuming job's runner path flavor
 
 The guard parses `exec -a` and GNU `time -o`/`--output` wrapper options, and recognizes GNU `timeout` and `gtimeout` kill-after and signal values in separate, attached, and `=` forms. Timeout parsing consumes the duration after `--` and fails closed when a required option value, duration, or command is missing. The guard rejects `env -S` values containing environment expansion, rejects variable-expanded executable names (including Bash variables that name downloaded runner-temp helpers), and fails closed when wrapper parsing reaches its depth bound. GNU time output destinations are checked as file sinks; immutable `runner.temp` expression paths with safe suffixes remain allowed while no path redirect is active.
 
+The release artifact guard treats GNU `cp --link` and `cp --symbolic-link`, including unique supported long-option prefixes and clustered `-l` / `-s` options, as path-link operations that invalidate later runner-temp path proofs. Artifact-consuming workflows fail closed on workflow-, job-, and step-scope `BASH_ENV` or `BASHOPTS` settings and on `GITHUB_ENV` references in run steps up to and including guarded calls because Bash startup files and alias expansion run before visible commands.
+
 ## Commands
 
 ```powershell

@@ -202,15 +202,21 @@ function New-WorkflowScriptConsumerFixture {
 }
 
 function Add-WorkflowFixturePathEnvironment {
-    param([string] $Fixture, [ValidateSet('workflow', 'job', 'step')] [string] $Scope, [ValidateSet('block', 'flow')] [string] $Style, [string] $Key)
+    param(
+        [string] $Fixture,
+        [ValidateSet('workflow', 'job', 'step')] [string] $Scope,
+        [ValidateSet('block', 'flow')] [string] $Style,
+        [string] $Key,
+        [string] $Value = "'/workspace/artifacts'"
+    )
 
     $newline = [Environment]::NewLine
-    $mapping = if ($Style -eq 'flow') { 'env: { ' + $Key + ": '/workspace/artifacts' }" } else { 'env:' + $newline + '  ' + $Key + ": '/workspace/artifacts'" }
+    $mapping = if ($Style -eq 'flow') { 'env: { ' + $Key + ': ' + $Value + ' }' } else { 'env:' + $newline + '  ' + $Key + ': ' + $Value }
     if ($Scope -eq 'workflow') { return $Fixture.Replace('jobs:', $mapping + $newline + 'jobs:') }
     if ($Scope -eq 'job') {
         $fixtureRunner = if ([IO.Path]::DirectorySeparatorChar -eq '\') { 'windows-latest' } else { 'ubuntu-latest' }
         $jobHeader = '  future-consumer:' + $newline + '    runs-on: ' + $fixtureRunner + $newline + '    steps:'
-        $jobMapping = if ($Style -eq 'flow') { '    ' + $mapping + $newline + '    steps:' } else { '    env:' + $newline + '      ' + $Key + ": '/workspace/artifacts'" + $newline + '    steps:' }
+        $jobMapping = if ($Style -eq 'flow') { '    ' + $mapping + $newline + '    steps:' } else { '    env:' + $newline + '      ' + $Key + ': ' + $Value + $newline + '    steps:' }
         return $Fixture.Replace($jobHeader, ('  future-consumer:' + $newline + '    runs-on: ' + $fixtureRunner + $newline + $jobMapping))
     }
 
@@ -219,7 +225,7 @@ function Add-WorkflowFixturePathEnvironment {
         '      - name: Validate packages' + $newline + '        ' + $mapping + $newline + '        run: |'
     }
     else {
-        '      - name: Validate packages' + $newline + '        env:' + $newline + '          ' + $Key + ": '/workspace/artifacts'" + $newline + '        run: |'
+        '      - name: Validate packages' + $newline + '        env:' + $newline + '          ' + $Key + ': ' + $Value + $newline + '        run: |'
     }
     return $Fixture.Replace($stepStart, $stepMapping)
 }
@@ -735,6 +741,11 @@ fi
         @{ Name = 'Git output outside workspace'; Text = 'git diff --output=' + $runnerTempExpression + '/package-surface.patch'; Shell = 'bash' },
         @{ Name = 'Quoted Git output outside workspace'; Text = 'git diff --output "' + $runnerTempSpacedExpression + '/package-surface.patch"'; Shell = 'bash' },
         @{ Name = 'Quoted Git output compact expression'; Text = 'git diff --output "' + $runnerTempExpression + '/package-surface.patch"'; Shell = 'bash' },
+        @{ Name = 'cp option terminator keeps symbolic-link-like filename as data'; Text = 'cp -- ./--symbolic-link "${{ runner.temp }}/package-surface.txt"'; Shell = 'bash' },
+        @{ Name = 'cp suffix argument is not a symbolic-link option'; Text = 'cp -S --symbolic-link "$GITHUB_WORKSPACE/CHANGELOG.md" "${{ runner.temp }}/package-surface.txt"'; Shell = 'bash' },
+        @{ Name = 'cp reference abbreviation consumes a symbolic-link-like filename'; Text = 'cp --refe --symbolic-link "$GITHUB_WORKSPACE/CHANGELOG.md" "${{ runner.temp }}/package-surface.txt"'; Shell = 'bash' },
+        @{ Name = 'cp suffix abbreviation consumes a symbolic-link-like filename'; Text = 'cp --su --symbolic-link "$GITHUB_WORKSPACE/CHANGELOG.md" "${{ runner.temp }}/package-surface.txt"'; Shell = 'bash' },
+        @{ Name = 'cp uppercase clustered context option does not enable symbolic links'; Text = 'cp -Zs "$GITHUB_WORKSPACE/CHANGELOG.md" "${{ runner.temp }}/package-surface.txt"'; Shell = 'bash' },
         @{ Name = 'Shell output outside workspace'; Text = 'printf payload > "${{ runner.temp }}/package-surface.txt"'; Shell = 'bash' },
         @{ Name = 'Copy outside workspace'; Text = 'Copy-Item source "${{ runner.temp }}/package-surface.txt"'; Shell = 'pwsh' },
         @{ Name = 'Copy through a normalized runner-temp suffix'; Text = 'Copy-Item source "${{ runner.temp }}/cache/../package-surface.txt"'; Shell = 'pwsh' },
@@ -787,6 +798,14 @@ fi
         @{ Name = 'POSIX hard link to tracked root file'; Link = 'ln "$GITHUB_WORKSPACE/CHANGELOG.md" "$RUNNER_TEMP/escape"'; Write = 'printf payload > "${{ runner.temp }}/escape"'; Shell = 'bash' },
         @{ Name = 'POSIX hard link through cp --link'; Link = 'cp --link "$GITHUB_WORKSPACE/CHANGELOG.md" "$RUNNER_TEMP/escape"'; Write = 'printf payload > "${{ runner.temp }}/escape"'; Shell = 'bash' },
         @{ Name = 'POSIX hard link through bundled cp option'; Link = 'cp -al "$GITHUB_WORKSPACE" "$RUNNER_TEMP/escape"'; Write = 'printf payload > "${{ runner.temp }}/escape/CHANGELOG.md"'; Shell = 'bash' },
+        @{ Name = 'GNU cp symbolic link to tracked root file'; Link = 'cp -s "$GITHUB_WORKSPACE/CHANGELOG.md" "$RUNNER_TEMP/escape"'; Write = 'printf payload > "${{ runner.temp }}/escape"'; Shell = 'bash' },
+        @{ Name = 'GNU cp symbolic link to tracked nested file'; Link = 'cp --symbolic-link "$GITHUB_WORKSPACE/src/KeelMatrix.PackageSurface.Cli/README.md" "$RUNNER_TEMP/escape"'; Write = 'curl --output "${{ runner.temp }}/escape" https://host/payload'; Shell = 'bash' },
+        @{ Name = 'GNU cp unique symbolic-link abbreviation'; Link = 'cp --sy "$GITHUB_WORKSPACE/CHANGELOG.md" "$RUNNER_TEMP/escape"'; Write = 'printf payload > "${{ runner.temp }}/escape"'; Shell = 'bash' },
+        @{ Name = 'GNU cp unique hard-link abbreviation'; Link = 'cp --l "$GITHUB_WORKSPACE/src/KeelMatrix.PackageSurface.Cli/README.md" "$RUNNER_TEMP/escape"'; Write = 'curl --output "${{ runner.temp }}/escape" https://host/payload'; Shell = 'bash' },
+        @{ Name = 'GNU cp clustered symbolic-link and force options'; Link = 'cp -sf "$GITHUB_WORKSPACE/CHANGELOG.md" "$RUNNER_TEMP/escape"'; Write = 'printf payload > "${{ runner.temp }}/escape"'; Shell = 'bash' },
+        @{ Name = 'GNU cp clustered force and symbolic-link options'; Link = 'cp -fs "$GITHUB_WORKSPACE/src/KeelMatrix.PackageSurface.Cli/README.md" "$RUNNER_TEMP/escape"'; Write = 'curl --output "${{ runner.temp }}/escape" https://host/payload'; Shell = 'bash' },
+        @{ Name = 'GNU cp symbolic-link option after backup cluster'; Link = 'cp -bs "$GITHUB_WORKSPACE/CHANGELOG.md" "$RUNNER_TEMP/escape"'; Write = 'printf payload > "${{ runner.temp }}/escape"'; Shell = 'bash' },
+        @{ Name = 'GNU cp symbolic-link source may itself be an artifact symlink'; Link = 'cp -s "artifacts/source-link-to-tracked-root" "$RUNNER_TEMP/escape"'; Write = 'printf payload > "${{ runner.temp }}/escape"'; Shell = 'bash' },
         @{ Name = 'POSIX bind mount into runner temp'; Link = 'mount -o bind "$GITHUB_WORKSPACE" "$RUNNER_TEMP/escape"'; Write = 'printf payload > "${{ runner.temp }}/escape/CHANGELOG.md"'; Shell = 'bash' },
         @{ Name = 'Windows junction to workspace root and root write'; Link = 'New-Item -ItemType Junction -Path "$env:RUNNER_TEMP\escape" -Target "$env:GITHUB_WORKSPACE"'; Write = 'Invoke-WebRequest -Uri https://host/payload -OutFile "${{ runner.temp }}\escape\CHANGELOG.md"'; Shell = 'pwsh' },
         @{ Name = 'Windows symbolic link to nested tree and nested write'; Link = 'New-Item -ItemType SymbolicLink -Path "$env:RUNNER_TEMP\escape" -Target "$env:GITHUB_WORKSPACE\src\KeelMatrix.PackageSurface.Cli"'; Write = 'Copy-Item source "${{ runner.temp }}\escape\README.md"'; Shell = 'pwsh' },
@@ -805,6 +824,12 @@ fi
             if (-not $rejected) { throw "Workflow contract accepted $($case.Name) $position after a pinned checkout." }
         }
     }
+
+    $artifactSourceSymlinkFixture = New-WorkflowRunnerTempRedirectFixture -ScriptPath $script -LinkText 'cp -s "artifacts/source-link-to-tracked-root" "$RUNNER_TEMP/escape"' -WriteText 'printf payload > "${{ runner.temp }}/escape"' -Shell 'bash' -Position 'after artifact download' -IncludeShellCheckout
+    $artifactSourceSymlinkRejected = $false
+    try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'cp-symbolic-source-symlink.yml'; Text = $artifactSourceSymlinkFixture }) -RepositoryRoot $RepositoryRoot }
+    catch { $artifactSourceSymlinkRejected = $true }
+    if (-not $artifactSourceSymlinkRejected) { throw 'GNU cp -s from an artifact-provided source symlink preserved trusted runner-temp output after shell checkout.' }
 
     $newline = [Environment]::NewLine
     $workflowRunnerTemp = ([char]36).ToString() + '{{ runner.temp }}'
@@ -1591,6 +1616,56 @@ fi
         if (-not $pathEnvironmentRejected) { throw "Workflow contract accepted $($case.Style) PATH environment at $($case.Scope) scope with key $($case.Key)." }
     }
 
+    $bashStartupEnvironmentCases = @(
+        @{ Name = 'workflow BASH_ENV points to a runner-temp startup file'; Scope = 'workflow'; Style = 'block'; Key = 'BASH_ENV'; Value = '''${{ runner.temp }}/prelude.sh''' },
+        @{ Name = 'workflow flow BASH_ENV expression uses a quoted key'; Scope = 'workflow'; Style = 'flow'; Key = '"bash_env"'; Value = '''${{ vars.STARTUP_FILE }}''' },
+        @{ Name = 'workflow BASHOPTS enables alias expansion'; Scope = 'workflow'; Style = 'flow'; Key = 'BASHOPTS'; Value = '''expand_aliases''' },
+        @{ Name = 'job BASH_ENV points into workspace source'; Scope = 'job'; Style = 'block'; Key = "'Bash_Env'"; Value = '''${{ github.workspace }}/.ci/prelude.sh''' },
+        @{ Name = 'job flow BASHOPTS enables alias expansion'; Scope = 'job'; Style = 'flow'; Key = 'BASHOPTS'; Value = '''expand_aliases''' },
+        @{ Name = 'step BASH_ENV points to an artifact-produced script'; Scope = 'step'; Style = 'block'; Key = 'BASH_ENV'; Value = '''${{ runner.temp }}/artifacts/prelude.sh''' },
+        @{ Name = 'step flow BASHOPTS enables alias expansion'; Scope = 'step'; Style = 'flow'; Key = '"bashopts"'; Value = '''expand_aliases''' },
+        @{ Name = 'empty BASH_ENV declaration still blocks inherited startup state'; Scope = 'workflow'; Style = 'block'; Key = 'BASH_ENV'; Value = "''" }
+    )
+    foreach ($case in $bashStartupEnvironmentCases) {
+        $bashStartupFixture = New-WorkflowScriptConsumerFixture -ScriptPath $script
+        $bashStartupFixture = Add-WorkflowFixturePathEnvironment -Fixture $bashStartupFixture -Scope $case.Scope -Style $case.Style -Key $case.Key -Value $case.Value
+        $failureMessage = ''
+        try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'bash-startup-environment.yml'; Text = $bashStartupFixture }) -RepositoryRoot $RepositoryRoot }
+        catch { $failureMessage = $_.Exception.Message }
+        if ($failureMessage -notmatch 'BASH_ENV|BASHOPTS') { throw "Workflow contract did not fail closed for $($case.Name); observed '$failureMessage'." }
+    }
+
+    $multilineBashStartupFixture = New-WorkflowScriptConsumerFixture -ScriptPath $script
+    $multilineBashStartupFixture = Add-WorkflowFixtureMultilineFlowEnvironment -Fixture $multilineBashStartupFixture -Scope workflow -Entries @(
+        'SAFE: "quoted } brace and escaped quote: \" remains inside", # ignored } BASHOPTS: expand_aliases',
+        'BASH_ENV: "${{ runner.temp }}/prelude.sh", # ignored trailing brace }'
+    )
+    $multilineBashStartupFailure = ''
+    try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'multiline-bash-startup.yml'; Text = $multilineBashStartupFixture }) -RepositoryRoot $RepositoryRoot }
+    catch { $multilineBashStartupFailure = $_.Exception.Message }
+    if ($multilineBashStartupFailure -notmatch 'BASH_ENV') { throw "A quoted expression in multiline flow env did not fail closed; observed '$multilineBashStartupFailure'." }
+
+    $githubEnvironmentMutationCases = @(
+        @{ Name = 'Bash writes BASH_ENV for runner-temp startup file'; Text = 'printf ''BASH_ENV=%s\n'' ''${{ runner.temp }}/prelude.sh'' >> "$GITHUB_ENV"'; Shell = 'bash' },
+        @{ Name = 'PowerShell writes BASH_ENV for workspace startup file'; Text = 'Add-Content -Path $env:GITHUB_ENV -Value ''BASH_ENV=${{ github.workspace }}/.ci/prelude.sh'''; Shell = 'pwsh' },
+        @{ Name = 'artifact-produced startup file is selected through GITHUB_ENV'; Text = 'printf ''BASH_ENV=%s\n'' ''${{ runner.temp }}/artifacts/prelude.sh'' >> "$GITHUB_ENV"'; Shell = 'bash' },
+        @{ Name = 'dynamic GITHUB_ENV key can set BASHOPTS alias expansion'; Text = 'printf ''%s=%s\n'' "$KEY" "$VALUE" >> "$GITHUB_ENV"'; Shell = 'bash' }
+    )
+    foreach ($case in $githubEnvironmentMutationCases) {
+        foreach ($position in @('before artifact download', 'after artifact download', 'between guarded invocations')) {
+            $runStep = @{ Name = $case.Name; Text = $case.Text; Shell = $case.Shell }
+            $fixtureArguments = @{ ScriptPath = $script }
+            if ($position -eq 'before artifact download') { $fixtureArguments.RunsBeforeDownload = @($runStep) }
+            elseif ($position -eq 'after artifact download') { $fixtureArguments.RunsAfterDownload = @($runStep) }
+            else { $fixtureArguments.SecondInvocation = $true; $fixtureArguments.RunsBetweenInvocations = @($runStep) }
+            $fixture = New-WorkflowGitScriptConsumerFixture @fixtureArguments
+            $failureMessage = ''
+            try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'github-env-bash-startup.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot }
+            catch { $failureMessage = $_.Exception.Message }
+            if ($failureMessage -notmatch 'GITHUB_ENV') { throw "Workflow contract did not reject $($case.Name) $position; observed '$failureMessage'." }
+        }
+    }
+
     $quotedBracePathEntries = @(
         'SAFE: "quoted } brace and escaped quote: \" remains inside", # ignored } PATH: /comment-only',
         "DETAIL: 'single } brace and doubled quote '' stays inside',",
@@ -2078,7 +2153,7 @@ try {
     # exercised through synthetic jobs while the workflow parser below enforces that
     # the real consumers do not invoke repository scripts after downloading artifacts.
     Assert-WorkflowScriptSourceRegressionCoverage -CurrentConsumers @() -RepositoryRoot $root
-    Write-Output 'PASS: checkout-source guard tracks runner-aware artifact paths, quote/comment-aware flow env maps, workflow/action PATH state, Windows cmd lookup, working-directory changes, wrapped and stdin evaluators, runner-temp and artifact-output executables, response writers, redirects, tracked-byte restoration, and guarded script invocations.'
+    Write-Output 'PASS: checkout-source guard tracks runner-aware artifact paths, quote/comment-aware flow env maps, Bash startup environment, GNU cp symbolic-link options, workflow/action PATH state, Windows cmd lookup, working-directory changes, wrapped and stdin evaluators, runner-temp and artifact-output executables, response writers, redirects, tracked-byte restoration, and guarded script invocations.'
     if ($SourceGuardOnly) { return }
     $trackedRepositoryFiles = @(git -C $root ls-files)
     if ($LASTEXITCODE -ne 0) { throw 'Unable to enumerate tracked repository files for workflow-consumer checks.' }

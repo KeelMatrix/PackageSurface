@@ -107,10 +107,20 @@ function Add-WorkflowFixtureCheckout {
 }
 
 function Add-WorkflowFixtureDownload {
-    param([System.Collections.Generic.List[string]] $Lines, [int] $SequenceIndent, [int] $FieldIndent)
+    param(
+        [System.Collections.Generic.List[string]] $Lines,
+        [int] $SequenceIndent,
+        [int] $FieldIndent,
+        [string] $Path = 'artifacts',
+        [switch] $OmitPath
+    )
 
     $Lines.Add((' ' * $SequenceIndent) + '- name: Download packages')
     $Lines.Add((' ' * $FieldIndent) + "uses: 'actions/download-artifact@v4'")
+    if (-not $OmitPath) {
+        $Lines.Add((' ' * $FieldIndent) + 'with:')
+        $Lines.Add((' ' * ($FieldIndent + 2)) + 'path: ' + $Path)
+    }
 }
 
 function Add-WorkflowFixtureScripts {
@@ -213,7 +223,9 @@ function New-WorkflowGitScriptConsumerFixture {
         [object[]] $RunsBeforeDownload = @(),
         [object[]] $RunsAfterDownload = @(),
         [object[]] $RunsBetweenInvocations = @(),
-        [switch] $SecondInvocation
+        [switch] $SecondInvocation,
+        [string] $DownloadPath = 'artifacts',
+        [switch] $OmitDownloadPath
     )
 
     $lines = [Collections.Generic.List[string]]::new()
@@ -222,7 +234,7 @@ function New-WorkflowGitScriptConsumerFixture {
     $lines.Add('    steps:')
     Add-WorkflowFixtureCheckout -Lines $lines -SequenceIndent 6 -FieldIndent 8 -CheckoutUses 'actions/checkout@v4' -CheckoutRef '${{ github.sha }}'
     Add-WorkflowFixtureRunSteps -Lines $lines -RunSteps $RunsBeforeDownload
-    Add-WorkflowFixtureDownload -Lines $lines -SequenceIndent 6 -FieldIndent 8
+    Add-WorkflowFixtureDownload -Lines $lines -SequenceIndent 6 -FieldIndent 8 -Path $DownloadPath -OmitPath:$OmitDownloadPath
     Add-WorkflowFixtureRunSteps -Lines $lines -RunSteps $RunsAfterDownload
     Add-WorkflowFixtureScripts -Lines $lines -SequenceIndent 6 -FieldIndent 8 -ScriptPaths @($ScriptPath)
     if ($SecondInvocation) {
@@ -1196,6 +1208,151 @@ fi
     catch { $unsupportedRejected = $true }
     if (-not $unsupportedRejected) { throw 'Workflow guard must fail closed on unsupported step aliases.' }
 
+    # Artifact payloads are data until the workflow selects an artifact path as an
+    # executable, interpreter input, or PATH entry. Keep these static fixtures
+    # non-executing; the argument names stand in for root and nested tracked files.
+    $artifactExecutableCases = @(
+        @{ Name = 'artifact gtimeout wrapper writes root'; Path = 'artifacts'; Text = './artifacts/gtimeout -- 1 rewrite CHANGELOG.md'; Shell = 'bash' },
+        @{ Name = 'artifact timeout wrapper writes nested source'; Path = 'artifacts'; Text = './artifacts/timeout -- 1 rewrite src/KeelMatrix.PackageSurface.Cli/README.md'; Shell = 'bash' },
+        @{ Name = 'artifact env wrapper writes root'; Path = 'artifacts'; Text = './artifacts/env -- rewrite CHANGELOG.md'; Shell = 'bash' },
+        @{ Name = 'artifact exec wrapper writes nested source'; Path = 'artifacts'; Text = './artifacts/exec -a alias rewrite src/KeelMatrix.PackageSurface.Cli/README.md'; Shell = 'bash' },
+        @{ Name = 'artifact time wrapper writes root'; Path = 'artifacts'; Text = './artifacts/time -f %e rewrite CHANGELOG.md'; Shell = 'bash' },
+        @{ Name = 'artifact Bash executable writes nested source'; Path = 'artifacts'; Text = './artifacts/bash --version src/KeelMatrix.PackageSurface.Cli/README.md'; Shell = 'bash' },
+        @{ Name = 'trusted Bash interpreter loads artifact script'; Path = 'artifacts'; Text = 'bash ./artifacts/rewrite.sh CHANGELOG.md'; Shell = 'bash' },
+        @{ Name = 'relative artifact executable resolves from nested working directory'; Path = 'artifacts'; Text = '../../artifacts/rewrite src/KeelMatrix.PackageSurface.Cli/README.md'; Shell = 'bash'; WorkingDirectory = 'src/KeelMatrix.PackageSurface.Cli' },
+        @{ Name = 'absolute artifact script loaded by trusted Bash'; Path = '/tmp/release-helper'; Text = 'bash /tmp/release-helper/rewrite.sh src/KeelMatrix.PackageSurface.Cli/README.md'; Shell = 'bash' },
+        @{ Name = 'artifact helper with unknown name writes root'; Path = 'artifacts'; Text = './artifacts/rewrite CHANGELOG.md'; Shell = 'bash' },
+        @{ Name = 'absolute artifact helper with unknown name writes nested source'; Path = '/tmp/release-helper'; Text = '/tmp/release-helper/rewrite src/KeelMatrix.PackageSurface.Cli/README.md'; Shell = 'bash' },
+        @{ Name = 'absolute artifact gtimeout wrapper writes root'; Path = '/tmp/release-helper'; Text = '/tmp/release-helper/gtimeout -- 1 rewrite CHANGELOG.md'; Shell = 'bash' }
+    )
+    foreach ($case in $artifactExecutableCases) {
+        foreach ($position in @('after artifact download', 'between guarded invocations')) {
+            $runStep = @{ Name = $case.Name; Text = $case.Text; Shell = $case.Shell }
+            if ($case.ContainsKey('WorkingDirectory')) { $runStep.WorkingDirectory = $case.WorkingDirectory }
+            $fixtureArguments = @{ ScriptPath = $script; DownloadPath = $case.Path }
+            if ($position -eq 'after artifact download') { $fixtureArguments.RunsAfterDownload = @($runStep) }
+            else { $fixtureArguments.SecondInvocation = $true; $fixtureArguments.RunsBetweenInvocations = @($runStep) }
+            $fixture = New-WorkflowGitScriptConsumerFixture @fixtureArguments
+            $rejected = $false
+            try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'artifact-executable-provenance.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot }
+            catch { $rejected = $true }
+            if (-not $rejected) { throw "Workflow contract accepted $($case.Name) $position; no artifact payload was executed." }
+        }
+    }
+
+    $pathLookupCases = @(
+        @{ Name = 'Bash PATH lookup of arbitrary artifact helper'; Text = 'export PATH="$GITHUB_WORKSPACE/artifacts:$PATH"; rewrite CHANGELOG.md'; Shell = 'bash' },
+        @{ Name = 'inline PATH lookup through GNU gtimeout'; Text = 'PATH="$GITHUB_WORKSPACE/artifacts:$PATH" gtimeout -- 1 rewrite src/KeelMatrix.PackageSurface.Cli/README.md'; Shell = 'bash' },
+        @{ Name = 'absolute artifact PATH lookup through GNU gtimeout'; Text = 'PATH="/tmp/release-helper:$PATH" gtimeout -- 1 rewrite CHANGELOG.md'; Shell = 'bash'; Path = '/tmp/release-helper' },
+        @{ Name = 'env PATH lookup of arbitrary artifact helper'; Text = 'env PATH="$GITHUB_WORKSPACE/artifacts:$PATH" rewrite CHANGELOG.md'; Shell = 'bash' },
+        @{ Name = 'GITHUB_ENV PATH lookup of arbitrary artifact helper'; Text = 'echo "PATH=$GITHUB_WORKSPACE/artifacts:$PATH" >> "$GITHUB_ENV"; rewrite CHANGELOG.md'; Shell = 'bash' },
+        @{ Name = 'PowerShell PATH lookup of arbitrary artifact helper'; Text = '$env:PATH = "$env:GITHUB_WORKSPACE\artifacts;$env:PATH"; rewrite.exe src/KeelMatrix.PackageSurface.Cli/README.md'; Shell = 'pwsh' }
+    )
+    foreach ($case in $pathLookupCases) {
+        $downloadPath = if ($case.ContainsKey('Path')) { $case.Path } else { 'artifacts' }
+        $fixture = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -DownloadPath $downloadPath -RunsAfterDownload @(@{ Name = $case.Name; Text = $case.Text; Shell = $case.Shell })
+        $rejected = $false
+        try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'artifact-path-lookup.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot }
+        catch { $rejected = $true }
+        if (-not $rejected) { throw "Workflow contract accepted $($case.Name)." }
+    }
+
+    $persistentPathFixture = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsBeforeDownload @(
+        @{ Name = 'Persist artifact directory on PATH'; Text = 'echo "$GITHUB_WORKSPACE/artifacts" >> "$GITHUB_PATH"'; Shell = 'bash' }
+    ) -RunsAfterDownload @(
+        @{ Name = 'Resolve a command after artifact download'; Text = 'rewrite CHANGELOG.md'; Shell = 'bash' }
+    )
+    $persistentPathRejected = $false
+    try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'artifact-persistent-path.yml'; Text = $persistentPathFixture }) -RepositoryRoot $RepositoryRoot }
+    catch { $persistentPathRejected = $true }
+    if (-not $persistentPathRejected) { throw 'Workflow contract accepted a persistent PATH addition that can resolve an artifact helper.' }
+
+    $pathEnvironmentFixture = New-WorkflowGitScriptConsumerFixture -ScriptPath $script
+    $pathEnvironmentFixture = $pathEnvironmentFixture.Replace(
+        ('  future-consumer:' + [Environment]::NewLine + '    steps:'),
+        ('  future-consumer:' + [Environment]::NewLine + '    env:' + [Environment]::NewLine + '      PATH: /workspace/artifacts:$PATH' + [Environment]::NewLine + '    steps:')
+    )
+    $pathEnvironmentRejected = $false
+    try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'artifact-path-environment.yml'; Text = $pathEnvironmentFixture }) -RepositoryRoot $RepositoryRoot }
+    catch { $pathEnvironmentRejected = $true }
+    if (-not $pathEnvironmentRejected) { throw 'Workflow contract accepted a job PATH environment override for an artifact-consuming job.' }
+
+    foreach ($case in @(
+        @{ Name = 'default workspace-root artifact output'; Path = $null; Omit = $true },
+        @{ Name = 'artifact output overlaps tracked scripts'; Path = 'scripts'; Omit = $false },
+        @{ Name = 'artifact output overlaps nested tracked source'; Path = 'src/KeelMatrix.PackageSurface.Cli'; Omit = $false }
+    )) {
+        $fixtureArguments = @{ ScriptPath = $script }
+        if ($case.Omit) { $fixtureArguments.OmitDownloadPath = $true }
+        else { $fixtureArguments.DownloadPath = $case.Path }
+        $fixture = New-WorkflowGitScriptConsumerFixture @fixtureArguments
+        $rejected = $false
+        try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'artifact-output-overlaps-source.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot }
+        catch { $rejected = $true }
+        if (-not $rejected) { throw "Workflow contract accepted $($case.Name), which can replace tracked source." }
+    }
+
+    $dynamicArtifactOutputFixture = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -DownloadPath '~/release-helper'
+    $dynamicArtifactOutputRejected = $false
+    try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'dynamic-artifact-output.yml'; Text = $dynamicArtifactOutputFixture }) -RepositoryRoot $RepositoryRoot }
+    catch { $dynamicArtifactOutputRejected = $true }
+    if (-not $dynamicArtifactOutputRejected) { throw 'Workflow contract accepted a tilde-expanded artifact output whose absolute location was unresolved.' }
+
+    $absoluteDataOutputFixture = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -DownloadPath '/tmp/release-artifacts'
+    $absoluteDataOutputResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'absolute-artifact-data-output.yml'; Text = $absoluteDataOutputFixture }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('absolute-artifact-data-output.yml/future-consumer'))
+    if ($absoluteDataOutputResult.Count -ne 1 -or $absoluteDataOutputResult[0].Scripts -notcontains $script) {
+        throw 'An absolute artifact output used only as data must preserve the pinned source proof.'
+    }
+
+    $trustedSystemWrapperBeforeDownload = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsBeforeDownload @(
+        @{ Name = 'Use trusted system gtimeout before artifact download'; Text = 'gtimeout -- 1 printf payload'; Shell = 'bash' }
+    )
+    $trustedSystemWrapperResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'trusted-system-wrapper-before-download.yml'; Text = $trustedSystemWrapperBeforeDownload }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('trusted-system-wrapper-before-download.yml/future-consumer'))
+    if ($trustedSystemWrapperResult.Count -ne 1 -or $trustedSystemWrapperResult[0].Scripts -notcontains $script) {
+        throw 'A trusted system wrapper before artifact download must not be treated as artifact-supplied.'
+    }
+
+    $trustedSystemWrapperAfterDownload = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @(
+        @{ Name = 'Use trusted system gtimeout after artifact download'; Text = 'gtimeout -- 1 printf payload'; Shell = 'bash' }
+    )
+    $trustedSystemWrapperAfterDownloadResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'trusted-system-wrapper-after-download.yml'; Text = $trustedSystemWrapperAfterDownload }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('trusted-system-wrapper-after-download.yml/future-consumer'))
+    if ($trustedSystemWrapperAfterDownloadResult.Count -ne 1 -or $trustedSystemWrapperAfterDownloadResult[0].Scripts -notcontains $script) {
+        throw 'A trusted system wrapper with unchanged PATH must remain usable after artifact download.'
+    }
+
+    $artifactActionRestore = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @(
+        @{ Name = 'Record a downloaded artifact executable write'; Text = './artifacts/rewrite CHANGELOG.md'; Shell = 'bash' }
+    )
+    $checkoutStep = @(
+        '      - name: Restore pinned source after artifact execution',
+        '        uses: actions/checkout@v4',
+        '        with:',
+        '          ref: ${{ github.sha }}'
+    ) -join [Environment]::NewLine
+    $artifactActionRestore = $artifactActionRestore.Replace('      - name: Validate packages', $checkoutStep + [Environment]::NewLine + '      - name: Validate packages')
+    $artifactActionRestoreResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'artifact-executable-action-restore.yml'; Text = $artifactActionRestore }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('artifact-executable-action-restore.yml/future-consumer'))
+    if ($artifactActionRestoreResult.Count -ne 1 -or $artifactActionRestoreResult[0].Scripts -notcontains $script) {
+        throw 'A clean unconditional root checkout must restore tracked bytes after an artifact-supplied executable.'
+    }
+
+    $externalArtifactRestore = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -DownloadPath '/tmp/release-helper'
+    $externalInvocationAfterCheckout = @(
+        '      - name: Restore pinned source after artifact download',
+        '        uses: actions/checkout@v4',
+        '        with:',
+        '          ref: ${{ github.sha }}',
+        '      - name: Invoke absolute artifact executable after source restore',
+        '        shell: bash',
+        '        run: /tmp/release-helper/rewrite CHANGELOG.md'
+    ) -join [Environment]::NewLine
+    $externalArtifactRestore = $externalArtifactRestore.Replace('      - name: Validate packages', $externalInvocationAfterCheckout + [Environment]::NewLine + '      - name: Validate packages')
+    $externalArtifactRestoreRejected = $false
+    try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'external-artifact-executable-survives-checkout.yml'; Text = $externalArtifactRestore }) -RepositoryRoot $RepositoryRoot }
+    catch { $externalArtifactRestoreRejected = $true }
+    if (-not $externalArtifactRestoreRejected) {
+        throw 'A root checkout must not clear an absolute artifact output or trust its executable afterward.'
+    }
+
     if ($CurrentConsumers.Count -eq 0) { return }
 
     $multiJobLines = [Collections.Generic.List[string]]::new()
@@ -1498,7 +1655,7 @@ try {
     # exercised through synthetic jobs while the workflow parser below enforces that
     # the real consumers do not invoke repository scripts after downloading artifacts.
     Assert-WorkflowScriptSourceRegressionCoverage -CurrentConsumers @() -RepositoryRoot $root
-    Write-Output 'PASS: checkout-source guard tracks wrapped and stdin evaluators, runner-temp executables, shell path rules, response writers, redirects, tracked-byte restoration, artifact boundaries, and guarded script invocations.'
+    Write-Output 'PASS: checkout-source guard tracks wrapped and stdin evaluators, runner-temp and artifact-output executables, PATH provenance, response writers, redirects, tracked-byte restoration, and guarded script invocations.'
     if ($SourceGuardOnly) { return }
     $trackedRepositoryFiles = @(git -C $root ls-files)
     if ($LASTEXITCODE -ne 0) { throw 'Unable to enumerate tracked repository files for workflow-consumer checks.' }

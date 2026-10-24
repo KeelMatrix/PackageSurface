@@ -454,8 +454,196 @@ function Test-WorkflowRunnerTempReference {
     return $normalized -match '(?i)(?:\$\{\{\s*runner\.temp\s*\}\}|\$env:runner_temp|\$\{?runner_temp\}?|%runner_temp%)(?:/|$|"|'')'
 }
 
+function Normalize-WorkflowAbsolutePath {
+    param([Parameter(Mandatory)] [string] $Path)
+
+    $normalized = $Path.Replace('\', '/')
+    $prefix = ''
+    $remaining = $normalized
+    if ($normalized -match '^(?<drive>[A-Za-z]:)/') {
+        $prefix = $Matches['drive'] + '/'
+        $remaining = $normalized.Substring($prefix.Length)
+    }
+    elseif ($normalized.StartsWith('//', [StringComparison]::Ordinal)) {
+        $prefix = '//'
+        $remaining = $normalized.TrimStart('/')
+    }
+    elseif ($normalized.StartsWith('/', [StringComparison]::Ordinal)) {
+        $prefix = '/'
+        $remaining = $normalized.TrimStart('/')
+    }
+    else { return $null }
+
+    $parts = [Collections.Generic.List[string]]::new()
+    foreach ($component in ($remaining -split '/')) {
+        if ([string]::IsNullOrEmpty($component) -or $component -eq '.') { continue }
+        if ($component -eq '..') {
+            if ($parts.Count -eq 0) { return $null }
+            $parts.RemoveAt($parts.Count - 1)
+            continue
+        }
+        $parts.Add($component)
+    }
+    if ($parts.Count -eq 0) { return $prefix.TrimEnd('/') }
+    return $prefix + ($parts -join '/')
+}
+
+function Get-WorkflowArtifactOutputLocation {
+    param([Parameter(Mandatory)] [object] $Step, [Parameter(Mandatory)] [string] $Context)
+
+    $value = if ($Step.With.ContainsKey('path')) {
+        Get-WorkflowScalarValue -Value $Step.With['path'] -Context "$Context artifact output path"
+    }
+    else { '.' }
+    if ([string]::IsNullOrWhiteSpace($value)) { $value = '.' }
+    $normalized = $value.Replace('\', '/')
+
+    if ($normalized -match '^\$\{\{\s*github\.workspace\s*\}\}(?:/(?<suffix>.*))?$') {
+        $suffix = if ($Matches.ContainsKey('suffix')) { [string]$Matches['suffix'] } else { '' }
+        $relative = Resolve-WorkflowRelativePath -BasePath '' -RelativePath $suffix
+        if ($null -eq $relative) { throw "$Context artifact output path escapes the pinned workspace." }
+        return [pscustomobject]@{ Kind = 'workspace'; Path = $relative }
+    }
+    if ($normalized -match '^\$\{\{\s*runner\.temp\s*\}\}(?:/(?<suffix>.*))?$') {
+        $suffix = if ($Matches.ContainsKey('suffix')) { [string]$Matches['suffix'] } else { '' }
+        $relative = Resolve-WorkflowRelativePath -BasePath '' -RelativePath $suffix
+        if ($null -eq $relative) { throw "$Context artifact output path escapes runner.temp." }
+        return [pscustomobject]@{ Kind = 'runner-temp'; Path = $relative }
+    }
+    if ($normalized -match '\$|`|%|\$\{|\*|\?|~') { throw "$Context artifact output path is dynamic and cannot establish executable provenance." }
+    if ($normalized.StartsWith('/', [StringComparison]::Ordinal) -or $normalized -match '^[A-Za-z]:/') {
+        $absolute = Normalize-WorkflowAbsolutePath -Path $normalized
+        if ($null -eq $absolute) { throw "$Context artifact output path is not a normalized absolute path." }
+        return [pscustomobject]@{ Kind = 'absolute'; Path = $absolute }
+    }
+
+    $relative = Resolve-WorkflowRelativePath -BasePath '' -RelativePath $normalized
+    if ($null -eq $relative) { throw "$Context artifact output path escapes the pinned workspace." }
+    return [pscustomobject]@{ Kind = 'workspace'; Path = $relative }
+}
+
+function Test-WorkflowPathIsAtOrBelow {
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Candidate, [Parameter(Mandatory)] [AllowEmptyString()] [string] $Root)
+
+    $candidatePath = $Candidate.Replace('\', '/').TrimEnd('/')
+    $rootPath = $Root.Replace('\', '/').TrimEnd('/')
+    if ([string]::IsNullOrEmpty($rootPath)) { return $true }
+    if ($candidatePath.Equals($rootPath, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+    return $candidatePath.StartsWith($rootPath + '/', [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Test-WorkflowTokenTargetsArtifactOutput {
+    param(
+        [Parameter(Mandatory)] [string] $Token,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [object[]] $ArtifactOutputPaths,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string] $WorkingDirectory,
+        [AllowNull()] [string] $Shell
+    )
+
+    if ($ArtifactOutputPaths.Count -eq 0) { return $false }
+    $value = ConvertFrom-WorkflowShellToken -Token $Token
+    if ([string]::IsNullOrWhiteSpace($value)) { return $false }
+    $normalized = $value.Replace('\', '/')
+    $kind = $null
+    $candidate = $null
+
+    if ($normalized -match '^(?i:\$\{\{\s*github\.workspace\s*\}\}|\$GITHUB_WORKSPACE|\$\{GITHUB_WORKSPACE\}|\$env:GITHUB_WORKSPACE|%GITHUB_WORKSPACE%)(?:/(?<suffix>.*))?$') {
+        $kind = 'workspace'
+        $suffix = if ($Matches.ContainsKey('suffix')) { [string]$Matches['suffix'] } else { '' }
+        $candidate = Resolve-WorkflowRelativePath -BasePath '' -RelativePath $suffix
+    }
+    elseif ($normalized -match '(?i)runner[._-]temp|\$env:RUNNER_TEMP|%RUNNER_TEMP%') {
+        return @($ArtifactOutputPaths | Where-Object { $_.Kind -eq 'runner-temp' }).Count -gt 0
+    }
+    elseif ($normalized -match '\$|`|%|\$\{|\*|\?') {
+        return $true
+    }
+    elseif ($normalized.StartsWith('/', [StringComparison]::Ordinal) -or $normalized -match '^[A-Za-z]:/') {
+        $kind = 'absolute'
+        $candidate = Normalize-WorkflowAbsolutePath -Path $normalized
+    }
+    elseif ($normalized.Contains('/')) {
+        $kind = 'workspace'
+        $base = Resolve-WorkflowRelativePath -BasePath '' -RelativePath $WorkingDirectory
+        if ($null -eq $base) { return $true }
+        $candidate = Resolve-WorkflowRelativePath -BasePath $base -RelativePath $normalized
+    }
+    else { return $false }
+
+    if ($null -eq $candidate) { return $true }
+    foreach ($outputPath in $ArtifactOutputPaths) {
+        if ($outputPath.Kind -ne $kind) { continue }
+        if (Test-WorkflowPathIsAtOrBelow -Candidate $candidate -Root ([string]$outputPath.Path)) { return $true }
+    }
+    return $false
+}
+
+function Test-WorkflowRunMutatesPath {
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Text)
+
+    $patterns = @(
+        '(?i)(?:^|[;&|({\r\n]\s*)(?:export\s+)?PATH\s*\+?=',
+        '(?i)\$env:PATH\s*\+?=',
+        '(?i)(?:^|[;&|({\r\n]\s*)env(?:\.exe)?\s+(?:[^;&|\r\n]*\s)?PATH\s*=',
+        '(?i)(?:Set-Item|New-Item)\s+[^;&|\r\n]*\b(?:Env:)?PATH\b',
+        '(?i)(?:^|[;&|({\r\n]\s*)setx?(?:\.exe)?\s+PATH\s*=',
+        '(?i)\bGITHUB_PATH\b|::add-path::',
+        '(?is)\bSetEnvironmentVariable\s*\(\s*["'']PATH["'']|(?:PATH\s*=.{0,160}GITHUB_ENV|GITHUB_ENV.{0,160}PATH\s*=)'
+    )
+    foreach ($pattern in $patterns) {
+        if ($Text -match $pattern) { return $true }
+    }
+    return $false
+}
+
+function Test-WorkflowRunAddsPersistentPath {
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Text)
+
+    return $Text -match '(?i)\bGITHUB_PATH\b|::add-path::|\bsetx(?:\.exe)?\s+PATH\b|(?is)\bSetEnvironmentVariable\s*\(\s*["'']PATH["'']|(?:PATH\s*=.{0,160}GITHUB_ENV|GITHUB_ENV.{0,160}PATH\s*=)'
+}
+
+function Test-WorkflowScopeDefinesPathEnvironment {
+    param([Parameter(Mandatory)] [AllowEmptyCollection()] [string[]] $ScopeLines)
+
+    for ($index = 0; $index -lt $ScopeLines.Count; $index++) {
+        $envHeader = [regex]::Match([string]$ScopeLines[$index], '^(?<indent> *)env:\s*(?:#.*)?$')
+        if (-not $envHeader.Success) { continue }
+        $envIndent = $envHeader.Groups['indent'].Value.Length
+        for ($nestedIndex = $index + 1; $nestedIndex -lt $ScopeLines.Count; $nestedIndex++) {
+            $line = [string]$ScopeLines[$nestedIndex]
+            if ([string]::IsNullOrWhiteSpace($line) -or $line.TrimStart().StartsWith('#', [StringComparison]::Ordinal)) { continue }
+            $indent = Get-WorkflowIndent $line
+            if ($indent -le $envIndent) { break }
+            $entry = [regex]::Match($line, '^(?<indent> +)(?<key>[A-Za-z_][A-Za-z0-9_-]*):\s*')
+            if ($entry.Success -and $entry.Groups['key'].Value.Equals('PATH', [StringComparison]::OrdinalIgnoreCase)) { return $true }
+        }
+    }
+    return $false
+}
+
+function Test-WorkflowArtifactOutputOverlapsTrackedFiles {
+    param([Parameter(Mandatory)] [object] $OutputPath, [Parameter(Mandatory)] [string[]] $TrackedFiles)
+
+    if ($OutputPath.Kind -ne 'workspace') { return $false }
+    foreach ($trackedFile in $TrackedFiles) {
+        $normalizedFile = ([string]$trackedFile).Replace('\', '/')
+        if (Test-WorkflowPathIsAtOrBelow -Candidate $normalizedFile -Root ([string]$OutputPath.Path)) { return $true }
+    }
+    return $false
+}
+
 function Test-WorkflowInterpreterInvocation {
-    param([Parameter(Mandatory)] [string] $Name, [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]] $Arguments, [AllowNull()] [string] $Shell)
+    param(
+        [Parameter(Mandatory)] [string] $Name,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]] $Arguments,
+        [AllowNull()] [string] $Shell,
+        [AllowEmptyCollection()] [object[]] $ArtifactOutputPaths = @(),
+        [string] $WorkingDirectory = '.'
+    )
+
+    foreach ($argument in $Arguments) {
+        if (Test-WorkflowTokenTargetsArtifactOutput -Token ([string]$argument) -ArtifactOutputPaths $ArtifactOutputPaths -WorkingDirectory $WorkingDirectory -Shell $Shell) { return $true }
+    }
 
     $arguments = $Arguments -join ' '
     if ($arguments -match '(?i)(?:^|\s)(?:-s|--stdin|-|/dev/stdin|/dev/fd/\d+|CON)(?=\s|$)|(?:<<?<?\s*(?:/dev/stdin|/dev/fd/\d+|CON))|(?:<<<?)|(?:\$\(|<\()') { return $true }
@@ -474,19 +662,25 @@ function Test-WorkflowInterpreterInvocation {
 }
 
 function Test-WorkflowCommandContainsUnsupportedExecution {
-    param([Parameter(Mandatory)] [AllowEmptyCollection()] [string[]] $Tokens, [AllowNull()] [string] $Shell)
+    param(
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]] $Tokens,
+        [AllowNull()] [string] $Shell,
+        [AllowEmptyCollection()] [object[]] $ArtifactOutputPaths = @(),
+        [string] $WorkingDirectory = '.'
+    )
 
     $current = @($Tokens)
     for ($depth = 0; $depth -lt 16 -and $current.Count -gt 0; $depth++) {
         while ($current.Count -gt 0) {
             $leading = ConvertFrom-WorkflowShellToken -Token ([string]$current[0])
-            if ($leading -in @('!', 'if', 'then', 'do', 'while', 'until', 'elif', 'else')) { $current = @($current | Select-Object -Skip 1); continue }
+            if ($leading -in @('!', '&', 'if', 'then', 'do', 'while', 'until', 'elif', 'else')) { $current = @($current | Select-Object -Skip 1); continue }
             if ($leading -match '^[A-Za-z_][A-Za-z0-9_]*=') { $current = @($current | Select-Object -Skip 1); continue }
             break
         }
         if ($current.Count -eq 0) { return $false }
 
         $program = ConvertFrom-WorkflowShellToken -Token ([string]$current[0])
+        if (Test-WorkflowTokenTargetsArtifactOutput -Token $program -ArtifactOutputPaths $ArtifactOutputPaths -WorkingDirectory $WorkingDirectory -Shell $Shell) { return $true }
         $programName = ($program -split '[\\/]')[-1].ToLowerInvariant()
         $arguments = @($current | Select-Object -Skip 1)
         if ($program.Contains('$') -or $program.Contains([char]96)) { return $true }
@@ -636,7 +830,7 @@ function Test-WorkflowCommandContainsUnsupportedExecution {
         }
 
         if ($programName -match '^(?:bash|sh|dash|zsh|pwsh|powershell|python(?:\d+(?:\.\d+)*)?|node(?:js)?|ruby|perl)(?:\.exe)?$') {
-            return Test-WorkflowInterpreterInvocation -Name $programName -Arguments $arguments -Shell $Shell
+            return Test-WorkflowInterpreterInvocation -Name $programName -Arguments $arguments -Shell $Shell -ArtifactOutputPaths $ArtifactOutputPaths -WorkingDirectory $WorkingDirectory
         }
         if (Test-WorkflowRunnerTempReference -Value $program) { return $true }
         return $false
@@ -645,7 +839,14 @@ function Test-WorkflowCommandContainsUnsupportedExecution {
 }
 
 function Test-WorkflowRunContainsWrappedUnsupportedExecution {
-    param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Text, [AllowNull()] [string] $Shell)
+    param(
+        [Parameter(Mandatory)] [AllowEmptyString()] [string] $Text,
+        [AllowNull()] [string] $Shell,
+        [AllowEmptyCollection()] [object[]] $ArtifactOutputPaths = @(),
+        [string] $WorkingDirectory = '.'
+    )
+
+    if ($ArtifactOutputPaths.Count -gt 0 -and (Test-WorkflowRunMutatesPath -Text $Text)) { return $true }
 
     $runnerTempDirectory = $false
     $directoryStack = [Collections.Generic.Stack[bool]]::new()
@@ -666,12 +867,17 @@ function Test-WorkflowRunContainsWrappedUnsupportedExecution {
         }
         $programPath = ConvertFrom-WorkflowShellToken -Token ([string]$tokens[0])
         if ($runnerTempDirectory -and $programPath -match '^(?:\./|\.\\)[^\\/]+') { return $true }
-        if ($tokens.Count -gt 0 -and (Test-WorkflowCommandContainsUnsupportedExecution -Tokens $tokens -Shell $Shell)) { return $true }
+        if ($tokens.Count -gt 0 -and (Test-WorkflowCommandContainsUnsupportedExecution -Tokens $tokens -Shell $Shell -ArtifactOutputPaths $ArtifactOutputPaths -WorkingDirectory $WorkingDirectory)) { return $true }
     }
     return $false
 }
 function Test-WorkflowRunContainsUnsupportedEvaluator {
-    param([Parameter(Mandatory)] [AllowEmptyString()] [string] $Text, [AllowNull()] [string] $Shell)
+    param(
+        [Parameter(Mandatory)] [AllowEmptyString()] [string] $Text,
+        [AllowNull()] [string] $Shell,
+        [AllowEmptyCollection()] [object[]] $ArtifactOutputPaths = @(),
+        [string] $WorkingDirectory = '.'
+    )
 
     $runText = ConvertTo-WorkflowLogicalRunText -Text $Text -Shell $Shell
     $pathMutationPatterns = @(
@@ -694,7 +900,7 @@ function Test-WorkflowRunContainsUnsupportedEvaluator {
     foreach ($pattern in $patterns) {
         if ($runText -match $pattern) { return $true }
     }
-    if (Test-WorkflowRunContainsWrappedUnsupportedExecution -Text $runText -Shell $Shell) { return $true }
+    if (Test-WorkflowRunContainsWrappedUnsupportedExecution -Text $runText -Shell $Shell -ArtifactOutputPaths $ArtifactOutputPaths -WorkingDirectory $WorkingDirectory) { return $true }
 
     # The source guard cannot inspect code supplied on stdin, through a here-document,
     # or through a script outside the pinned checkout. Only static scripts/ paths are
@@ -1213,11 +1419,12 @@ function Test-WorkflowRunHasWorkspaceWrite {
     param(
         [Parameter(Mandatory)] [object] $Step,
         [Parameter(Mandatory)] [AllowEmptyString()] [string] $WorkingDirectory,
-        [switch] $RunnerTempMayBeRedirected
+        [switch] $RunnerTempMayBeRedirected,
+        [AllowEmptyCollection()] [object[]] $ArtifactOutputPaths = @()
     )
 
     $runText = ConvertTo-WorkflowLogicalRunText -Text ([string]$Step.RunText) -Shell $Step.Shell
-    if (Test-WorkflowRunContainsUnsupportedEvaluator -Text $runText -Shell $Step.Shell) { return $true }
+    if (Test-WorkflowRunContainsUnsupportedEvaluator -Text $runText -Shell $Step.Shell -ArtifactOutputPaths $ArtifactOutputPaths -WorkingDirectory $WorkingDirectory) { return $true }
     if (Test-WorkflowRunCreatesPathRedirect -Text $runText -Shell $Step.Shell) { return $true }
     foreach ($target in (Get-WorkflowShellRedirectionTargets -Text $runText -Shell $Step.Shell)) {
         if (-not (Test-WorkflowWriteTargetIsOutsideWorkspace -Token $target -RunnerTempMayBeRedirected:$RunnerTempMayBeRedirected)) { return $true }
@@ -1273,13 +1480,14 @@ function Get-WorkflowRunSourceEffect {
     param(
         [Parameter(Mandatory)] [object] $Step,
         [Parameter(Mandatory)] [AllowEmptyString()] [string] $WorkingDirectory,
-        [switch] $RunnerTempMayBeRedirected
+        [switch] $RunnerTempMayBeRedirected,
+        [AllowEmptyCollection()] [object[]] $ArtifactOutputPaths = @()
     )
 
     $runText = ConvertTo-WorkflowLogicalRunText -Text ([string]$Step.RunText) -Shell $Step.Shell
     $gitMatches = [regex]::Matches($runText, '(?i)(?<![A-Za-z0-9_.-])git(?:\.exe)?(?=\s|$)')
     $hasSourceMutation = $false
-    $hasWorkspaceWrite = Test-WorkflowRunHasWorkspaceWrite -Step $Step -WorkingDirectory $WorkingDirectory -RunnerTempMayBeRedirected:$RunnerTempMayBeRedirected
+    $hasWorkspaceWrite = Test-WorkflowRunHasWorkspaceWrite -Step $Step -WorkingDirectory $WorkingDirectory -RunnerTempMayBeRedirected:$RunnerTempMayBeRedirected -ArtifactOutputPaths $ArtifactOutputPaths
     $nonSourceChangingGitVerbs = @('status', 'log', 'diff', 'show', 'rev-parse', 'ls-files', 'describe', 'cat-file', 'fetch')
     $sourceChangingGitVerbs = @('checkout', 'switch', 'restore', 'reset', 'pull', 'merge', 'rebase', 'cherry-pick', 'revert', 'am', 'apply', 'read-tree', 'clean', 'worktree', 'submodule', 'clone')
 
@@ -1334,10 +1542,12 @@ function Assert-ArtifactScriptConsumersHaveSource {
         }
         if ($jobsLineIndex -lt 0) { throw "Workflow '$($workflow.Name)' has no root jobs mapping." }
         $workflowWorkingDirectory = $null
+        $workflowScope = @()
         if ($jobsLineIndex -gt 0) {
             $workflowScope = @($workflowLines[0..($jobsLineIndex - 1)])
             $workflowWorkingDirectory = Get-WorkflowDefaultWorkingDirectory -ScopeLines $workflowScope -DirectIndent 0
         }
+        $workflowDefinesPath = Test-WorkflowScopeDefinesPathEnvironment -ScopeLines $workflowScope
 
         $parsedJobs = [Collections.Generic.List[object]]::new()
         $runTexts = [Collections.Generic.List[string]]::new()
@@ -1366,6 +1576,9 @@ function Assert-ArtifactScriptConsumersHaveSource {
                 }
             }
             if ($downloadIndexes.Count -eq 0) { continue }
+            if ($workflowDefinesPath -or (Test-WorkflowScopeDefinesPathEnvironment -ScopeLines $job.Lines)) {
+                throw "Artifact-consuming job '$($workflow.Name)/$($job.Name)' defines PATH in workflow YAML; executable lookup cannot be proven safe."
+            }
 
             $jobWorkingDirectory = Get-WorkflowDefaultWorkingDirectory -ScopeLines $job.Lines -DirectIndent $job.DirectIndent
             if ($null -eq $jobWorkingDirectory) { $jobWorkingDirectory = $workflowWorkingDirectory }
@@ -1397,11 +1610,23 @@ function Assert-ArtifactScriptConsumersHaveSource {
                 $latestDownloadHadValidSource = $false
                 $latestDownloadFailure = $effectiveCheckoutFailure
                 $runnerTempMayBeRedirected = $false
+                $artifactOutputPaths = [Collections.Generic.List[object]]::new()
+                $persistentPathMayResolveArtifact = $false
                 for ($stateIndex = 0; $stateIndex -le $stepIndex; $stateIndex++) {
                     $stateStep = $steps[$stateIndex]
                     if ($null -ne $stateStep.Uses -and $stateStep.Uses -match '(?i)^actions/download-artifact@') {
                         $latestDownloadHadValidSource = $effectiveCheckoutValid
                         $latestDownloadFailure = $effectiveCheckoutFailure
+                        $artifactOutputPath = Get-WorkflowArtifactOutputLocation -Step $stateStep -Context "job '$($workflow.Name)/$($job.Name)' step $($stateIndex + 1)"
+                        $artifactOutputPaths.Add($artifactOutputPath)
+                        if (Test-WorkflowArtifactOutputOverlapsTrackedFiles -OutputPath $artifactOutputPath -TrackedFiles $trackedFiles) {
+                            $effectiveCheckoutValid = $false
+                            $effectiveCheckoutFailure = 'artifact output can replace tracked workspace source'
+                        }
+                        if ($persistentPathMayResolveArtifact) {
+                            $effectiveCheckoutValid = $false
+                            $effectiveCheckoutFailure = 'a persistent PATH entry may resolve a downloaded artifact executable'
+                        }
                         continue
                     }
                     if ($null -ne $stateStep.Uses -and $stateStep.Uses -match '(?i)^actions/checkout@') {
@@ -1421,16 +1646,22 @@ function Assert-ArtifactScriptConsumersHaveSource {
                                 ''
                             }
                             else { $checkoutFailure }
+                            if ($effectiveCheckoutValid) {
+                                for ($artifactIndex = $artifactOutputPaths.Count - 1; $artifactIndex -ge 0; $artifactIndex--) {
+                                    if ($artifactOutputPaths[$artifactIndex].Kind -eq 'workspace') { $artifactOutputPaths.RemoveAt($artifactIndex) }
+                                }
+                            }
                         }
                         continue
                     }
 
                     if ([string]::IsNullOrWhiteSpace($stateStep.RunText)) { continue }
+                    if (Test-WorkflowRunAddsPersistentPath -Text ([string]$stateStep.RunText)) { $persistentPathMayResolveArtifact = $true }
                     $stateWorkingDirectory = if ($null -ne $stateStep.WorkingDirectory) { $stateStep.WorkingDirectory } else { $resolvedJobWorkingDirectory }
                     $resolvedStateWorkingDirectory = Resolve-WorkflowRelativePath -BasePath '' -RelativePath $stateWorkingDirectory
                     if ($null -eq $resolvedStateWorkingDirectory) { throw "Artifact-consuming job '$($workflow.Name)/$($job.Name)' has an unsupported run working-directory." }
                     if (Test-WorkflowRunMayRedirectRunnerTemp -Step $stateStep) { $runnerTempMayBeRedirected = $true }
-                    $sourceEffect = Get-WorkflowRunSourceEffect -Step $stateStep -WorkingDirectory $resolvedStateWorkingDirectory -RunnerTempMayBeRedirected:$runnerTempMayBeRedirected
+                    $sourceEffect = Get-WorkflowRunSourceEffect -Step $stateStep -WorkingDirectory $resolvedStateWorkingDirectory -RunnerTempMayBeRedirected:$runnerTempMayBeRedirected -ArtifactOutputPaths $artifactOutputPaths.ToArray()
                     if ($sourceEffect -eq 'Restore') {
                         $restoreCanFailAndContinue = $null -ne $stateStep.ContinueOnError -and $stateStep.ContinueOnError -notmatch '^(?i:false|no|0)$'
                         if ($restoreCanFailAndContinue) {
@@ -1454,6 +1685,11 @@ function Assert-ArtifactScriptConsumersHaveSource {
                         $effectiveCheckoutValid = $false
                         $effectiveCheckoutFailure = 'a run step can change workspace source or has an unsupported write destination'
                     }
+                }
+
+                if ($artifactOutputPaths.Count -gt 0 -and $persistentPathMayResolveArtifact) {
+                    $effectiveCheckoutValid = $false
+                    $effectiveCheckoutFailure = 'a persistent PATH entry may resolve a downloaded artifact executable'
                 }
 
                 if (-not $latestDownloadHadValidSource) {

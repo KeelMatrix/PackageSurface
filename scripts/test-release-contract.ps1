@@ -758,6 +758,7 @@ fi
         @{ Name = 'wget log outside workspace with response to stdout'; Text = 'wget --output-file "${{ runner.temp }}/wget.log" -O - https://host/payload'; Shell = 'bash' },
         @{ Name = 'wget append log outside workspace with response to stdout'; Text = 'wget --append-output "${{ runner.temp }}/wget.log" -O - https://host/payload'; Shell = 'bash' },
         @{ Name = 'Invoke-WebRequest response outside workspace'; Text = 'Invoke-WebRequest -Uri https://host/payload -OutFile "${{ runner.temp }}/payload.txt"'; Shell = 'pwsh' },
+        @{ Name = 'module-qualified Invoke-RestMethod response outside workspace'; Text = 'Microsoft.PowerShell.Utility\Invoke-RestMethod -Uri https://host/payload -OutFile "${{ runner.temp }}/payload.txt"'; Shell = 'pwsh' },
         @{ Name = 'Invoke-WebRequest abbreviated OutFile outside workspace'; Text = 'Invoke-WebRequest -Uri https://host/payload -OutFi "${{ runner.temp }}/payload.txt"'; Shell = 'pwsh' },
         @{ Name = 'module-qualified response outside workspace'; Text = 'Microsoft.PowerShell.Utility\Invoke-WebRequest -Uri https://host/payload -OutFile "${{ runner.temp }}/payload.txt"'; Shell = 'pwsh' },
         @{ Name = 'Invoke-RestMethod response outside workspace'; Text = 'Invoke-RestMethod -Uri https://host/payload -OutFile "${{ runner.temp }}/payload.txt"'; Shell = 'pwsh' },
@@ -769,7 +770,12 @@ fi
     )
     foreach ($case in $safeExternalWriteCases) {
         $fixture = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @($case)
-        $result = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'safe-external-write.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('safe-external-write.yml/future-consumer'))
+        try {
+            $result = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'safe-external-write.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('safe-external-write.yml/future-consumer'))
+        }
+        catch {
+            throw "Safe external write case '$($case.Name)' failed: $($_.Exception.Message)"
+        }
         if ($result.Count -ne 1 -or $result[0].Scripts -notcontains $script) {
             throw "File write '$($case.Name)' to a destination under runner.temp must preserve pinned workspace source."
         }

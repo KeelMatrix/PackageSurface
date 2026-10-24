@@ -879,7 +879,9 @@ function Test-WorkflowTokenTargetsArtifactOutput {
     if ([string]::IsNullOrWhiteSpace($value)) { return $false }
     $runnerPathFlavor = 'windows'
     if ($ArtifactOutputPaths[0].PSObject.Properties['RunnerPathFlavor']) { $runnerPathFlavor = [string]$ArtifactOutputPaths[0].RunnerPathFlavor }
-    if ($runnerPathFlavor -ne 'windows' -and ($Token.Contains('\') -or $value -match '^[A-Za-z]:')) { return $true }
+    if ($runnerPathFlavor -ne 'windows' -and ($Token.Contains('\') -or $value -match '^[A-Za-z]:')) {
+        if (-not (Test-WorkflowPinnedScriptArgument -Token $Token -Shell $Shell)) { return $true }
+    }
     $normalized = $value.Replace('\', '/')
     $workspaceCandidate = $null
     $absoluteCandidate = $null
@@ -1015,6 +1017,13 @@ function Test-WorkflowInterpreterInvocation {
     return $Arguments.Count -ne 1 -or $singleArgument -notin $safeInformationArguments
 }
 
+function Test-WorkflowPowerShellUtilityCommandName {
+    param([Parameter(Mandatory)] [string] $Name, [AllowNull()] [string] $Shell)
+
+    if ($Shell -notmatch '^(?i:pwsh|powershell)$') { return $false }
+    return $Name -match '^(?i:Microsoft\.PowerShell\.Utility)\\(?:Invoke-WebRequest|Invoke-RestMethod)$'
+}
+
 function Test-WorkflowCommandContainsUnsupportedExecution {
     param(
         [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]] $Tokens,
@@ -1035,7 +1044,8 @@ function Test-WorkflowCommandContainsUnsupportedExecution {
         if ($current.Count -eq 0) { return $false }
 
         $program = ConvertFrom-WorkflowShellToken -Token ([string]$current[0])
-        if (Test-WorkflowTokenTargetsArtifactOutput -Token $program -ArtifactOutputPaths $ArtifactOutputPaths -WorkingDirectory $WorkingDirectory -Shell $Shell -CheckCmdLookup -NoDefaultCurrentDirectoryInExePath:$NoDefaultCurrentDirectoryInExePath) { return $true }
+        $moduleQualifiedPowerShellCommand = Test-WorkflowPowerShellUtilityCommandName -Name $program -Shell $Shell
+        if (-not $moduleQualifiedPowerShellCommand -and (Test-WorkflowTokenTargetsArtifactOutput -Token $program -ArtifactOutputPaths $ArtifactOutputPaths -WorkingDirectory $WorkingDirectory -Shell $Shell -CheckCmdLookup -NoDefaultCurrentDirectoryInExePath:$NoDefaultCurrentDirectoryInExePath)) { return $true }
         $programName = ($program -split '[\\/]')[-1].ToLowerInvariant()
         $arguments = @($current | Select-Object -Skip 1)
         if ($program.Contains('$') -or $program.Contains([char]96)) { return $true }

@@ -1965,6 +1965,35 @@ function Assert-WorkflowEnvironmentHasNoBashStartupOverride {
     }
 }
 
+function Assert-ArtifactConsumerHasNoUnprovenJobStartupEnvironment {
+    param(
+        [Parameter(Mandatory)] [object] $Job,
+        [Parameter(Mandatory)] [string] $Context
+    )
+
+    foreach ($line in $Job.Lines) {
+        $text = [string]$line
+        $mapping = [regex]::Match($text, '^(?<indent> *)(?:"(?<double>(?:\\.|[^"\\])*)"|''(?<single>(?:[^'']|'''')*)''|(?<bare>[A-Za-z_][A-Za-z0-9_-]*|<<))\s*:\s*(?<value>.*)$')
+        if (-not $mapping.Success -or $mapping.Groups['indent'].Value.Length -ne $Job.DirectIndent) { continue }
+
+        $key = if ($mapping.Groups['double'].Success) {
+            Get-WorkflowScalarValue -Value ('"' + $mapping.Groups['double'].Value + '"') -Context 'job key'
+        }
+        elseif ($mapping.Groups['single'].Success) {
+            Get-WorkflowScalarValue -Value ("'" + $mapping.Groups['single'].Value + "'") -Context 'job key'
+        }
+        else { $mapping.Groups['bare'].Value }
+
+        if ([string]::Equals([string]$key, 'container', [StringComparison]::OrdinalIgnoreCase)) {
+            throw "$Context declares a job container; image-defined and container-injected Bash startup environment cannot be proven safe."
+        }
+        if (-not $mapping.Groups['bare'].Success -and [string]::Equals([string]$key, '<<', [StringComparison]::Ordinal)) { continue }
+        if ([string]::Equals([string]$key, '<<', [StringComparison]::Ordinal)) {
+            throw "$Context uses a job-level YAML merge; inherited container or Bash startup environment cannot be proven safe."
+        }
+    }
+}
+
 function Assert-ArtifactScriptConsumersHaveSource {
     param(
         [Parameter(Mandatory)] [object[]] $Workflows,
@@ -2022,6 +2051,7 @@ function Assert-ArtifactScriptConsumersHaveSource {
                 }
             }
             if ($downloadIndexes.Count -eq 0) { continue }
+            Assert-ArtifactConsumerHasNoUnprovenJobStartupEnvironment -Job $job -Context "Artifact-consuming job '$($workflow.Name)/$($job.Name)'"
             Assert-WorkflowEnvironmentHasNoBashStartupOverride -Environment $workflowEnvironment -Context "Workflow '$($workflow.Name)' environment"
             $runnerPathFlavor = Get-WorkflowRunnerPathFlavor -Job $job
             $jobEnvironment = Get-WorkflowScopeEnvironmentEntries -ScopeLines $job.Lines -DirectIndent $job.DirectIndent

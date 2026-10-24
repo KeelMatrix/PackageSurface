@@ -252,6 +252,32 @@ function Add-WorkflowFixtureMultilineFlowEnvironment {
     return $Fixture.Replace($stepStart, ('      - name: Validate packages' + $newline + $mapping + $newline + '        run: |'))
 }
 
+function Add-WorkflowFixtureJobSettings {
+    param([Parameter(Mandatory)] [string] $Fixture, [Parameter(Mandatory)] [string[]] $Lines)
+
+    $newline = [Environment]::NewLine
+    $workflowLines = [Collections.Generic.List[string]]::new()
+    $workflowLines.AddRange([string[]]($Fixture -split '\r?\n'))
+    $jobHeaders = @()
+    for ($index = 0; $index -lt $workflowLines.Count; $index++) {
+        if ($workflowLines[$index] -match '^  future-consumer:\s*$') { $jobHeaders += $index }
+    }
+    if ($jobHeaders.Count -ne 1) { throw 'The workflow fixture must contain exactly one future-consumer job.' }
+    $stepsIndex = -1
+    for ($index = $jobHeaders[0] + 1; $index -lt $workflowLines.Count; $index++) {
+        if ($workflowLines[$index] -match '^  [A-Za-z0-9_-]+:\s*(?:#.*)?$') { break }
+        if ($workflowLines[$index] -match '^    steps:\s*(?:#.*)?$') {
+            if ($stepsIndex -ge 0) { throw 'The future-consumer job has duplicate steps mappings.' }
+            $stepsIndex = $index
+        }
+    }
+    if ($stepsIndex -lt 0) { throw 'The workflow fixture must contain a future-consumer steps mapping.' }
+    $settings = [Collections.Generic.List[string]]::new()
+    foreach ($line in $Lines) { $settings.Add('    ' + [string]$line) }
+    $workflowLines.InsertRange($stepsIndex, [string[]]$settings.ToArray())
+    return $workflowLines -join $newline
+}
+
 function Add-WorkflowFixtureRunSteps {
     param([System.Collections.Generic.List[string]] $Lines, [object[]] $RunSteps)
 
@@ -1635,6 +1661,74 @@ fi
         if ($failureMessage -notmatch 'BASH_ENV|BASHOPTS') { throw "Workflow contract did not fail closed for $($case.Name); observed '$failureMessage'." }
     }
 
+    $containerStartupCases = @(
+        @{ Name = 'block container env selects an artifact-produced BASH_ENV'; Lines = @('container:', '  image: ubuntu:latest', '  env:', '    BASH_ENV: artifacts/prelude.sh') },
+        @{ Name = 'quoted case-varied block env key selects an inherited BASH_ENV'; Lines = @('container:', '  image: ubuntu:latest', '  env:', '    ''bAsH_eNv'': ${{ env.STARTUP_FILE }}') },
+        @{ Name = 'quoted case-varied flow keys select workspace and alias startup'; Lines = @('container: { image: ubuntu:latest, env: { "BaSh_EnV": ''${{ github.workspace }}/.ci/prelude.sh'', ''BASHOPTS'': expand_aliases } }') },
+        @{ Name = 'container env expressions inherit startup paths and options'; Lines = @('container:', '  image: ubuntu:latest', '  env:', '    BASH_ENV: ${{ vars.STARTUP_FILE }}', '    BASHOPTS: ${{ env.BASHOPTS }}') },
+        @{ Name = 'container options Docker env value selects artifact BASH_ENV'; Lines = @('container:', '  image: ubuntu:latest', '  options: --env BASH_ENV=artifacts/prelude.sh') },
+        @{ Name = 'container options shorthand inherits BASH_ENV'; Lines = @('container:', '  image: ubuntu:latest', '  options: -e BASH_ENV') },
+        @{ Name = 'container options inherit Bash alias startup'; Lines = @('container:', '  image: ubuntu:latest', '  options: --env BASHOPTS') },
+        @{ Name = 'container options env-file reads an artifact path'; Lines = @('container:', '  image: ubuntu:latest', '  options: --env-file artifacts/container.env') },
+        @{ Name = 'container options env-file reads a runner-temp path'; Lines = @('container:', '  image: ubuntu:latest', '  options: ''--env-file ${{ runner.temp }}/container.env''') },
+        @{ Name = 'flow-style job container carries an env map'; Lines = @('container: { image: ubuntu:latest, env: { BASH_ENV: artifacts/prelude.sh } }') },
+        @{ Name = 'uninspectable image environment is rejected without explicit env'; Lines = @('container: ubuntu:latest') }
+    )
+    foreach ($case in $containerStartupCases) {
+        $containerFixture = New-WorkflowScriptConsumerFixture -ScriptPath $script
+        $containerFixture = Add-WorkflowFixtureJobSettings -Fixture $containerFixture -Lines $case.Lines
+        $failureMessage = ''
+        try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'container-bash-startup.yml'; Text = $containerFixture }) -RepositoryRoot $RepositoryRoot }
+        catch { $failureMessage = $_.Exception.Message }
+        if ($failureMessage -notmatch 'job container|startup environment') {
+            throw "Workflow contract did not fail closed for $($case.Name); observed '$failureMessage'."
+        }
+    }
+
+    $inheritedContainerFixture = New-WorkflowScriptConsumerFixture -ScriptPath $script
+    $inheritedContainerPrefix = @(
+        '  startup-source:',
+        '    runs-on: ubuntu-latest',
+        '    env: &startup_environment',
+        '      BASH_ENV: artifacts/prelude.sh',
+        '    steps:',
+        '      - run: |',
+        '          printf safe'
+    ) -join [Environment]::NewLine
+    $inheritedContainerFixture = $inheritedContainerFixture.Replace('  future-consumer:', $inheritedContainerPrefix + [Environment]::NewLine + '  future-consumer:')
+    $inheritedContainerFixture = Add-WorkflowFixtureJobSettings -Fixture $inheritedContainerFixture -Lines @('container:', '  image: ubuntu:latest', '  env: *startup_environment')
+    $inheritedContainerFailure = ''
+    try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'inherited-container-bash-startup.yml'; Text = $inheritedContainerFixture }) -RepositoryRoot $RepositoryRoot }
+    catch { $inheritedContainerFailure = $_.Exception.Message }
+    if ($inheritedContainerFailure -notmatch 'job container|startup environment') {
+        throw "Workflow contract did not fail closed for a YAML-aliased container startup value; observed '$inheritedContainerFailure'."
+    }
+
+    $mergedContainerFixture = New-WorkflowScriptConsumerFixture -ScriptPath $script
+    $mergedContainerFixture = Add-WorkflowFixtureJobSettings -Fixture $mergedContainerFixture -Lines @('<<: { container: ubuntu:latest }')
+    $mergedContainerFailure = ''
+    try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'merged-container-startup.yml'; Text = $mergedContainerFixture }) -RepositoryRoot $RepositoryRoot }
+    catch { $mergedContainerFailure = $_.Exception.Message }
+    if ($mergedContainerFailure -notmatch 'YAML merge|startup environment') {
+        throw "Workflow contract did not fail closed for an inherited job container; observed '$mergedContainerFailure'."
+    }
+
+    $containerAfterCheckoutFixture = New-WorkflowScriptConsumerFixture -ScriptPath $script -FinalValidCheckout
+    $containerAfterCheckoutFixture = Add-WorkflowFixtureJobSettings -Fixture $containerAfterCheckoutFixture -Lines @('container:', '  image: ubuntu:latest', '  env: { BASH_ENV: artifacts/prelude.sh }')
+    $containerAfterCheckoutFailure = ''
+    try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'container-startup-after-final-checkout.yml'; Text = $containerAfterCheckoutFixture }) -RepositoryRoot $RepositoryRoot }
+    catch { $containerAfterCheckoutFailure = $_.Exception.Message }
+    if ($containerAfterCheckoutFailure -notmatch 'job container|startup environment') {
+        throw "A final pinned checkout incorrectly cleared job-container startup environment; observed '$containerAfterCheckoutFailure'."
+    }
+
+    $serviceContainerControl = New-WorkflowScriptConsumerFixture -ScriptPath $script
+    $serviceContainerControl = Add-WorkflowFixtureJobSettings -Fixture $serviceContainerControl -Lines @('services:', '  database:', '    image: postgres:16', '    env:', '      POSTGRES_PASSWORD: test')
+    $serviceContainerControlResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'service-container-control.yml'; Text = $serviceContainerControl }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('service-container-control.yml/future-consumer'))
+    if ($serviceContainerControlResult.Count -ne 1 -or $serviceContainerControlResult[0].Scripts -notcontains $script) {
+        throw 'An ordinary artifact consumer with a service container must retain its pinned-source proof.'
+    }
+
     $multilineBashStartupFixture = New-WorkflowScriptConsumerFixture -ScriptPath $script
     $multilineBashStartupFixture = Add-WorkflowFixtureMultilineFlowEnvironment -Fixture $multilineBashStartupFixture -Scope workflow -Entries @(
         'SAFE: "quoted } brace and escaped quote: \" remains inside", # ignored } BASHOPTS: expand_aliases',
@@ -2153,7 +2247,7 @@ try {
     # exercised through synthetic jobs while the workflow parser below enforces that
     # the real consumers do not invoke repository scripts after downloading artifacts.
     Assert-WorkflowScriptSourceRegressionCoverage -CurrentConsumers @() -RepositoryRoot $root
-    Write-Output 'PASS: checkout-source guard tracks runner-aware artifact paths, quote/comment-aware flow env maps, Bash startup environment, GNU cp symbolic-link options, workflow/action PATH state, Windows cmd lookup, working-directory changes, wrapped and stdin evaluators, runner-temp and artifact-output executables, response writers, redirects, tracked-byte restoration, and guarded script invocations.'
+    Write-Output 'PASS: checkout-source guard tracks runner-aware artifact paths, quote/comment-aware flow env maps, workflow/job-container/step Bash startup environment, GNU cp symbolic-link options, workflow/action PATH state, Windows cmd lookup, working-directory changes, wrapped and stdin evaluators, runner-temp and artifact-output executables, response writers, redirects, tracked-byte restoration, and guarded script invocations.'
     if ($SourceGuardOnly) { return }
     $trackedRepositoryFiles = @(git -C $root ls-files)
     if ($LASTEXITCODE -ne 0) { throw 'Unable to enumerate tracked repository files for workflow-consumer checks.' }

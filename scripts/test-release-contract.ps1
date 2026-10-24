@@ -143,6 +143,7 @@ function New-WorkflowScriptConsumerFixture {
         [string] $CheckoutRepository,
         [string] $CheckoutPath,
         [string] $CheckoutRef = '${{ github.sha }}',
+        [string] $Runner,
         [switch] $ConditionalCheckout,
         [switch] $OmitCheckout,
         [ValidateSet('before-download', 'after-download', 'after-script')]
@@ -160,9 +161,11 @@ function New-WorkflowScriptConsumerFixture {
     )
 
     if ($ScriptPaths.Count -eq 0) { $ScriptPaths = @($ScriptPath) }
+    if ([string]::IsNullOrWhiteSpace($Runner)) { $Runner = if ([IO.Path]::DirectorySeparatorChar -eq '\') { 'windows-latest' } else { 'ubuntu-latest' } }
     $lines = [Collections.Generic.List[string]]::new()
     $lines.Add('jobs:')
     $lines.Add((' ' * $JobIndent) + $JobName + ':')
+    $lines.Add((' ' * ($JobIndent + 2)) + 'runs-on: ' + $Runner)
     $lines.Add((' ' * ($JobIndent + 2)) + 'steps:')
     $sequenceIndent = $JobIndent + 4
     $fieldIndent = $sequenceIndent + 2
@@ -205,9 +208,10 @@ function Add-WorkflowFixturePathEnvironment {
     $mapping = if ($Style -eq 'flow') { 'env: { ' + $Key + ": '/workspace/artifacts' }" } else { 'env:' + $newline + '  ' + $Key + ": '/workspace/artifacts'" }
     if ($Scope -eq 'workflow') { return $Fixture.Replace('jobs:', $mapping + $newline + 'jobs:') }
     if ($Scope -eq 'job') {
-        $jobHeader = '  future-consumer:' + $newline + '    steps:'
+        $fixtureRunner = if ([IO.Path]::DirectorySeparatorChar -eq '\') { 'windows-latest' } else { 'ubuntu-latest' }
+        $jobHeader = '  future-consumer:' + $newline + '    runs-on: ' + $fixtureRunner + $newline + '    steps:'
         $jobMapping = if ($Style -eq 'flow') { '    ' + $mapping + $newline + '    steps:' } else { '    env:' + $newline + '      ' + $Key + ": '/workspace/artifacts'" + $newline + '    steps:' }
-        return $Fixture.Replace($jobHeader, '  future-consumer:' + $newline + $jobMapping)
+        return $Fixture.Replace($jobHeader, ('  future-consumer:' + $newline + '    runs-on: ' + $fixtureRunner + $newline + $jobMapping))
     }
 
     $stepStart = '      - name: Validate packages' + $newline + '        run: |'
@@ -218,6 +222,28 @@ function Add-WorkflowFixturePathEnvironment {
         '      - name: Validate packages' + $newline + '        env:' + $newline + '          ' + $Key + ": '/workspace/artifacts'" + $newline + '        run: |'
     }
     return $Fixture.Replace($stepStart, $stepMapping)
+}
+
+function Add-WorkflowFixtureMultilineFlowEnvironment {
+    param([string] $Fixture, [ValidateSet('workflow', 'job', 'step')] [string] $Scope, [string[]] $Entries)
+
+    $newline = [Environment]::NewLine
+    $indent = switch ($Scope) { workflow { 0 } job { 4 } step { 8 } }
+    $lines = [Collections.Generic.List[string]]::new()
+    $lines.Add((' ' * $indent) + 'env: {')
+    foreach ($entry in $Entries) { $lines.Add((' ' * ($indent + 2)) + $entry) }
+    $lines.Add((' ' * $indent) + '}')
+    $mapping = $lines -join $newline
+
+    if ($Scope -eq 'workflow') { return $Fixture.Replace('jobs:', $mapping + $newline + 'jobs:') }
+    if ($Scope -eq 'job') {
+        $fixtureRunner = if ([IO.Path]::DirectorySeparatorChar -eq '\') { 'windows-latest' } else { 'ubuntu-latest' }
+        $jobHeader = '  future-consumer:' + $newline + '    runs-on: ' + $fixtureRunner + $newline + '    steps:'
+        return $Fixture.Replace($jobHeader, ('  future-consumer:' + $newline + '    runs-on: ' + $fixtureRunner + $newline + $mapping + $newline + '    steps:'))
+    }
+
+    $stepStart = '      - name: Validate packages' + $newline + '        run: |'
+    return $Fixture.Replace($stepStart, ('      - name: Validate packages' + $newline + $mapping + $newline + '        run: |'))
 }
 
 function Add-WorkflowFixtureRunSteps {
@@ -260,12 +286,15 @@ function New-WorkflowGitScriptConsumerFixture {
         [object[]] $RunsBetweenInvocations = @(),
         [switch] $SecondInvocation,
         [string] $DownloadPath = 'artifacts',
+        [string] $Runner,
         [switch] $OmitDownloadPath
     )
 
+    if ([string]::IsNullOrWhiteSpace($Runner)) { $Runner = if ([IO.Path]::DirectorySeparatorChar -eq '\') { 'windows-latest' } else { 'ubuntu-latest' } }
     $lines = [Collections.Generic.List[string]]::new()
     $lines.Add('jobs:')
     $lines.Add('  future-consumer:')
+    $lines.Add('    runs-on: ' + $Runner)
     $lines.Add('    steps:')
     Add-WorkflowFixtureCheckout -Lines $lines -SequenceIndent 6 -FieldIndent 8 -CheckoutUses 'actions/checkout@v4' -CheckoutRef '${{ github.sha }}'
     Add-WorkflowFixtureRunSteps -Lines $lines -RunSteps $RunsBeforeDownload
@@ -390,13 +419,13 @@ function Assert-WorkflowScriptSourceRegressionCoverage {
         throw 'The presence of NoDefaultCurrentDirectoryInExePath must disable cmd current-directory search regardless of its value.'
     }
     foreach ($case in @(
-        @{ Name = 'Windows drive artifact output'; Root = 'C:\workspace\repo'; Path = 'C:\workspace\repo\src\..\artifacts'; Expected = 'artifacts' },
-        @{ Name = 'UNC artifact output'; Root = '\\server\share\repo'; Path = '\\SERVER\share\repo\src\..\artifacts'; Expected = 'artifacts' },
-        @{ Name = 'POSIX artifact output'; Root = '/workspace/repo'; Path = '/workspace/repo/src/../artifacts'; Expected = 'artifacts' },
-        @{ Name = 'POSIX artifact output with duplicate leading separators'; Root = '/workspace/repo'; Path = '//workspace/repo/src/../artifacts'; Expected = 'artifacts' }
+        @{ Name = 'Windows drive artifact output'; Root = 'C:\workspace\repo'; Path = 'C:\workspace\repo\src\..\artifacts'; Expected = 'artifacts'; Runner = 'windows' },
+        @{ Name = 'UNC artifact output'; Root = '\\server\share\repo'; Path = '\\SERVER\share\repo\src\..\artifacts'; Expected = 'artifacts'; Runner = 'windows' },
+        @{ Name = 'POSIX artifact output'; Root = '/workspace/repo'; Path = '/workspace/repo/src/../artifacts'; Expected = 'artifacts'; Runner = 'posix' },
+        @{ Name = 'POSIX artifact output with duplicate leading separators'; Root = '/workspace/repo'; Path = '//workspace/repo/src/../artifacts'; Expected = 'artifacts'; Runner = 'posix' }
     )) {
         $step = [pscustomobject]@{ With = @{ path = $case.Path } }
-        $output = Get-WorkflowArtifactOutputLocation -Step $step -Context $case.Name -RepositoryRoot $case.Root
+        $output = Get-WorkflowArtifactOutputLocation -Step $step -Context $case.Name -RepositoryRoot $case.Root -RunnerPathFlavor $case.Runner
         if ($output.Kind -ne 'workspace' -or $output.Path -cne $case.Expected) { throw "Artifact output normalization misclassified $($case.Name)." }
     }
     if ($null -ne (Normalize-WorkflowAbsolutePath -Path '\\?\C:\workspace\repo\artifacts')) { throw 'An unsupported Windows device path was normalized as an ordinary absolute path.' }
@@ -1404,7 +1433,10 @@ fi
             $cmdNoDefaultFixture = $cmdNoDefaultFixture.Replace('jobs:', ('env:' + [Environment]::NewLine + "  'NoDefaultCurrentDirectoryInExePath': '1'" + [Environment]::NewLine + 'jobs:'))
         }
         elseif ($scope -eq 'job') {
-            $cmdNoDefaultFixture = $cmdNoDefaultFixture.Replace(('  future-consumer:' + [Environment]::NewLine + '    steps:'), ('  future-consumer:' + [Environment]::NewLine + '    env: { "noDefaultCurrentDirectoryInExePath": "1" }' + [Environment]::NewLine + '    steps:'))
+            $fixtureRunner = if ([IO.Path]::DirectorySeparatorChar -eq '\') { 'windows-latest' } else { 'ubuntu-latest' }
+            $jobHeader = '  future-consumer:' + [Environment]::NewLine + '    runs-on: ' + $fixtureRunner + [Environment]::NewLine + '    steps:'
+            $jobWithEnvironment = '  future-consumer:' + [Environment]::NewLine + '    runs-on: ' + $fixtureRunner + [Environment]::NewLine + '    env: { "noDefaultCurrentDirectoryInExePath": "1" }' + [Environment]::NewLine + '    steps:'
+            $cmdNoDefaultFixture = $cmdNoDefaultFixture.Replace($jobHeader, $jobWithEnvironment)
         }
         $cmdNoDefaultResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'cmd-no-default-current-directory.yml'; Text = $cmdNoDefaultFixture }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('cmd-no-default-current-directory.yml/future-consumer'))
         if ($cmdNoDefaultResult.Count -ne 1 -or $cmdNoDefaultResult[0].Scripts -notcontains $script) { throw "Workflow contract rejected trusted PATH lookup with the $scope NoDefaultCurrentDirectoryInExePath setting." }
@@ -1552,6 +1584,53 @@ fi
         catch { $pathEnvironmentRejected = $true }
         if (-not $pathEnvironmentRejected) { throw "Workflow contract accepted $($case.Style) PATH environment at $($case.Scope) scope with key $($case.Key)." }
     }
+
+    $quotedBracePathEntries = @(
+        'SAFE: "quoted } brace and escaped quote: \" remains inside", # ignored } PATH: /comment-only',
+        "DETAIL: 'single } brace and doubled quote '' stays inside',",
+        '# a full-line comment with } and PATH: /also-ignored',
+        "PATH: '/workspace/artifacts'"
+    )
+    foreach ($scope in @('workflow', 'job', 'step')) {
+        $quotedBracePathFixture = New-WorkflowScriptConsumerFixture -ScriptPath $script
+        $quotedBracePathFixture = Add-WorkflowFixtureMultilineFlowEnvironment -Fixture $quotedBracePathFixture -Scope $scope -Entries $quotedBracePathEntries
+        $failureMessage = ''
+        try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = "quoted-brace-path-$scope.yml"; Text = $quotedBracePathFixture }) -RepositoryRoot $RepositoryRoot }
+        catch { $failureMessage = $_.Exception.Message }
+        if ($failureMessage -notmatch 'PATH') { throw "Multiline flow env at $scope scope did not expose PATH after quoted braces and comments; observed '$failureMessage'." }
+    }
+
+    $safeFlowEnvironment = New-WorkflowScriptConsumerFixture -ScriptPath $script
+    $safeFlowEnvironment = Add-WorkflowFixtureMultilineFlowEnvironment -Fixture $safeFlowEnvironment -Scope workflow -Entries @(
+        'SAFE: "quoted } brace and escaped quote: \" remains inside", # ignored } PATH: /comment-only',
+        "DETAIL: 'single } brace and doubled quote '' stays inside',",
+        '# comment with } and PATH: /not-a-key',
+        "OTHER: 'value'"
+    )
+    $safeFlowEnvironmentResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'quoted-brace-safe-flow.yml'; Text = $safeFlowEnvironment }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('quoted-brace-safe-flow.yml/future-consumer'))
+    if ($safeFlowEnvironmentResult.Count -ne 1 -or $safeFlowEnvironmentResult[0].Scripts -notcontains $script) {
+        throw 'A valid multiline flow environment without PATH must retain the pinned source proof.'
+    }
+    $safeStepFlowEnvironment = New-WorkflowScriptConsumerFixture -ScriptPath $script
+    $safeStepFlowEnvironment = Add-WorkflowFixtureMultilineFlowEnvironment -Fixture $safeStepFlowEnvironment -Scope step -Entries @(
+        'SAFE: "quoted } brace and escaped quote: \" remains inside", # ignored } PATH: /comment-only',
+        "DETAIL: 'single } brace and doubled quote '' stays inside',",
+        "OTHER: 'value'"
+    )
+    $safeStepFlowEnvironmentResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'quoted-brace-safe-step-flow.yml'; Text = $safeStepFlowEnvironment }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('quoted-brace-safe-step-flow.yml/future-consumer'))
+    if ($safeStepFlowEnvironmentResult.Count -ne 1 -or $safeStepFlowEnvironmentResult[0].Scripts -notcontains $script) {
+        throw 'A valid step-scope multiline flow environment without PATH must retain the pinned source proof.'
+    }
+    foreach ($case in @(
+        @{ Name = 'block environment control'; Scope = 'workflow'; Style = 'block' },
+        @{ Name = 'ordinary flow environment control'; Scope = 'step'; Style = 'flow' }
+    )) {
+        $safeEnvironmentControl = New-WorkflowScriptConsumerFixture -ScriptPath $script
+        $safeEnvironmentControl = Add-WorkflowFixturePathEnvironment -Fixture $safeEnvironmentControl -Scope $case.Scope -Style $case.Style -Key 'SAFE'
+        $safeEnvironmentControlResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = ($case.Name.Replace(' ', '-') + '.yml'); Text = $safeEnvironmentControl }) -RepositoryRoot $RepositoryRoot)
+        if ($safeEnvironmentControlResult.Count -ne 1) { throw "The $($case.Name) must preserve the pinned source proof." }
+    }
+
     $mergedPathEnvironmentFixture = New-WorkflowScriptConsumerFixture -ScriptPath $script
     $mergedPathEnvironmentFixture = $mergedPathEnvironmentFixture.Replace('jobs:', ('env: { <<: { Path: ''/workspace/artifacts'' } }' + [Environment]::NewLine + 'jobs:'))
     $mergedPathEnvironmentRejected = $false
@@ -1592,6 +1671,54 @@ fi
     $absoluteDataOutputResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'absolute-artifact-data-output.yml'; Text = $absoluteDataOutputFixture }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('absolute-artifact-data-output.yml/future-consumer'))
     if ($absoluteDataOutputResult.Count -ne 1 -or $absoluteDataOutputResult[0].Scripts -notcontains $script) {
         throw 'An absolute artifact output used only as data must preserve the pinned source proof.'
+    }
+
+    $nativeRunner = if ([IO.Path]::DirectorySeparatorChar -eq '\') { 'windows-latest' } else { 'ubuntu-latest' }
+    $nativeRunnerShell = if ($nativeRunner -eq 'windows-latest') { 'pwsh' } else { 'bash' }
+    $nativeRepositoryRoot = $RepositoryRoot.Replace('\', '/').TrimEnd('/')
+    $nativeArtifactDirectory = $nativeRepositoryRoot + '/artifacts/release'
+    $nativeArtifactExecutable = $nativeArtifactDirectory + '/nested/rewrite.exe'
+    $relativeNativeInvocation = if ($nativeRunner -eq 'windows-latest') { "& '.\artifacts\release\nested\rewrite.exe' CHANGELOG.md" } else { "chmod +x ./artifacts/release/nested/rewrite; ./artifacts/release/nested/rewrite CHANGELOG.md" }
+    $absoluteOutputRelativeInvocation = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -Runner $nativeRunner -DownloadPath ($nativeArtifactDirectory + '/nested/..') -RunsAfterDownload @(
+        @{ Name = 'Mark and invoke downloaded helper'; Text = $relativeNativeInvocation; Shell = $nativeRunnerShell }
+    )
+    $absoluteOutputRelativeInvocationRejected = $false
+    try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'native-absolute-output-relative-invocation.yml'; Text = $absoluteOutputRelativeInvocation }) -RepositoryRoot $RepositoryRoot }
+    catch { $absoluteOutputRelativeInvocationRejected = $true }
+    if (-not $absoluteOutputRelativeInvocationRejected) { throw 'A runner-native absolute workspace artifact output was not matched to the relative helper invocation.' }
+
+    $absoluteNativeInvocation = if ($nativeRunner -eq 'windows-latest') { "& '$nativeArtifactExecutable' CHANGELOG.md" } else { "'$nativeArtifactExecutable' CHANGELOG.md" }
+    $relativeOutputAbsoluteInvocation = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -Runner $nativeRunner -DownloadPath 'artifacts/release/nested/../nested' -RunsAfterDownload @(
+        @{ Name = 'Invoke downloaded helper by absolute path'; Text = $absoluteNativeInvocation; Shell = $nativeRunnerShell }
+    )
+    $relativeOutputAbsoluteInvocationRejected = $false
+    try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'native-relative-output-absolute-invocation.yml'; Text = $relativeOutputAbsoluteInvocation }) -RepositoryRoot $RepositoryRoot }
+    catch { $relativeOutputAbsoluteInvocationRejected = $true }
+    if (-not $relativeOutputAbsoluteInvocationRejected) { throw 'A runner-native relative artifact output was not matched to the absolute helper invocation.' }
+
+    $windowsPathVariants = @(
+        @{ Name = 'quoted Windows absolute path on Ubuntu'; Runner = 'ubuntu-latest'; Path = "'C:\workspace\repo\artifacts'"; Command = 'chmod +x "C:\workspace\repo\artifacts\rewrite"; "C:\workspace\repo\artifacts\rewrite" CHANGELOG.md'; Shell = 'bash' },
+        @{ Name = 'forward-slash Windows drive path on Ubuntu'; Runner = 'ubuntu-latest'; Path = 'C:/workspace/repo/artifacts'; Command = 'chmod +x ./C:/workspace/repo/artifacts/rewrite; ./C:/workspace/repo/artifacts/rewrite CHANGELOG.md'; Shell = 'bash' },
+        @{ Name = 'mixed-separator relative path on Ubuntu'; Runner = 'ubuntu-latest'; Path = "'artifacts\release/nested'"; Command = 'chmod +x "artifacts\release/nested/rewrite"; "artifacts\release/nested/rewrite" CHANGELOG.md'; Shell = 'bash' },
+        @{ Name = 'quoted Windows separators on a Windows runner'; Runner = 'windows-latest'; Path = 'artifacts/release/nested'; Command = "& '.\artifacts\release\nested\rewrite.exe' CHANGELOG.md"; Shell = 'pwsh' },
+        @{ Name = 'Windows absolute output and invocation'; Runner = 'windows-latest'; Path = "'C:\workspace\repo\artifacts\nested\..\release'"; Command = "& 'C:\workspace\repo\artifacts\release\rewrite.exe' CHANGELOG.md"; Shell = 'pwsh' },
+        @{ Name = 'Windows-shaped path with an unknown runner'; Runner = '${{ matrix.os }}'; Path = "'C:\workspace\repo\artifacts'"; Command = 'chmod +x "C:\workspace\repo\artifacts\rewrite"; "C:\workspace\repo\artifacts\rewrite" CHANGELOG.md'; Shell = 'bash' },
+        @{ Name = 'Absolute path with an unknown runner'; Runner = '${{ matrix.os }}'; Path = '/tmp/release-artifacts'; Command = '/tmp/release-artifacts/rewrite CHANGELOG.md'; Shell = 'bash' }
+    )
+    foreach ($case in $windowsPathVariants) {
+        $fixture = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -Runner $case.Runner -DownloadPath $case.Path -RunsAfterDownload @(
+            @{ Name = 'Mark and invoke downloaded helper'; Text = $case.Command; Shell = $case.Shell }
+        )
+        $rejected = $false
+        try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = ($case.Name.Replace(' ', '-') + '.yml'); Text = $fixture }) -RepositoryRoot $RepositoryRoot }
+        catch { $rejected = $true }
+        if (-not $rejected) { throw "Workflow contract accepted $($case.Name)." }
+    }
+
+    $unknownRelativeArtifactOutput = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -Runner '${{ matrix.os }}' -DownloadPath 'artifacts/release'
+    $unknownRelativeArtifactOutputResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'unknown-runner-relative-output-control.yml'; Text = $unknownRelativeArtifactOutput }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('unknown-runner-relative-output-control.yml/future-consumer'))
+    if ($unknownRelativeArtifactOutputResult.Count -ne 1 -or $unknownRelativeArtifactOutputResult[0].Scripts -notcontains $script) {
+        throw 'A runner-neutral relative artifact output used only as data must preserve the pinned source proof.'
     }
 
     $trustedSystemWrapperBeforeDownload = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsBeforeDownload @(
@@ -1945,7 +2072,7 @@ try {
     # exercised through synthetic jobs while the workflow parser below enforces that
     # the real consumers do not invoke repository scripts after downloading artifacts.
     Assert-WorkflowScriptSourceRegressionCoverage -CurrentConsumers @() -RepositoryRoot $root
-    Write-Output 'PASS: checkout-source guard tracks canonical absolute paths, workflow/action PATH state, Windows cmd lookup, working-directory changes, wrapped and stdin evaluators, runner-temp and artifact-output executables, response writers, redirects, tracked-byte restoration, and guarded script invocations.'
+    Write-Output 'PASS: checkout-source guard tracks runner-aware artifact paths, quote/comment-aware flow env maps, workflow/action PATH state, Windows cmd lookup, working-directory changes, wrapped and stdin evaluators, runner-temp and artifact-output executables, response writers, redirects, tracked-byte restoration, and guarded script invocations.'
     if ($SourceGuardOnly) { return }
     $trackedRepositoryFiles = @(git -C $root ls-files)
     if ($LASTEXITCODE -ne 0) { throw 'Unable to enumerate tracked repository files for workflow-consumer checks.' }

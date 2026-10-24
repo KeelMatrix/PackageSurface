@@ -145,6 +145,140 @@ function Get-WorkflowDefaultWorkingDirectory {
     return $workingDirectories[0]
 }
 
+function Get-WorkflowFlowMappingText {
+    param(
+        [Parameter(Mandatory)] [string] $InitialText,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]] $ScopeLines,
+        [Parameter(Mandatory)] [int] $StartIndex,
+        [Parameter(Mandatory)] [int] $EnvironmentIndent,
+        [switch] $IncludeEndIndex
+    )
+
+    $text = [Text.StringBuilder]::new()
+    $quote = [char]0
+    $opened = $false
+    $lineIndex = $StartIndex - 1
+    $lineText = $InitialText
+    while ($true) {
+        $line = [string]$lineText
+        for ($characterIndex = 0; $characterIndex -lt $line.Length; $characterIndex++) {
+            $character = $line[$characterIndex]
+            if ($quote -eq '"') {
+                [void]$text.Append($character)
+                if ($character -eq '\') {
+                    if (($characterIndex + 1) -ge $line.Length) { throw 'Workflow env flow mapping has an unsupported escaped line break.' }
+                    $characterIndex++
+                    [void]$text.Append($line[$characterIndex])
+                }
+                elseif ($character -eq '"') { $quote = [char]0 }
+                continue
+            }
+            if ($quote -eq "'") {
+                [void]$text.Append($character)
+                if ($character -eq "'" -and ($characterIndex + 1) -lt $line.Length -and $line[$characterIndex + 1] -eq "'") {
+                    $characterIndex++
+                    [void]$text.Append($line[$characterIndex])
+                }
+                elseif ($character -eq "'") { $quote = [char]0 }
+                continue
+            }
+
+            if ($character -eq '#' -and ($characterIndex -eq 0 -or [char]::IsWhiteSpace($line[$characterIndex - 1]))) { break }
+            if ($character -eq '"' -or $character -eq "'") {
+                $quote = $character
+                [void]$text.Append($character)
+                continue
+            }
+            if ($character -eq '{') {
+                if ($opened) { throw 'Workflow env flow mapping contains an unsupported nested mapping.' }
+                $opened = $true
+                [void]$text.Append($character)
+                continue
+            }
+            if ($character -eq '}') {
+                if (-not $opened) { throw 'Workflow env flow mapping has an unsupported closing brace.' }
+                [void]$text.Append($character)
+                $tail = $line.Substring($characterIndex + 1)
+                if ($tail -match '^\s*(?:#.*)?$') {
+                    if ($IncludeEndIndex) { return [pscustomobject]@{ Text = $text.ToString(); EndIndex = $lineIndex } }
+                    return $text.ToString()
+                }
+                throw 'Workflow env flow mapping has unsupported content after its closing brace.'
+            }
+            [void]$text.Append($character)
+        }
+
+        if ($quote -ne [char]0) { throw 'Workflow env flow mapping uses a multiline quoted scalar.' }
+        [void]$text.Append(' ')
+        $lineIndex++
+        if ($lineIndex -ge $ScopeLines.Count) { break }
+        $lineText = [string]$ScopeLines[$lineIndex]
+        if ([string]::IsNullOrWhiteSpace($lineText) -or $lineText.TrimStart().StartsWith('#', [StringComparison]::Ordinal)) { continue }
+        if ((Get-WorkflowIndent $lineText) -le $EnvironmentIndent -and $lineText.TrimStart() -notmatch '^\}(?:\s*(?:#.*)?)?$') { break }
+    }
+
+    throw 'Workflow env flow mapping is incomplete.'
+}
+
+function Get-WorkflowFlowMappingEntries {
+    param([Parameter(Mandatory)] [string] $FlowText)
+
+    $inner = $FlowText.Substring(1, $FlowText.Length - 2)
+    $segments = [Collections.Generic.List[string]]::new()
+    $segment = [Text.StringBuilder]::new()
+    $quote = [char]0
+    for ($index = 0; $index -lt $inner.Length; $index++) {
+        $character = $inner[$index]
+        if ($quote -eq '"') {
+            [void]$segment.Append($character)
+            if ($character -eq '\') {
+                if (($index + 1) -ge $inner.Length) { throw 'Workflow env flow mapping has an unsupported escaped value.' }
+                $index++
+                [void]$segment.Append($inner[$index])
+            }
+            elseif ($character -eq '"') { $quote = [char]0 }
+            continue
+        }
+        if ($quote -eq "'") {
+            [void]$segment.Append($character)
+            if ($character -eq "'" -and ($index + 1) -lt $inner.Length -and $inner[$index + 1] -eq "'") {
+                $index++
+                [void]$segment.Append($inner[$index])
+            }
+            elseif ($character -eq "'") { $quote = [char]0 }
+            continue
+        }
+        if ($character -eq '"' -or $character -eq "'") {
+            $quote = $character
+            [void]$segment.Append($character)
+        }
+        elseif ($character -eq ',') {
+            $segments.Add($segment.ToString())
+            $segment = [Text.StringBuilder]::new()
+        }
+        else { [void]$segment.Append($character) }
+    }
+    if ($quote -ne [char]0) { throw 'Workflow env flow mapping has an unterminated quoted scalar.' }
+    $segments.Add($segment.ToString())
+
+    if ($segments.Count -gt 0 -and [string]::IsNullOrWhiteSpace($segments[$segments.Count - 1])) { $segments.RemoveAt($segments.Count - 1) }
+    $entries = [Collections.Generic.List[object]]::new()
+    foreach ($item in $segments) {
+        if ([string]::IsNullOrWhiteSpace($item)) { throw 'Workflow env flow mapping contains an empty entry.' }
+        $entry = [regex]::Match($item.Trim(), '^(?:"(?<double>(?:\\.|[^"\\])*)"|''(?<single>(?:[^'']|'''')*)''|(?<bare>[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*(?<value>.*)$')
+        if (-not $entry.Success) { throw 'Workflow env flow mapping contains an unsupported key or value.' }
+        $key = if ($entry.Groups['double'].Success) {
+            Get-WorkflowScalarValue -Value ('"' + $entry.Groups['double'].Value + '"') -Context 'env key'
+        }
+        elseif ($entry.Groups['single'].Success) {
+            Get-WorkflowScalarValue -Value ("'" + $entry.Groups['single'].Value + "'") -Context 'env key'
+        }
+        else { $entry.Groups['bare'].Value }
+        $entries.Add([pscustomobject]@{ Key = [string]$key; Value = [string]$entry.Groups['value'].Value.Trim() })
+    }
+    return $entries.ToArray()
+}
+
 function Get-WorkflowScopeEnvironmentEntries {
     param(
         [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]] $ScopeLines,
@@ -168,26 +302,13 @@ function Get-WorkflowScopeEnvironmentEntries {
     $blockEntryPattern = @'
 ^(?<indent> +)(?:"(?<double>(?:\\.|[^"\\])*)"|'(?<single>(?:[^']|'')*)'|(?<bare>[A-Za-z_][A-Za-z0-9_-]*)):\s*(?<value>.*)$
 '@
-    $flowEntryPattern = @'
-(?i)(?:^|[,{]\s*)(?:"(?<double>(?:\\.|[^"\\])*)"|'(?<single>(?:[^']|'')*)'|(?<bare>[A-Za-z_][A-Za-z0-9_-]*))\s*:\s*(?<value>"(?:\\.|[^"\\])*"|'(?:[^']|'')*'|[^,}]+)
-'@
-
     if ($environmentValue.StartsWith('{', [StringComparison]::Ordinal)) {
-        $flowText = $environmentValue
-        $flowEnd = $environmentValue.Contains('}')
-        for ($index = $environmentHeaderIndex + 1; -not $flowEnd -and $index -lt $ScopeLines.Count; $index++) {
-            $line = [string]$ScopeLines[$index]
-            if ([string]::IsNullOrWhiteSpace($line) -or $line.TrimStart().StartsWith('#', [StringComparison]::Ordinal)) { continue }
-            if ((Get-WorkflowIndent $line) -le $environmentIndent) { break }
-            $flowText += [Environment]::NewLine + $line.Trim()
-            $flowEnd = $line.Contains('}')
-        }
-        if (-not $flowEnd) { throw 'Workflow env flow mapping is incomplete.' }
+        $flowText = Get-WorkflowFlowMappingText -InitialText $environmentValue -ScopeLines $ScopeLines -StartIndex ($environmentHeaderIndex + 1) -EnvironmentIndent $environmentIndent
         if ($flowText -match '(?i)(?:^|[,{]\s*)(?:<<\s*:|[&*!])') { throw 'Workflow env flow mapping uses an unsupported merge, anchor, alias, or tagged key.' }
-        foreach ($match in [regex]::Matches($flowText, $flowEntryPattern)) {
-            $key = if ($match.Groups['double'].Success) { Get-WorkflowScalarValue -Value ('"' + $match.Groups['double'].Value + '"') -Context 'env key' } elseif ($match.Groups['single'].Success) { Get-WorkflowScalarValue -Value ("'" + $match.Groups['single'].Value + "'") -Context 'env key' } else { $match.Groups['bare'].Value }
+        foreach ($entry in (Get-WorkflowFlowMappingEntries -FlowText $flowText)) {
+            $key = [string]$entry.Key
             if ($entries.ContainsKey($key)) { throw "Workflow env mapping repeats '$key'." }
-            $rawValue = $match.Groups['value'].Value.Trim()
+            $rawValue = [string]$entry.Value
             $value = if ([string]::IsNullOrWhiteSpace($rawValue)) { '' } else { Get-WorkflowScalarValue -Value $rawValue -Context "env.$key" }
             $entries.Add($key, [string]$value)
         }
@@ -234,7 +355,21 @@ function ConvertTo-WorkflowStep {
     if (-not [string]::IsNullOrWhiteSpace($FirstRest)) { $fieldLines.Add((' ' * $mapIndent) + $FirstRest) }
     foreach ($line in $Lines) { $fieldLines.Add($line) }
 
-    foreach ($line in $fieldLines) {
+    $environmentFlowStartIndex = -1
+    $environmentFlowEndIndex = -1
+    for ($lineIndex = 0; $lineIndex -lt $fieldLines.Count; $lineIndex++) {
+        $environmentHeader = [regex]::Match([string]$fieldLines[$lineIndex], '^(?<indent> *)env:\s*(?<value>.*)$', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        if (-not $environmentHeader.Success -or $environmentHeader.Groups['indent'].Value.Length -ne $mapIndent -or
+            -not $environmentHeader.Groups['value'].Value.Trim().StartsWith('{', [StringComparison]::Ordinal)) { continue }
+        if ($environmentFlowStartIndex -ge 0) { throw "Workflow job '$JobName' step $StepNumber repeats 'env'." }
+        $flowMapping = Get-WorkflowFlowMappingText -InitialText $environmentHeader.Groups['value'].Value.Trim() -ScopeLines $fieldLines.ToArray() -StartIndex ($lineIndex + 1) -EnvironmentIndent $mapIndent -IncludeEndIndex
+        $environmentFlowStartIndex = $lineIndex
+        $environmentFlowEndIndex = [int]$flowMapping.EndIndex
+    }
+
+    for ($lineIndex = 0; $lineIndex -lt $fieldLines.Count; $lineIndex++) {
+        if ($environmentFlowStartIndex -ge 0 -and $lineIndex -gt $environmentFlowStartIndex -and $lineIndex -le $environmentFlowEndIndex) { continue }
+        $line = [string]$fieldLines[$lineIndex]
         if ([string]::IsNullOrWhiteSpace($line) -or $line.TrimStart().StartsWith('#', [StringComparison]::Ordinal)) {
             if ($runBlock -and $lastField -eq 'run') { $runParts.Add('') }
             continue
@@ -639,41 +774,84 @@ function Test-WorkflowCmdBuiltin {
     return $Name -match ('^(?i:' + $builtInAlternation + ')$')
 }
 
+function Get-WorkflowRunnerPathFlavor {
+    param([Parameter(Mandatory)] [object] $Job)
+
+    $runnerValue = $null
+    foreach ($line in @($Job.Lines)) {
+        $entry = [regex]::Match([string]$line, '^(?<indent> *)runs-on:\s*(?<value>.*)$', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        if (-not $entry.Success -or $entry.Groups['indent'].Value.Length -ne [int]$Job.DirectIndent) { continue }
+        if ($null -ne $runnerValue) { throw "Workflow job '$($Job.Name)' has duplicate runs-on keys." }
+        $rawValue = [string]$entry.Groups['value'].Value
+        if ([string]::IsNullOrWhiteSpace($rawValue) -or $rawValue.TrimStart().StartsWith('[', [StringComparison]::Ordinal) -or $rawValue.TrimStart().StartsWith('{', [StringComparison]::Ordinal)) {
+            return 'unknown'
+        }
+        try { $runnerValue = Get-WorkflowScalarValue -Value $rawValue -Context "job '$($Job.Name)' runs-on" }
+        catch { return 'unknown' }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($runnerValue)) { return 'unknown' }
+    if ($runnerValue -match '(?i)windows') { return 'windows' }
+    if ($runnerValue -match '(?i)(?:ubuntu|linux|macos)') { return 'posix' }
+    return 'unknown'
+}
+
+function Get-WorkflowRepositoryPathFlavor {
+    param([Parameter(Mandatory)] [string] $RepositoryRoot)
+
+    $root = Normalize-WorkflowAbsolutePath -Path $RepositoryRoot
+    if ($null -eq $root) { return 'unknown' }
+    if ($root -match '^(?:[A-Za-z]:/|//)') { return 'windows' }
+    return 'posix'
+}
+
 function Get-WorkflowArtifactOutputLocation {
-    param([Parameter(Mandatory)] [object] $Step, [Parameter(Mandatory)] [string] $Context, [Parameter(Mandatory)] [string] $RepositoryRoot)
+    param(
+        [Parameter(Mandatory)] [object] $Step,
+        [Parameter(Mandatory)] [string] $Context,
+        [Parameter(Mandatory)] [string] $RepositoryRoot,
+        [ValidateSet('posix', 'windows', 'unknown')] [string] $RunnerPathFlavor = 'unknown'
+    )
 
     $value = if ($Step.With.ContainsKey('path')) {
         Get-WorkflowScalarValue -Value $Step.With['path'] -Context "$Context artifact output path"
     }
     else { '.' }
     if ([string]::IsNullOrWhiteSpace($value)) { $value = '.' }
+    if ($RunnerPathFlavor -ne 'windows' -and ($value.Contains('\') -or $value -match '^[A-Za-z]:')) {
+        throw "$Context artifact output path uses Windows path syntax for a non-Windows or unknown runner."
+    }
     $normalized = $value.Replace('\', '/')
 
     if ($normalized -match '^\$\{\{\s*github\.workspace\s*\}\}(?:/(?<suffix>.*))?$') {
         $suffix = if ($Matches.ContainsKey('suffix')) { [string]$Matches['suffix'] } else { '' }
         $relative = Resolve-WorkflowRelativePath -BasePath '' -RelativePath $suffix
         if ($null -eq $relative) { throw "$Context artifact output path escapes the pinned workspace." }
-        return [pscustomobject]@{ Kind = 'workspace'; Path = $relative; RepositoryRoot = $RepositoryRoot }
+        return [pscustomobject]@{ Kind = 'workspace'; Path = $relative; RepositoryRoot = $RepositoryRoot; RunnerPathFlavor = $RunnerPathFlavor }
     }
     if ($normalized -match '^\$\{\{\s*runner\.temp\s*\}\}(?:/(?<suffix>.*))?$') {
         $suffix = if ($Matches.ContainsKey('suffix')) { [string]$Matches['suffix'] } else { '' }
         $relative = Resolve-WorkflowRelativePath -BasePath '' -RelativePath $suffix
         if ($null -eq $relative) { throw "$Context artifact output path escapes runner.temp." }
-        return [pscustomobject]@{ Kind = 'runner-temp'; Path = $relative; RepositoryRoot = $RepositoryRoot }
+        return [pscustomobject]@{ Kind = 'runner-temp'; Path = $relative; RepositoryRoot = $RepositoryRoot; RunnerPathFlavor = $RunnerPathFlavor }
     }
     if ($normalized -match '\$|`|%|\$\{|\*|\?|~') { throw "$Context artifact output path is dynamic and cannot establish executable provenance." }
     if ($normalized.StartsWith('/', [StringComparison]::Ordinal) -or $normalized -match '^[A-Za-z]:[\\/]') {
+        $repositoryPathFlavor = Get-WorkflowRepositoryPathFlavor -RepositoryRoot $RepositoryRoot
+        if ($RunnerPathFlavor -eq 'unknown' -or $RunnerPathFlavor -ne $repositoryPathFlavor) {
+            throw "$Context absolute artifact output path cannot be resolved against the runner path flavor."
+        }
         $absolute = Normalize-WorkflowAbsolutePathForRepository -Path $normalized -RepositoryRoot $RepositoryRoot
         if ($null -eq $absolute) { throw "$Context artifact output path is not a normalized absolute path." }
         $workspacePath = Get-WorkflowAbsoluteWorkspacePath -Path $absolute -RepositoryRoot $RepositoryRoot
-        if ($null -ne $workspacePath) { return [pscustomobject]@{ Kind = 'workspace'; Path = $workspacePath; RepositoryRoot = $RepositoryRoot } }
-        return [pscustomobject]@{ Kind = 'absolute'; Path = $absolute; RepositoryRoot = $RepositoryRoot }
+        if ($null -ne $workspacePath) { return [pscustomobject]@{ Kind = 'workspace'; Path = $workspacePath; RepositoryRoot = $RepositoryRoot; RunnerPathFlavor = $RunnerPathFlavor } }
+        return [pscustomobject]@{ Kind = 'absolute'; Path = $absolute; RepositoryRoot = $RepositoryRoot; RunnerPathFlavor = $RunnerPathFlavor }
     }
     if ($normalized -match '^[A-Za-z]:') { throw "$Context artifact output path is drive-relative and cannot establish executable provenance." }
 
     $relative = Resolve-WorkflowRelativePath -BasePath '' -RelativePath $normalized
     if ($null -eq $relative) { throw "$Context artifact output path escapes the pinned workspace." }
-    return [pscustomobject]@{ Kind = 'workspace'; Path = $relative; RepositoryRoot = $RepositoryRoot }
+    return [pscustomobject]@{ Kind = 'workspace'; Path = $relative; RepositoryRoot = $RepositoryRoot; RunnerPathFlavor = $RunnerPathFlavor }
 }
 
 function Test-WorkflowPathIsAtOrBelow {
@@ -699,6 +877,9 @@ function Test-WorkflowTokenTargetsArtifactOutput {
     if ($ArtifactOutputPaths.Count -eq 0) { return $false }
     $value = ConvertFrom-WorkflowShellToken -Token $Token
     if ([string]::IsNullOrWhiteSpace($value)) { return $false }
+    $runnerPathFlavor = 'windows'
+    if ($ArtifactOutputPaths[0].PSObject.Properties['RunnerPathFlavor']) { $runnerPathFlavor = [string]$ArtifactOutputPaths[0].RunnerPathFlavor }
+    if ($runnerPathFlavor -ne 'windows' -and ($Token.Contains('\') -or $value -match '^[A-Za-z]:')) { return $true }
     $normalized = $value.Replace('\', '/')
     $workspaceCandidate = $null
     $absoluteCandidate = $null
@@ -718,6 +899,7 @@ function Test-WorkflowTokenTargetsArtifactOutput {
         return $true
     }
     elseif ($normalized.StartsWith('/', [StringComparison]::Ordinal) -or $normalized -match '^[A-Za-z]:[\\/]') {
+        if ($runnerPathFlavor -eq 'unknown' -or $runnerPathFlavor -ne (Get-WorkflowRepositoryPathFlavor -RepositoryRoot ([string]$ArtifactOutputPaths[0].RepositoryRoot))) { return $true }
         $absoluteCandidate = Normalize-WorkflowAbsolutePathForRepository -Path $normalized -RepositoryRoot ([string]$ArtifactOutputPaths[0].RepositoryRoot)
         if ($null -eq $absoluteCandidate) { return $true }
         $workspaceCandidate = Get-WorkflowAbsoluteWorkspacePath -Path $absoluteCandidate -RepositoryRoot ([string]$ArtifactOutputPaths[0].RepositoryRoot)
@@ -1757,6 +1939,7 @@ function Assert-ArtifactScriptConsumersHaveSource {
                 }
             }
             if ($downloadIndexes.Count -eq 0) { continue }
+            $runnerPathFlavor = Get-WorkflowRunnerPathFlavor -Job $job
             $jobEnvironment = Get-WorkflowScopeEnvironmentEntries -ScopeLines $job.Lines -DirectIndent $job.DirectIndent
             if ($workflowDefinesPath -or $jobEnvironment.ContainsKey('PATH')) {
                 throw "Artifact-consuming job '$($workflow.Name)/$($job.Name)' defines PATH in workflow YAML; executable lookup cannot be proven safe."
@@ -1802,7 +1985,7 @@ function Assert-ArtifactScriptConsumersHaveSource {
                     if ($null -ne $stateStep.Uses -and $stateStep.Uses -match '(?i)^actions/download-artifact@') {
                         $latestDownloadHadValidSource = $effectiveCheckoutValid
                         $latestDownloadFailure = $effectiveCheckoutFailure
-                        $artifactOutputPath = Get-WorkflowArtifactOutputLocation -Step $stateStep -Context "job '$($workflow.Name)/$($job.Name)' step $($stateIndex + 1)" -RepositoryRoot $RepositoryRoot
+                        $artifactOutputPath = Get-WorkflowArtifactOutputLocation -Step $stateStep -Context "job '$($workflow.Name)/$($job.Name)' step $($stateIndex + 1)" -RepositoryRoot $RepositoryRoot -RunnerPathFlavor $runnerPathFlavor
                         $artifactOutputPaths.Add($artifactOutputPath)
                         if (Test-WorkflowArtifactOutputOverlapsTrackedFiles -OutputPath $artifactOutputPath -TrackedFiles $trackedFiles) {
                             $effectiveCheckoutValid = $false

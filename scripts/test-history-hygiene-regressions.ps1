@@ -66,7 +66,8 @@ function New-Repository {
     }
     $messagePath = $Path + '.commit-message'
     try {
-        [IO.File]::WriteAllText($messagePath, [string]::Join("`n`n", $messageParts), [Text.UTF8Encoding]::new($false))
+        $separator = [string]([char]10)
+        [IO.File]::WriteAllText($messagePath, [string]::Join($separator + $separator, $messageParts), [Text.UTF8Encoding]::new($false))
         Invoke-External 'git' @('-C', $Path, 'commit', '--quiet', '--file', $messagePath) | Out-Null
     }
     finally {

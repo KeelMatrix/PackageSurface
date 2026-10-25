@@ -44,8 +44,11 @@ The exact command output for the checkout, including `git rev-parse HEAD`, `git 
 The history hygiene contract has one source of truth: `scripts/test-history-hygiene.ps1`, with disposable adversarial
 coverage in `scripts/test-history-hygiene-regressions.ps1`. It checks complete non-shallow history, KeelMatrix
 authorship, and the bounded developer-coordination vocabulary. Tracked working-tree files and every reachable
-historical blob are read as whole content strings rather than line-oriented matches; commit metadata is also matched
-as whole text. Every maximal run, including an empty run, of non-alphanumeric separator characters between phrase
+historical path/content version are read as whole content strings rather than line-oriented matches. Each historical
+commit with no parent contributes its added entries. Each later commit contributes entries added, modified, or
+type-changed relative to its first parent, including merge results. The current tracked snapshot is scanned separately;
+unchanged historical entries are not scanned again. Commit metadata is
+also matched as whole text. Every maximal run, including an empty run, of non-alphanumeric separator characters between phrase
 tokens is equivalent, including LF, CRLF, and repeated line boundaries. Two historical versions of this file share
 blob `61b630979e573a1feeae6f455105ff82a2c5c2c4`; only that path-and-blob pair is exempt from the phrase matcher.
 Encoding checks, content limits, common restricted markers, and all other history checks still apply. Git command

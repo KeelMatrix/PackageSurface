@@ -103,6 +103,81 @@ function New-ByteRepository {
     }
 }
 
+function New-HistoryGrowthRepository {
+    param(
+        [string] $Path,
+        [int] $CommitCount,
+        [int] $UnchangedFileBytes = 1100000
+    )
+
+    if ($CommitCount -lt 1) {
+        throw 'History growth fixtures must contain at least one commit.'
+    }
+
+    New-Item -ItemType Directory -Force -Path $Path | Out-Null
+    Invoke-External 'git' @('init', '--quiet', '--', $Path) | Out-Null
+    Invoke-External 'git' @('-C', $Path, 'config', 'user.email', 'fixture@example.invalid') | Out-Null
+    Invoke-External 'git' @('-C', $Path, 'config', 'user.name', 'Fixture') | Out-Null
+
+    [IO.File]::WriteAllBytes((Join-Path $Path 'stable.txt'), (New-FillerBytes $UnchangedFileBytes))
+    [IO.File]::WriteAllText((Join-Path $Path 'literal [path].txt'), 'ordinary pathspec content')
+    [IO.File]::WriteAllText((Join-Path $Path 'history-count.txt'), '1')
+    Invoke-External 'git' @('-C', $Path, 'add', '--all') | Out-Null
+    Invoke-External 'git' @('-C', $Path, 'commit', '--quiet', '-m', 'fixture 1') | Out-Null
+
+    for ($commit = 2; $commit -le $CommitCount; $commit++) {
+        [IO.File]::WriteAllText((Join-Path $Path 'history-count.txt'), [string]$commit)
+        Invoke-External 'git' @('-C', $Path, 'add', '--', 'history-count.txt') | Out-Null
+        Invoke-External 'git' @('-C', $Path, 'commit', '--quiet', '-m', "fixture $commit") | Out-Null
+    }
+
+    $actualCount = [int](Invoke-External 'git' @('-C', $Path, 'rev-list', '--count', '--all'))
+    if ($actualCount -ne $CommitCount) {
+        throw "History growth fixture expected $CommitCount commits but created $actualCount."
+    }
+}
+
+function New-ConflictMergeRepository {
+    param(
+        [string] $Path,
+        [switch] $WithMergeMarker
+    )
+
+    New-Item -ItemType Directory -Force -Path $Path | Out-Null
+    Invoke-External 'git' @('init', '--quiet', '--', $Path) | Out-Null
+    Invoke-External 'git' @('-C', $Path, 'config', 'user.email', 'fixture@example.invalid') | Out-Null
+    Invoke-External 'git' @('-C', $Path, 'config', 'user.name', 'Fixture') | Out-Null
+
+    [IO.File]::WriteAllText((Join-Path $Path 'tracked.txt'), 'base')
+    Invoke-External 'git' @('-C', $Path, 'add', '--', 'tracked.txt') | Out-Null
+    Invoke-External 'git' @('-C', $Path, 'commit', '--quiet', '-m', 'fixture base') | Out-Null
+    $mainBranch = Invoke-External 'git' @('-C', $Path, 'branch', '--show-current')
+
+    Invoke-External 'git' @('-C', $Path, 'switch', '--quiet', '-c', 'merge-source') | Out-Null
+    [IO.File]::WriteAllText((Join-Path $Path 'tracked.txt'), 'side parent')
+    Invoke-External 'git' @('-C', $Path, 'add', '--', 'tracked.txt') | Out-Null
+    Invoke-External 'git' @('-C', $Path, 'commit', '--quiet', '-m', 'fixture side') | Out-Null
+
+    Invoke-External 'git' @('-C', $Path, 'switch', '--quiet', $mainBranch) | Out-Null
+    [IO.File]::WriteAllText((Join-Path $Path 'tracked.txt'), 'first parent')
+    Invoke-External 'git' @('-C', $Path, 'add', '--', 'tracked.txt') | Out-Null
+    Invoke-External 'git' @('-C', $Path, 'commit', '--quiet', '-m', 'fixture first parent') | Out-Null
+
+    $mergeOutput = @(& git -C $Path merge --no-ff --no-commit merge-source 2>&1)
+    $mergeExitCode = $LASTEXITCODE
+    if ($mergeExitCode -eq 0) {
+        throw 'The merge fixture did not create its expected content conflict.'
+    }
+    $restrictedMergeWord = Convert-CodePoints @(102,114,111,110,116,105,101,114)
+    $resolution = if ($WithMergeMarker) { 'fixture ' + $restrictedMergeWord + ' resolution' } else { 'fixture resolved content' }
+    [IO.File]::WriteAllText((Join-Path $Path 'tracked.txt'), $resolution)
+    Invoke-External 'git' @('-C', $Path, 'add', '--', 'tracked.txt') | Out-Null
+    Invoke-External 'git' @('-C', $Path, 'commit', '--quiet', '-m', 'fixture merge resolution') | Out-Null
+    [IO.File]::WriteAllText((Join-Path $Path 'tracked.txt'), 'fixture current content')
+    Invoke-External 'git' @('-C', $Path, 'add', '--', 'tracked.txt') | Out-Null
+    Invoke-External 'git' @('-C', $Path, 'commit', '--quiet', '-m', 'fixture post-merge content') | Out-Null
+}
+
 function Join-ByteArrays {
     param([byte[][]] $Arrays)
 
@@ -148,40 +223,95 @@ function Get-HistoryScanTotals {
         $currentBytes += (Get-Item -LiteralPath (Join-Path $Path $relativePath)).Length
     }
 
-    $archiveBytes = [long]0
+    $historyBytes = [long]$currentBytes
     $decompressedBytes = [long]0
     $commits = Invoke-External 'git' @('-C', $Path, 'rev-list', '--all')
     foreach ($commit in @($commits -split "`r?`n")) {
-        $archivePath = Join-Path $scratch ('measure-' + [Guid]::NewGuid().ToString('N') + '.zip')
+        $pathListPath = Join-Path $scratch ('measure-paths-' + [Guid]::NewGuid().ToString('N') + '.paths')
+        [IO.File]::WriteAllBytes($pathListPath, [byte[]]::new(0))
         try {
-            Invoke-External 'git' @('-C', $Path, 'archive', '--format=zip', "--output=$archivePath", $commit) | Out-Null
-            $archive = [IO.Compression.ZipFile]::OpenRead($archivePath)
-            try {
-                foreach ($entry in $archive.Entries) {
-                    if ([string]::IsNullOrEmpty($entry.Name)) {
-                        continue
-                    }
-                    $archiveBytes += $entry.Length
-                    $decompressedBytes += $entry.Length
-                }
+            Invoke-External 'git' @('-C', $Path, 'diff-tree', '--root', '--diff-merges=first-parent', '--no-commit-id', '--no-renames', '--diff-filter=AMT', '--name-only', '-r', '-z', "--output=$pathListPath", $commit) | Out-Null
+            $pathBytes = [IO.File]::ReadAllBytes($pathListPath)
+            $historyBytes += $pathBytes.Length
+            $changedPaths = if ($pathBytes.Length -eq 0) {
+                @()
             }
-            finally {
-                $archive.Dispose()
+            else {
+                $pathText = [Text.UTF8Encoding]::new($false, $true).GetString($pathBytes)
+                if ($pathBytes[$pathBytes.Length - 1] -ne 0) {
+                    throw "The changed-path output for commit $commit is malformed."
+                }
+                @($pathText.Substring(0, $pathText.Length - 1).Split([char]0))
             }
         }
         finally {
-            if (Test-Path -LiteralPath $archivePath) {
-                Remove-Item -LiteralPath $archivePath -Force
+            if (Test-Path -LiteralPath $pathListPath) {
+                Remove-Item -LiteralPath $pathListPath -Force
+            }
+        }
+
+        if ($changedPaths.Count -gt 0) {
+            $archivePath = Join-Path $scratch ('measure-' + [Guid]::NewGuid().ToString('N') + '.zip')
+            try {
+                $pathspecs = @($changedPaths | ForEach-Object { ':(literal)' + $_ })
+                $archiveArguments = @('-C', $Path, 'archive', '--format=zip', "--output=$archivePath", $commit, '--') + $pathspecs
+                Invoke-External 'git' $archiveArguments | Out-Null
+                $archive = [IO.Compression.ZipFile]::OpenRead($archivePath)
+                try {
+                    foreach ($entry in $archive.Entries) {
+                        if ([string]::IsNullOrEmpty($entry.Name)) {
+                            continue
+                        }
+                        $historyBytes += $entry.Length
+                        $decompressedBytes += $entry.Length
+                    }
+                }
+                finally {
+                    $archive.Dispose()
+                }
+            }
+            finally {
+                if (Test-Path -LiteralPath $archivePath) {
+                    Remove-Item -LiteralPath $archivePath -Force
+                }
             }
         }
     }
 
     $historyText = Invoke-External 'git' @('-C', $Path, 'log', '--all', '--format=%H%n%an%n%ae%n%cn%n%ce%n%B')
     $metadataBytes = [Text.UTF8Encoding]::new($false).GetByteCount($historyText)
+    $historyBytes += $metadataBytes
     return [pscustomobject]@{
-        History = $currentBytes + $archiveBytes + $metadataBytes
+        History = $historyBytes
         Decompressed = $decompressedBytes
     }
+}
+
+function Get-FullSnapshotHistoryBytes {
+    param([string] $Path)
+
+    $tracked = Invoke-External 'git' @('-C', $Path, 'ls-files')
+    $trackedPaths = @($tracked -split "`r?`n")
+    if ($trackedPaths.Count -ne 3 -or $trackedPaths -notcontains 'stable.txt' -or
+        $trackedPaths -notcontains 'literal [path].txt' -or $trackedPaths -notcontains 'history-count.txt') {
+        throw 'The history-growth fixture no longer has its three expected files.'
+    }
+
+    $currentBytes = [long]0
+    foreach ($relativePath in @($tracked -split "`r?`n")) {
+        $currentBytes += (Get-Item -LiteralPath (Join-Path $Path $relativePath)).Length
+    }
+
+    $commitCount = [int](Invoke-External 'git' @('-C', $Path, 'rev-list', '--count', '--all'))
+    $stableBytes = (Get-Item -LiteralPath (Join-Path $Path 'stable.txt')).Length
+    $literalBytes = (Get-Item -LiteralPath (Join-Path $Path 'literal [path].txt')).Length
+    $fullSnapshotBytes = [long]($commitCount * ($stableBytes + $literalBytes))
+    for ($commit = 1; $commit -le $commitCount; $commit++) {
+        $fullSnapshotBytes += [Text.UTF8Encoding]::new($false).GetByteCount([string]$commit)
+    }
+
+    $historyText = Invoke-External 'git' @('-C', $Path, 'log', '--all', '--format=%H%n%an%n%ae%n%cn%n%ce%n%B')
+    return $currentBytes + $fullSnapshotBytes + [Text.UTF8Encoding]::new($false).GetByteCount($historyText)
 }
 
 function Invoke-Gate {
@@ -262,11 +392,11 @@ function Assert-ExpectedFailure {
 }
 
 function Assert-ExpectedPass {
-    param([string] $Name, [string] $Path, [hashtable] $Limits)
+    param([string] $Name, [string] $Path, [hashtable] $Limits, [string] $PathPrefix = '', [string] $Scenario = $Name)
 
     if (-not (Test-SelectedCase $Name)) { return }
     $script:executedCaseCount++
-    $result = Invoke-Gate $Path '' $Name $Limits
+    $result = Invoke-Gate $Path $PathPrefix $Scenario $Limits
     Write-Output "CASE: $Name"
     Write-Output "EXIT_CODE: $($result.ExitCode)"
     if ($result.ExitCode -ne 0) {
@@ -314,15 +444,58 @@ switch ($Arguments[0]) {
         if ($scenario -eq 'incomplete-history') { Write-Output ('2' * 40); exit 0 }
         Write-Output ('1' * 40); exit 0
     }
+    'diff-tree' {
+        if ($scenario -eq 'error-diff-tree') { exit 128 }
+        $outputArgument = @($Arguments | Where-Object { $_ -like '--output=*' })[0]
+        $outputPath = $outputArgument.Substring(9)
+        $pathBytes = if ($scenario -eq 'malformed-diff-tree') {
+            [Text.UTF8Encoding]::new($false).GetBytes('tracked.txt')
+        }
+        elseif ($scenario -in @('multi-changed-paths', 'missing-multi-archive-entry')) {
+            [Text.UTF8Encoding]::new($false).GetBytes("tracked.txt`0second.txt`0")
+        }
+        elseif ($scenario -eq 'archive-batch-overflow') {
+            $batchPaths = 0..16 | ForEach-Object { "batch-file-$_.txt" }
+            [Text.UTF8Encoding]::new($false).GetBytes(($batchPaths -join "`0") + "`0")
+        }
+        else {
+            [Text.UTF8Encoding]::new($false).GetBytes("tracked.txt`0")
+        }
+        [IO.File]::WriteAllBytes($outputPath, $pathBytes)
+        exit 0
+    }
     'archive' {
         if ($scenario -eq 'error-archive') { exit 128 }
         $outputArgument = @($Arguments | Where-Object { $_ -like '--output=*' })[0]
         $outputPath = $outputArgument.Substring(9)
+        if (-not [string]::IsNullOrWhiteSpace($env:HISTORY_HYGIENE_ARCHIVE_CALLS)) {
+            [IO.File]::AppendAllText($env:HISTORY_HYGIENE_ARCHIVE_CALLS, "archive`n")
+        }
         $zip = [IO.Compression.ZipFile]::Open($outputPath, [IO.Compression.ZipArchiveMode]::Create)
         try {
-            $entry = $zip.CreateEntry('tracked.txt')
-            $writer = [IO.StreamWriter]::new($entry.Open())
-            try { $writer.Write('fixture content') } finally { $writer.Dispose() }
+            $entryNames = if ($scenario -eq 'archive-batch-overflow') {
+                $pathspecStart = [Array]::IndexOf($Arguments, '--') + 1
+                $pathspecs = @($Arguments[$pathspecStart..($Arguments.Length - 1)])
+                if ($pathspecs.Count -gt 16) { exit 23 }
+                @($pathspecs | ForEach-Object { $_.Substring(':(literal)'.Length) })
+            }
+            elseif ($scenario -eq 'missing-archive-entry') {
+                @('unexpected.txt')
+            }
+            elseif ($scenario -eq 'missing-multi-archive-entry') {
+                @('tracked.txt')
+            }
+            elseif ($scenario -eq 'multi-changed-paths') {
+                @('tracked.txt', 'second.txt')
+            }
+            else {
+                @('tracked.txt')
+            }
+            foreach ($entryName in $entryNames) {
+                $entry = $zip.CreateEntry($entryName)
+                $writer = [IO.StreamWriter]::new($entry.Open())
+                try { $writer.Write('fixture content') } finally { $writer.Dispose() }
+            }
         }
         finally { $zip.Dispose() }
         exit 0
@@ -341,12 +514,33 @@ exit 128
         @{ Name = 'empty-tracked-output'; Scenario = 'empty-tracked'; Expected = 'returned no required output' },
         @{ Name = 'empty-history-output'; Scenario = 'empty-history'; Expected = 'returned no required output' },
         @{ Name = 'incomplete-history-output'; Scenario = 'incomplete-history'; Expected = 'does not include HEAD' },
+        @{ Name = 'git-changed-path-read-failure'; Scenario = 'error-diff-tree'; Expected = 'git diff-tree' },
+        @{ Name = 'malformed-changed-path-output'; Scenario = 'malformed-diff-tree'; Expected = 'incomplete or malformed' },
         @{ Name = 'git-tree-read-failure'; Scenario = 'error-archive'; Expected = 'git archive' },
+        @{ Name = 'missing-changed-archive-entry'; Scenario = 'missing-archive-entry'; Expected = 'unexpected file entry' },
+        @{ Name = 'missing-multi-changed-archive-entry'; Scenario = 'missing-multi-archive-entry'; Expected = 'was missing from its archive' },
         @{ Name = 'empty-log-output'; Scenario = 'empty-log'; Expected = 'git log --all' },
         @{ Name = 'git-log-failure'; Scenario = 'error-log'; Expected = 'git log' }
     )
     foreach ($case in $outputCases) {
         Assert-ExpectedFailure $case.Name $gitFailureRoot $case.Expected $outputShimDirectory $case.Scenario
+    }
+    Assert-ExpectedPass 'multi-changed-path-archive' $gitFailureRoot $null $outputShimDirectory 'multi-changed-paths'
+    $archiveCallsPath = Join-Path $scratch 'archive-batch-calls.txt'
+    $oldArchiveCallsPath = $env:HISTORY_HYGIENE_ARCHIVE_CALLS
+    try {
+        if (Test-SelectedCase 'archive-path-batch-overflow') {
+            Remove-Item -LiteralPath $archiveCallsPath -Force -ErrorAction SilentlyContinue
+            $env:HISTORY_HYGIENE_ARCHIVE_CALLS = $archiveCallsPath
+            Assert-ExpectedPass 'archive-path-batch-overflow' $gitFailureRoot $null $outputShimDirectory 'archive-batch-overflow'
+            if (@([IO.File]::ReadAllLines($archiveCallsPath)).Count -ne 2) {
+                throw 'The 17-path fixture did not split into exactly two bounded archive batches.'
+            }
+            Write-Output 'PASS: archive-path-batch-overflow split 17 changed paths into two bounded archive calls.'
+        }
+    }
+    finally {
+        $env:HISTORY_HYGIENE_ARCHIVE_CALLS = $oldArchiveCallsPath
     }
 
     $sourceRoot = Join-Path $scratch 'source'
@@ -646,6 +840,32 @@ exit 128
         MaxTotalDecompressedBytes = $totals.Decompressed - 1
     }
 
+    $growth107Root = Join-Path $scratch 'history-growth-107'
+    New-HistoryGrowthRepository $growth107Root 107
+    $legacy107Bytes = Get-FullSnapshotHistoryBytes $growth107Root
+    if ($legacy107Bytes -gt 134217728) {
+        throw "The 107-commit growth fixture no longer represents the passing full-snapshot boundary ($legacy107Bytes bytes)."
+    }
+    Write-Output "FULL_SNAPSHOT_HISTORY_BYTES_107: $legacy107Bytes"
+    Assert-ExpectedPass 'history-growth-107' $growth107Root $null
+
+    $growth132Root = Join-Path $scratch 'history-growth-132'
+    New-HistoryGrowthRepository $growth132Root 132
+    $legacy132Bytes = Get-FullSnapshotHistoryBytes $growth132Root
+    if ($legacy132Bytes -le 134217728) {
+        throw "The 132-commit growth fixture no longer represents the overflowing full-snapshot boundary ($legacy132Bytes bytes)."
+    }
+    Write-Output "FULL_SNAPSHOT_HISTORY_BYTES_132: $legacy132Bytes"
+    Assert-ExpectedPass 'history-growth-132' $growth132Root $null
+
+    $mergeSafeRoot = Join-Path $scratch 'first-parent-merge-safe'
+    New-ConflictMergeRepository $mergeSafeRoot
+    Assert-ExpectedPass 'first-parent-merge-safe' $mergeSafeRoot $null
+
+    $mergeMarkerRoot = Join-Path $scratch 'first-parent-merge-marker'
+    New-ConflictMergeRepository $mergeMarkerRoot -WithMergeMarker
+    Assert-ExpectedFailure 'first-parent-merge-resolution-marker' $mergeMarkerRoot 'Restricted text found' '' '' $null
+
     $positiveRoot = Join-Path $scratch 'ordinary-engineering'
     New-Repository $positiveRoot -CommitSubject 'fix(restore): reject unknown consumed members' -CommitBody 'review reject fix remediation candidate gaps' -TreeContentMarker 'review reject fix remediation candidate gaps'
     Assert-ExpectedPass 'ordinary-engineering' $positiveRoot
@@ -665,7 +885,7 @@ exit 128
     if ($script:selectedCases.Count -gt 0 -and $script:executedCaseCount -eq 0) {
         throw 'No hygiene regression cases matched the selected names.'
     }
-    Write-Output 'PASS: hygiene gate rejects command failure, shallow history, metadata markers, historical-tree markers, and task identifiers in disposable repositories.'
+    Write-Output 'PASS: hygiene gate covers complete-history content, changed-path enumeration, merge results, resource bounds, shallow history, metadata markers, and task identifiers in disposable repositories.'
     exit 0
 }
 finally {

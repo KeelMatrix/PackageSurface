@@ -1566,38 +1566,147 @@ function Test-WorkflowCommandContainsUnsupportedExecution {
             $current = @($arguments | Select-Object -Skip $index)
             continue
         }
-        if ($programName -in @('command', 'nohup', 'nice', 'stdbuf', 'setsid', 'sudo', 'doas', 'busybox')) {
+        if ($programName -eq 'sudo') {
+            $index = 0
+            $sudoSeenValueOptions = New-Object System.Collections.ArrayList
+            $sudoLongValueOptions = @{
+                '--apparmor-profile' = 'a'
+                '--auth-type' = 'a'
+                '--chdir' = 'D'
+                '--close-from' = 'C'
+                '--command-timeout' = 'T'
+                '--group' = 'g'
+                '--host' = 'h'
+                '--other-user' = 'U'
+                '--role' = 'r'
+                '--type' = 't'
+                '--user' = 'u'
+            }
+            $sudoLongValueOptions[[string]::Concat('--pro', 'mpt')] = 'p'
+            $sudoShortFlags = @('A', 'b', 'B', 'E', 'H', 'K', 'k', 'l', 'n', 'P', 'S', 'V', 'v')
+            $sudoLongFlags = @('--askpass', '--background', '--bell', '--list', '--non-interactive', '--preserve-env', '--preserve-groups', '--remove-timestamp', '--reset-timestamp', '--set-home', '--stdin', '--validate', '--version')
+
+            while ($index -lt $arguments.Count) {
+                $option = ConvertFrom-WorkflowShellToken -Token ([string]$arguments[$index])
+                if ($option -eq '--') { $index++; break }
+                if (-not $option.StartsWith('-', [StringComparison]::Ordinal)) { break }
+                if ($option -in @('-', '-i', '--login', '-R', '--chroot') -or $option -match '^(?:--login|--chroot)=') { return $true }
+
+                if ($option.StartsWith('--', [StringComparison]::Ordinal)) {
+                    $equalsIndex = $option.IndexOf('=')
+                    $longName = $option
+                    $hasAttachedValue = $false
+                    $attachedValue = ''
+                    if ($equalsIndex -ge 0) {
+                        $longName = $option.Substring(0, $equalsIndex)
+                        $attachedValue = $option.Substring($equalsIndex + 1)
+                        $hasAttachedValue = $true
+                    }
+
+                    if ($sudoLongValueOptions.ContainsKey($longName)) {
+                        $valueOptionName = [string]$sudoLongValueOptions[$longName]
+                        if ($sudoSeenValueOptions.Contains($valueOptionName)) { return $true }
+                        [void]$sudoSeenValueOptions.Add($valueOptionName)
+
+                        if ($hasAttachedValue) {
+                            $optionValue = $attachedValue
+                            if ([string]::IsNullOrWhiteSpace($optionValue) -or $optionValue.StartsWith('-', [StringComparison]::Ordinal)) { return $true }
+                            $index++
+                        }
+                        else {
+                            if ($index + 1 -ge $arguments.Count) { return $true }
+                            $optionValue = ConvertFrom-WorkflowShellToken -Token ([string]$arguments[$index + 1])
+                            if ([string]::IsNullOrWhiteSpace($optionValue) -or $optionValue.StartsWith('-', [StringComparison]::Ordinal)) { return $true }
+                            $index += 2
+                        }
+
+                        if ($valueOptionName -eq 'D') {
+                            $resolvedDirectory = Resolve-WorkflowWrapperWorkingDirectory -CurrentDirectory $effectiveWorkingDirectory -Directory $optionValue -ArtifactOutputPaths $ArtifactOutputPaths -CurrentDirectoryIsUnknown:$effectiveWorkingDirectoryIsUnknown
+                            if ($null -eq $resolvedDirectory) { $effectiveWorkingDirectoryIsUnknown = $true }
+                            else { $effectiveWorkingDirectory = $resolvedDirectory; $effectiveWorkingDirectoryIsUnknown = $false }
+                        }
+                        continue
+                    }
+
+                    if ([string]::Equals($longName, '--preserve-env', [StringComparison]::Ordinal) -and $hasAttachedValue) {
+                        if ([string]::IsNullOrWhiteSpace($attachedValue)) { return $true }
+                        $index++
+                        continue
+                    }
+                    if ($hasAttachedValue -or $longName -notin $sudoLongFlags) { return $true }
+                    $index++
+                    continue
+                }
+
+                $shortOptions = $option.Substring(1)
+                if ([string]::IsNullOrEmpty($shortOptions)) { return $true }
+                $valueConsumed = $false
+                for ($shortIndex = 0; $shortIndex -lt $shortOptions.Length; $shortIndex++) {
+                    $shortOption = [char]::ToString($shortOptions[$shortIndex])
+                    if ([string]::Equals($shortOption, 'i', [StringComparison]::Ordinal)) { return $true }
+                    if ([string]::Equals($shortOption, 'R', [StringComparison]::Ordinal)) { return $true }
+
+                    $valueOptionName = $null
+                    switch -CaseSensitive ($shortOption) {
+                        'C' { $valueOptionName = 'C' }
+                        'D' { $valueOptionName = 'D' }
+                        'a' { $valueOptionName = 'a' }
+                        'g' { $valueOptionName = 'g' }
+                        'h' { $valueOptionName = 'h' }
+                        'p' { $valueOptionName = 'p' }
+                        'r' { $valueOptionName = 'r' }
+                        't' { $valueOptionName = 't' }
+                        'T' { $valueOptionName = 'T' }
+                        'U' { $valueOptionName = 'U' }
+                        'u' { $valueOptionName = 'u' }
+                    }
+                    if ($null -ne $valueOptionName) {
+                        if ($sudoSeenValueOptions.Contains($valueOptionName)) { return $true }
+                        [void]$sudoSeenValueOptions.Add($valueOptionName)
+
+                        if ($shortIndex + 1 -lt $shortOptions.Length) {
+                            $optionValue = $shortOptions.Substring($shortIndex + 1)
+                            # `-ui` can mean a user named `i` or the login flag after
+                            # `-u`; do not guess which interpretation the caller intended.
+                            if ([string]::Equals($shortOption, 'u', [StringComparison]::Ordinal) -and $optionValue.StartsWith('i', [StringComparison]::OrdinalIgnoreCase)) { return $true }
+                            if ([string]::IsNullOrWhiteSpace($optionValue) -or $optionValue.StartsWith('-', [StringComparison]::Ordinal)) { return $true }
+                            $index++
+                        }
+                        else {
+                            if ($index + 1 -ge $arguments.Count) { return $true }
+                            $optionValue = ConvertFrom-WorkflowShellToken -Token ([string]$arguments[$index + 1])
+                            if ([string]::IsNullOrWhiteSpace($optionValue) -or $optionValue.StartsWith('-', [StringComparison]::Ordinal)) { return $true }
+                            $index += 2
+                        }
+
+                        if ($valueOptionName -eq 'D') {
+                            $resolvedDirectory = Resolve-WorkflowWrapperWorkingDirectory -CurrentDirectory $effectiveWorkingDirectory -Directory $optionValue -ArtifactOutputPaths $ArtifactOutputPaths -CurrentDirectoryIsUnknown:$effectiveWorkingDirectoryIsUnknown
+                            if ($null -eq $resolvedDirectory) { $effectiveWorkingDirectoryIsUnknown = $true }
+                            else { $effectiveWorkingDirectory = $resolvedDirectory; $effectiveWorkingDirectoryIsUnknown = $false }
+                        }
+                        $valueConsumed = $true
+                        break
+                    }
+
+                    if ($sudoShortFlags -cnotcontains $shortOption) { return $true }
+                }
+                if ($valueConsumed) { continue }
+                $index++
+            }
+
+            if ($index -ge $arguments.Count) { return $true }
+            $current = @($arguments | Select-Object -Skip $index)
+            continue
+        }
+
+        if ($programName -in @('command', 'nohup', 'nice', 'stdbuf', 'setsid', 'doas', 'busybox')) {
             if ($programName -eq 'command' -and @($arguments | Where-Object { (ConvertFrom-WorkflowShellToken -Token ([string]$_)) -in @('-v', '-V') }).Count -gt 0) { return $false }
             $index = 0
             while ($index -lt $arguments.Count) {
                 $option = ConvertFrom-WorkflowShellToken -Token ([string]$arguments[$index])
                 if ($option -eq '--') { $index++; break }
                 if (-not $option.StartsWith('-', [StringComparison]::Ordinal)) { break }
-                if ($programName -eq 'sudo' -and $option -in @('-i', '--login', '-R', '--chroot')) { return $true }
-                if ($programName -eq 'sudo' -and $option -in @('-D', '--chdir')) {
-                    if ($index + 1 -ge $arguments.Count) { return $true }
-                    $resolvedDirectory = Resolve-WorkflowWrapperWorkingDirectory -CurrentDirectory $effectiveWorkingDirectory -Directory ([string]$arguments[$index + 1]) -ArtifactOutputPaths $ArtifactOutputPaths -CurrentDirectoryIsUnknown:$effectiveWorkingDirectoryIsUnknown
-                    if ($null -eq $resolvedDirectory) { $effectiveWorkingDirectoryIsUnknown = $true }
-                    else { $effectiveWorkingDirectory = $resolvedDirectory; $effectiveWorkingDirectoryIsUnknown = $false }
-                    $index += 2
-                    continue
-                }
-                if ($programName -eq 'sudo' -and $option -match '^(?:--chdir|-D|--chroot|-R)=(?<directory>.*)$') {
-                    if ($option -match '^(?:--chroot|-R)=') { return $true }
-                    $resolvedDirectory = Resolve-WorkflowWrapperWorkingDirectory -CurrentDirectory $effectiveWorkingDirectory -Directory $Matches['directory'] -ArtifactOutputPaths $ArtifactOutputPaths -CurrentDirectoryIsUnknown:$effectiveWorkingDirectoryIsUnknown
-                    if ($null -eq $resolvedDirectory) { $effectiveWorkingDirectoryIsUnknown = $true }
-                    else { $effectiveWorkingDirectory = $resolvedDirectory; $effectiveWorkingDirectoryIsUnknown = $false }
-                    $index++
-                    continue
-                }
-                if ($programName -eq 'sudo' -and $option -match '^-D(?<directory>.+)$') {
-                    $resolvedDirectory = Resolve-WorkflowWrapperWorkingDirectory -CurrentDirectory $effectiveWorkingDirectory -Directory $Matches['directory'] -ArtifactOutputPaths $ArtifactOutputPaths -CurrentDirectoryIsUnknown:$effectiveWorkingDirectoryIsUnknown
-                    if ($null -eq $resolvedDirectory) { $effectiveWorkingDirectoryIsUnknown = $true }
-                    else { $effectiveWorkingDirectory = $resolvedDirectory; $effectiveWorkingDirectoryIsUnknown = $false }
-                    $index++
-                    continue
-                }
-                if (($programName -eq 'sudo' -or $programName -eq 'doas') -and $option -match '^(?:-u|-g|-h|-p|-C|-T|-U|-r|-a|--user|--group|--host|--pro(?:mpt)|--close-from|--command-timeout|--other-user|--role|--type)$') { $index += 2; continue }
+                if ($programName -eq 'doas' -and $option -match '^(?:-u|-g|-h|-p|-C|-T|-U|-r|-a|--user|--group|--host|--pro(?:mpt)|--close-from|--command-timeout|--other-user|--role|--type)$') { $index += 2; continue }
                 if ($programName -eq 'nice' -and $option -in @('-n', '--adjustment')) { $index += 2; continue }
                 if ($programName -eq 'stdbuf' -and $option -match '^(?:-i|-o|-e)$') { $index += 2; continue }
                 if ($programName -eq 'busybox') { $index++; break }

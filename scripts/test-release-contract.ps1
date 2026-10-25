@@ -1062,9 +1062,31 @@ fi
         @{ Name = 'sudo --chdir resolves a relative script under downloaded artifact'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'sudo --chdir review-artifact pwsh -File scripts/validate-release-artifact-set.ps1' },
         @{ Name = 'sudo --chdir equals form resolves a relative script under downloaded artifact'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'sudo --chdir=review-artifact pwsh -File scripts/validate-release-artifact-set.ps1' },
         @{ Name = 'sudo login mode cannot prove its effective directory'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'sudo -i bash scripts/validate-release-artifact-set.ps1' },
+        @{ Name = 'sudo bundled login and user flags hide a runner-temp script'; Runner = 'ubuntu-latest'; DownloadPath = '${{ runner.temp }}/review-artifact'; Shell = 'bash'; Text = 'sudo -iu runner bash "${{ runner.temp }}/review-artifact/rewrite.sh" CHANGELOG.md' },
+        @{ Name = 'sudo reordered login and user flags fail closed'; Runner = 'ubuntu-latest'; DownloadPath = '${{ runner.temp }}/review-artifact'; Shell = 'bash'; Text = 'sudo -ui runner bash "${{ runner.temp }}/review-artifact/rewrite.sh" CHANGELOG.md' },
+        @{ Name = 'sudo separated login and user flags fail closed'; Runner = 'ubuntu-latest'; DownloadPath = '${{ runner.temp }}/review-artifact'; Shell = 'bash'; Text = 'sudo -i -u runner bash "${{ runner.temp }}/review-artifact/rewrite.sh" CHANGELOG.md' },
+        @{ Name = 'sudo long login and user flags fail closed'; Runner = 'ubuntu-latest'; DownloadPath = '${{ runner.temp }}/review-artifact'; Shell = 'bash'; Text = 'sudo --login --user runner bash "${{ runner.temp }}/review-artifact/rewrite.sh" CHANGELOG.md' },
+        @{ Name = 'sudo separate user value exposes the following runner-temp script'; Runner = 'ubuntu-latest'; DownloadPath = '${{ runner.temp }}/review-artifact'; Shell = 'bash'; Text = 'sudo -u runner bash "${{ runner.temp }}/review-artifact/rewrite.sh" CHANGELOG.md' },
+        @{ Name = 'sudo user value exposes the following runner-temp script with a nested tracked write'; Runner = 'ubuntu-latest'; DownloadPath = '${{ runner.temp }}/review-artifact'; Shell = 'bash'; Text = 'sudo -u runner bash "${{ runner.temp }}/review-artifact/rewrite.sh" src/KeelMatrix.PackageSurface.Cli/README.md' },
+        @{ Name = 'sudo attached user value exposes the following runner-temp script'; Runner = 'ubuntu-latest'; DownloadPath = '${{ runner.temp }}/review-artifact'; Shell = 'bash'; Text = 'sudo -urunner bash "${{ runner.temp }}/review-artifact/rewrite.sh" CHANGELOG.md' },
+        @{ Name = 'sudo attached equals user value exposes the following runner-temp script'; Runner = 'ubuntu-latest'; DownloadPath = '${{ runner.temp }}/review-artifact'; Shell = 'bash'; Text = 'sudo -u=runner bash "${{ runner.temp }}/review-artifact/rewrite.sh" CHANGELOG.md' },
+        @{ Name = 'sudo long equals user value exposes the following runner-temp script'; Runner = 'ubuntu-latest'; DownloadPath = '${{ runner.temp }}/review-artifact'; Shell = 'bash'; Text = 'sudo --user=runner bash "${{ runner.temp }}/review-artifact/rewrite.sh" CHANGELOG.md' },
+        @{ Name = 'sudo value option must not become the command'; Runner = 'ubuntu-latest'; DownloadPath = '${{ runner.temp }}/review-artifact'; Shell = 'bash'; Text = ('sudo --pro' + 'mpt warning --user runner bash "${{ runner.temp }}/review-artifact/rewrite.sh" CHANGELOG.md') },
+        @{ Name = 'sudo unknown short option cannot hide the following runner-temp script'; Runner = 'ubuntu-latest'; DownloadPath = '${{ runner.temp }}/review-artifact'; Shell = 'bash'; Text = 'sudo -z runner bash "${{ runner.temp }}/review-artifact/rewrite.sh" CHANGELOG.md' },
+        @{ Name = 'sudo missing user value fails closed'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'sudo -u' },
+        @{ Name = 'sudo user value that looks like an option fails closed'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'sudo -u -i bash scripts/validate-release-artifact-set.ps1' },
         @{ Name = 'sudo chroot mode cannot prove its effective source root'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'sudo -R /srv/release-root bash scripts/validate-release-artifact-set.ps1' },
         @{ Name = 'nested env and sudo wrappers compose directories'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'env --chdir=review-artifact sudo -D nested bash ./scripts/validate-release-artifact-set.ps1' },
         @{ Name = 'normalized nested wrapper directory still resolves under artifact'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'env -C review-artifact/nested/../ sudo --chdir=nested/.. bash scripts/validate-release-artifact-set.ps1' },
+        @{ Name = 'sudo directory before separate user value remains tracked'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'sudo -D review-artifact -u runner ./rewrite CHANGELOG.md' },
+        @{ Name = 'sudo attached directory before attached user value remains tracked'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'sudo -Dreview-artifact -urunner ./rewrite CHANGELOG.md' },
+        @{ Name = 'sudo directory after separate user value remains tracked'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'sudo -u runner -D review-artifact ./rewrite CHANGELOG.md' },
+        @{ Name = 'sudo attached directory after separate user value remains tracked'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'sudo -u runner -Dreview-artifact ./rewrite CHANGELOG.md' },
+        @{ Name = 'sudo equals directory before equals user value remains tracked'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'sudo --chdir=review-artifact --user=runner ./rewrite CHANGELOG.md' },
+        @{ Name = 'sudo separate user and equals directory values remain tracked'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'sudo --user runner --chdir=review-artifact ./rewrite CHANGELOG.md' },
+        @{ Name = 'nested env and sudo user options retain normalized effective directory'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'env -C review-artifact/nested/../ sudo -D nested/.. -urunner ./rewrite CHANGELOG.md' },
+        @{ Name = 'sudo user and directory options expose a root-linking artifact executable'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'sudo -D review-artifact -urunner ./prepare "$GITHUB_WORKSPACE" "$RUNNER_TEMP/escape"' },
+        @{ Name = 'sudo user and directory options expose a nested-linking artifact executable'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'sudo -D review-artifact -urunner ./prepare "$GITHUB_WORKSPACE/src/KeelMatrix.PackageSurface.Cli" "$RUNNER_TEMP/escape"' },
         @{ Name = 'relative executable under downloaded artifact'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'env --chdir review-artifact ./rewrite CHANGELOG.md' },
         @{ Name = 'relative executable writes nested tracked source through sudo chdir'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'sudo -D review-artifact/nested/.. ./rewrite src/KeelMatrix.PackageSurface.Cli/README.md' },
         @{ Name = 'relative executable can create a workspace path link through env chdir'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'env -C review-artifact ./prepare "$GITHUB_WORKSPACE" "$RUNNER_TEMP/escape"' },
@@ -1086,7 +1108,7 @@ fi
     foreach ($restoreCommand in @('git checkout --detach ''${{ github.sha }}''', 'git switch --detach ''${{ github.sha }}''')) {
         $wrapperAfterSwitch = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -Runner 'ubuntu-latest' -DownloadPath 'review-artifact' -RunsAfterDownload @(
             @{ Name = 'Preserve candidate revision'; Text = $restoreCommand; Shell = 'bash' },
-            @{ Name = 'Run downloaded root-writing executable through env chdir'; Text = 'env -C review-artifact ./rewrite CHANGELOG.md'; Shell = 'bash' }
+            @{ Name = 'Run downloaded root-writing executable through sudo user and directory options'; Text = 'sudo -D review-artifact -urunner ./rewrite CHANGELOG.md'; Shell = 'bash' }
         )
         $wrapperAfterSwitchRejected = $false
         try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'wrapper-after-shell-switch.yml'; Text = $wrapperAfterSwitch }) -RepositoryRoot $RepositoryRoot }
@@ -1100,6 +1122,14 @@ fi
     $wrappedRootScriptControlResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'wrapped-pinned-root-script-control.yml'; Text = $wrappedRootScriptControl }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('wrapped-pinned-root-script-control.yml/future-consumer'))
     if ($wrappedRootScriptControlResult.Count -ne 1 -or $wrappedRootScriptControlResult[0].Scripts -notcontains $script) {
         throw 'A no-op wrapper directory must preserve the valid pinned workspace-root script control.'
+    }
+
+    $sudoPinnedRootScriptControl = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -Runner 'ubuntu-latest' -DownloadPath 'review-artifact' -RunsAfterDownload @(
+        @{ Name = 'Invoke pinned root script through sudo user options'; Text = 'sudo -urunner bash scripts/validate-release-artifact-set.ps1'; Shell = 'bash' }
+    )
+    $sudoPinnedRootScriptControlResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'sudo-pinned-root-script-control.yml'; Text = $sudoPinnedRootScriptControl }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('sudo-pinned-root-script-control.yml/future-consumer'))
+    if ($sudoPinnedRootScriptControlResult.Count -ne 1 -or $sudoPinnedRootScriptControlResult[0].Scripts -notcontains $script) {
+        throw 'Sudo user options must preserve the valid pinned workspace-root script control.'
     }
 
     $directExecutableWriterCases = @(

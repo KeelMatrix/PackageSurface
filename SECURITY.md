@@ -24,7 +24,7 @@ The repository history-hygiene implementation source of truth is `scripts/test-h
 
 ## Release workflow source validation
 
-The release workflow source guard tracks effective directories through `env -C`/`--chdir` and `sudo -D`/`--chdir`, including nested wrappers and normalized paths. Relative script inputs must resolve to the same pinned tracked path from the effective wrapper directory as from the workflow step. Relative executable inputs are checked against downloaded artifact and runner-temp outputs. Dynamic or outside-workspace directories make relative code inputs fail closed. Sudo login and chroot modes fail closed because they can change the effective directory or filesystem root without a proven source path.
+The release workflow source guard tracks effective directories through `env -C`/`--chdir` and `sudo -D`/`--chdir`, including nested wrappers and normalized paths. It parses sudo short-option bundles, consumes required option values before locating the command, and rejects login mode whenever `i` appears as a flag. Unknown or ambiguous sudo options, missing values, chroot mode, and login mode fail closed. Relative script inputs must resolve to the same pinned tracked path from the effective wrapper directory as from the workflow step. Relative executable inputs are checked against downloaded artifact and runner-temp outputs. Dynamic or outside-workspace directories make relative code inputs fail closed.
 
 ## Telemetry boundary
 

@@ -22,6 +22,10 @@ The guard classifies code-loading commands from supported command tokens after l
 
 The repository history-hygiene implementation source of truth is `scripts/test-history-hygiene.ps1`, with `scripts/test-history-hygiene-regressions.ps1` defining its regression contract. Every tracked file and reachable historical path/content version is decoded as strict UTF-8, UTF-16, or UTF-32 text; unsupported or binary content fails closed except for the confirmed root `icon.png` allowlist entry. History scanning covers the current tracked snapshot and each historical content version by scanning each root commit's added entries and each later commit's added, modified, or type-changed entries relative to its first parent, including merge results; unchanged entries are not charged repeatedly. Per-file and per-archive-entry inputs are limited to 4 MiB, and cumulative scanned/decompressed history is limited to 128 MiB. Commit metadata is scanned under the same restricted vocabulary; malformed change lists or archives, incomplete history, and unreadable Git data fail closed. No co-author trailer is allowlisted. This gate is independent of package analysis and protects the repository from incomplete provenance evidence.
 
+## Release workflow source validation
+
+The release workflow source guard tracks effective directories through `env -C`/`--chdir` and `sudo -D`/`--chdir`, including nested wrappers and normalized paths. Relative script inputs must resolve to the same pinned tracked path from the effective wrapper directory as from the workflow step. Relative executable inputs are checked against downloaded artifact and runner-temp outputs. Dynamic or outside-workspace directories make relative code inputs fail closed. Sudo login and chroot modes fail closed because they can change the effective directory or filesystem root without a proven source path.
+
 ## Telemetry boundary
 
 The `compilerApiVersion` restore member is required to be a string when present; a wrong primitive is `PS007`, never an absent-value fallback.

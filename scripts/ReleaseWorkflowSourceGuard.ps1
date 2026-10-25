@@ -1022,6 +1022,37 @@ function Resolve-WorkflowWorkspacePath {
     return Resolve-WorkflowRelativePath -BasePath $BasePath -RelativePath $Path
 }
 
+function Resolve-WorkflowWrapperWorkingDirectory {
+    param(
+        [Parameter(Mandatory)] [AllowEmptyString()] [string] $CurrentDirectory,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string] $Directory,
+        [Parameter(Mandatory)] [AllowEmptyCollection()] [object[]] $ArtifactOutputPaths,
+        [switch] $CurrentDirectoryIsUnknown
+    )
+
+    $value = ConvertFrom-WorkflowShellToken -Token $Directory
+    if ([string]::IsNullOrWhiteSpace($value) -or $value -match '\$|`|%|\*|\?|~') { return $null }
+
+    $runnerPathFlavor = 'unknown'
+    $repositoryRoot = ''
+    if ($ArtifactOutputPaths.Count -gt 0) {
+        $repositoryRoot = [string]$ArtifactOutputPaths[0].RepositoryRoot
+        if ($ArtifactOutputPaths[0].PSObject.Properties['RunnerPathFlavor']) {
+            $runnerPathFlavor = [string]$ArtifactOutputPaths[0].RunnerPathFlavor
+        }
+    }
+    if ($runnerPathFlavor -eq 'windows') { $value = $value.Replace('\', '/') }
+    elseif ($value.Contains('\')) { return $null }
+
+    if ($value -match '^[A-Za-z]:[^/]') { return $null }
+    if ($value.StartsWith('/', [StringComparison]::Ordinal) -or $value -match '^[A-Za-z]:/') {
+        if ($ArtifactOutputPaths.Count -eq 0) { return $null }
+        return Get-WorkflowAbsoluteWorkspacePath -Path $value -RepositoryRoot $repositoryRoot
+    }
+    if ($CurrentDirectoryIsUnknown) { return $null }
+    return Resolve-WorkflowRelativePath -BasePath $CurrentDirectory -RelativePath $value
+}
+
 function Test-WorkflowCmdShell {
     param([AllowNull()] [string] $Shell)
 
@@ -1134,7 +1165,8 @@ function Test-WorkflowTokenTargetsArtifactOutput {
         [Parameter(Mandatory)] [AllowEmptyString()] [string] $WorkingDirectory,
         [AllowNull()] [string] $Shell,
         [switch] $CheckCmdLookup,
-        [switch] $NoDefaultCurrentDirectoryInExePath
+        [switch] $NoDefaultCurrentDirectoryInExePath,
+        [switch] $WorkingDirectoryIsUnknown
     )
 
     if ($ArtifactOutputPaths.Count -eq 0) { return $false }
@@ -1146,6 +1178,11 @@ function Test-WorkflowTokenTargetsArtifactOutput {
         if (-not (Test-WorkflowPinnedScriptArgument -Token $Token -Shell $Shell)) { return $true }
     }
     $normalized = $value.Replace('\', '/')
+    if ($WorkingDirectoryIsUnknown -and
+        -not ($normalized.StartsWith('/', [StringComparison]::Ordinal) -or $normalized -match '^[A-Za-z]:/') -and
+        ($normalized.Contains('/') -or $normalized -match '(?i)\.(?:ps1|sh|cmd|bat|py|js|rb|pl)$' -or $CheckCmdLookup)) {
+        return $true
+    }
     $workspaceCandidate = $null
     $absoluteCandidate = $null
 
@@ -1257,11 +1294,13 @@ function Test-WorkflowInterpreterInvocation {
         [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]] $Arguments,
         [AllowNull()] [string] $Shell,
         [AllowEmptyCollection()] [object[]] $ArtifactOutputPaths = @(),
-        [string] $WorkingDirectory = '.'
+        [AllowEmptyString()] [string] $WorkingDirectory = '.',
+        [AllowEmptyString()] [string] $BaseWorkingDirectory = '.',
+        [switch] $WorkingDirectoryIsUnknown
     )
 
     foreach ($argument in $Arguments) {
-        if (Test-WorkflowTokenTargetsArtifactOutput -Token ([string]$argument) -ArtifactOutputPaths $ArtifactOutputPaths -WorkingDirectory $WorkingDirectory -Shell $Shell) { return $true }
+        if (Test-WorkflowTokenTargetsArtifactOutput -Token ([string]$argument) -ArtifactOutputPaths $ArtifactOutputPaths -WorkingDirectory $WorkingDirectory -Shell $Shell -WorkingDirectoryIsUnknown:$WorkingDirectoryIsUnknown) { return $true }
     }
 
     $powerShell = $Name -match '^(?i:pwsh|powershell)(?:\.exe)?$'
@@ -1270,7 +1309,9 @@ function Test-WorkflowInterpreterInvocation {
     for ($index = 0; $index -lt $Arguments.Count; $index++) {
         $value = ConvertFrom-WorkflowShellToken -Token ([string]$Arguments[$index])
         if ($scriptIndex -ge 0) {
-            if ($value -match $scriptExtensions -and -not (Test-WorkflowPinnedScriptArgument -Token $value -Shell $Shell)) { return $true }
+            if ($value -match $scriptExtensions -and
+                (-not (Test-WorkflowPinnedScriptArgument -Token $value -Shell $Shell) -or
+                    -not (Test-WorkflowScriptInputMatchesBaseDirectory -Token $value -Shell $Shell -WorkingDirectory $WorkingDirectory -BaseWorkingDirectory $BaseWorkingDirectory -WorkingDirectoryIsUnknown:$WorkingDirectoryIsUnknown -ArtifactOutputPaths $ArtifactOutputPaths))) { return $true }
             continue
         }
         if ($value -in @('-', '-s', '--stdin', '/dev/stdin', 'CON') -or $value -match '(?i)^/dev/fd/\d+$' -or $value -match '^(?:<<<?|<\(|\$\()') { return $true }
@@ -1282,14 +1323,17 @@ function Test-WorkflowInterpreterInvocation {
                 $index++
                 $path = ConvertFrom-WorkflowShellToken -Token ([string]$Arguments[$index])
             }
-            if ($path -in @('-', '/dev/stdin', 'CON') -or $path -match '(?i)^/dev/fd/\d+$' -or -not (Test-WorkflowPinnedScriptArgument -Token $path -Shell $Shell)) { return $true }
+            if ($path -in @('-', '/dev/stdin', 'CON') -or $path -match '(?i)^/dev/fd/\d+$' -or
+                -not (Test-WorkflowPinnedScriptArgument -Token $path -Shell $Shell) -or
+                -not (Test-WorkflowScriptInputMatchesBaseDirectory -Token $path -Shell $Shell -WorkingDirectory $WorkingDirectory -BaseWorkingDirectory $BaseWorkingDirectory -WorkingDirectoryIsUnknown:$WorkingDirectoryIsUnknown -ArtifactOutputPaths $ArtifactOutputPaths)) { return $true }
             $scriptIndex = $index
             continue
         }
 
         $scriptPath = $value
         if ($scriptPath -match $scriptExtensions) {
-            if (-not (Test-WorkflowPinnedScriptArgument -Token $scriptPath -Shell $Shell)) { return $true }
+            if (-not (Test-WorkflowPinnedScriptArgument -Token $scriptPath -Shell $Shell) -or
+                -not (Test-WorkflowScriptInputMatchesBaseDirectory -Token $scriptPath -Shell $Shell -WorkingDirectory $WorkingDirectory -BaseWorkingDirectory $BaseWorkingDirectory -WorkingDirectoryIsUnknown:$WorkingDirectoryIsUnknown -ArtifactOutputPaths $ArtifactOutputPaths)) { return $true }
             if ($scriptIndex -lt 0) { $scriptIndex = $index }
             continue
         }
@@ -1310,6 +1354,32 @@ function Test-WorkflowInterpreterInvocation {
     return $scriptIndex -lt 0
 }
 
+function Test-WorkflowScriptInputMatchesBaseDirectory {
+    param(
+        [Parameter(Mandatory)] [string] $Token,
+        [AllowNull()] [string] $Shell,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string] $WorkingDirectory,
+        [Parameter(Mandatory)] [AllowEmptyString()] [string] $BaseWorkingDirectory,
+        [AllowEmptyCollection()] [object[]] $ArtifactOutputPaths = @(),
+        [switch] $WorkingDirectoryIsUnknown
+    )
+
+    if ($WorkingDirectoryIsUnknown) { return $false }
+    $value = ConvertFrom-WorkflowShellToken -Token $Token
+    if ($Shell -match '^(?i:pwsh|powershell)$') { $value = $value.Replace('\', '/') }
+    elseif ($value.Contains('\')) { return $false }
+    if ($value.StartsWith('/', [StringComparison]::Ordinal) -or $value -match '^[A-Za-z]:') { return $false }
+
+    $effectivePath = Resolve-WorkflowRelativePath -BasePath $WorkingDirectory -RelativePath $value
+    $basePath = Resolve-WorkflowRelativePath -BasePath $BaseWorkingDirectory -RelativePath $value
+    if ($null -eq $effectivePath -or $null -eq $basePath) { return $false }
+    $comparison = [StringComparison]::Ordinal
+    if ($ArtifactOutputPaths.Count -gt 0 -and $ArtifactOutputPaths[0].PSObject.Properties['RunnerPathFlavor'] -and $ArtifactOutputPaths[0].RunnerPathFlavor -eq 'windows') {
+        $comparison = [StringComparison]::OrdinalIgnoreCase
+    }
+    return $effectivePath.Equals($basePath, $comparison)
+}
+
 function Test-WorkflowPowerShellUtilityCommandName {
     param([Parameter(Mandatory)] [string] $Name, [AllowNull()] [string] $Shell)
 
@@ -1322,11 +1392,16 @@ function Test-WorkflowCommandContainsUnsupportedExecution {
         [Parameter(Mandatory)] [AllowEmptyCollection()] [string[]] $Tokens,
         [AllowNull()] [string] $Shell,
         [AllowEmptyCollection()] [object[]] $ArtifactOutputPaths = @(),
-        [string] $WorkingDirectory = '.',
+        [AllowEmptyString()] [string] $WorkingDirectory = '.',
+        [AllowEmptyString()] [string] $BaseWorkingDirectory = '.',
+        [switch] $WorkingDirectoryIsUnknown,
         [switch] $NoDefaultCurrentDirectoryInExePath
     )
 
     $current = @($Tokens)
+    $effectiveWorkingDirectory = $WorkingDirectory
+    $effectiveWorkingDirectoryIsUnknown = [bool]$WorkingDirectoryIsUnknown
+    $baseWorkingDirectory = $BaseWorkingDirectory
     for ($depth = 0; $depth -lt 16 -and $current.Count -gt 0; $depth++) {
         while ($current.Count -gt 0) {
             $leading = ConvertFrom-WorkflowShellToken -Token ([string]$current[0])
@@ -1338,7 +1413,7 @@ function Test-WorkflowCommandContainsUnsupportedExecution {
 
         $program = ConvertFrom-WorkflowShellToken -Token ([string]$current[0])
         $moduleQualifiedPowerShellCommand = Test-WorkflowPowerShellUtilityCommandName -Name $program -Shell $Shell
-        if (-not $moduleQualifiedPowerShellCommand -and (Test-WorkflowTokenTargetsArtifactOutput -Token $program -ArtifactOutputPaths $ArtifactOutputPaths -WorkingDirectory $WorkingDirectory -Shell $Shell -CheckCmdLookup -NoDefaultCurrentDirectoryInExePath:$NoDefaultCurrentDirectoryInExePath)) { return $true }
+        if (-not $moduleQualifiedPowerShellCommand -and (Test-WorkflowTokenTargetsArtifactOutput -Token $program -ArtifactOutputPaths $ArtifactOutputPaths -WorkingDirectory $effectiveWorkingDirectory -Shell $Shell -CheckCmdLookup -NoDefaultCurrentDirectoryInExePath:$NoDefaultCurrentDirectoryInExePath -WorkingDirectoryIsUnknown:$effectiveWorkingDirectoryIsUnknown)) { return $true }
         $programName = ($program -split '[\\/]')[-1].ToLowerInvariant()
         $arguments = @($current | Select-Object -Skip 1)
         if ($program.Contains('$') -or $program.Contains([char]96)) { return $true }
@@ -1367,8 +1442,30 @@ function Test-WorkflowCommandContainsUnsupportedExecution {
                     break
                 }
                 if ($option -in @('-i', '--ignore-environment', '-0', '--null', '-v', '--debug', '--list-signal-handling')) { $index++; continue }
-                if ($option -match '^(?:-u|--unset|-C|--chdir|-a|--argv0|--block-signal|--default-signal|--ignore-signal)$') { $index += 2; continue }
-                if ($option -match '^(?:--unset|--chdir|--argv0|--block-signal|--default-signal|--ignore-signal)=') { $index++; continue }
+                if ($option -in @('-C', '--chdir')) {
+                    if ($index + 1 -ge $arguments.Count) { return $true }
+                    $resolvedDirectory = Resolve-WorkflowWrapperWorkingDirectory -CurrentDirectory $effectiveWorkingDirectory -Directory ([string]$arguments[$index + 1]) -ArtifactOutputPaths $ArtifactOutputPaths -CurrentDirectoryIsUnknown:$effectiveWorkingDirectoryIsUnknown
+                    if ($null -eq $resolvedDirectory) { $effectiveWorkingDirectoryIsUnknown = $true }
+                    else { $effectiveWorkingDirectory = $resolvedDirectory; $effectiveWorkingDirectoryIsUnknown = $false }
+                    $index += 2
+                    continue
+                }
+                if ($option -match '^(?:--chdir|-C)=(?<directory>.*)$') {
+                    $resolvedDirectory = Resolve-WorkflowWrapperWorkingDirectory -CurrentDirectory $effectiveWorkingDirectory -Directory $Matches['directory'] -ArtifactOutputPaths $ArtifactOutputPaths -CurrentDirectoryIsUnknown:$effectiveWorkingDirectoryIsUnknown
+                    if ($null -eq $resolvedDirectory) { $effectiveWorkingDirectoryIsUnknown = $true }
+                    else { $effectiveWorkingDirectory = $resolvedDirectory; $effectiveWorkingDirectoryIsUnknown = $false }
+                    $index++
+                    continue
+                }
+                if ($option -match '^-C(?<directory>.+)$') {
+                    $resolvedDirectory = Resolve-WorkflowWrapperWorkingDirectory -CurrentDirectory $effectiveWorkingDirectory -Directory $Matches['directory'] -ArtifactOutputPaths $ArtifactOutputPaths -CurrentDirectoryIsUnknown:$effectiveWorkingDirectoryIsUnknown
+                    if ($null -eq $resolvedDirectory) { $effectiveWorkingDirectoryIsUnknown = $true }
+                    else { $effectiveWorkingDirectory = $resolvedDirectory; $effectiveWorkingDirectoryIsUnknown = $false }
+                    $index++
+                    continue
+                }
+                if ($option -match '^(?:-u|--unset|-a|--argv0|--block-signal|--default-signal|--ignore-signal)$') { $index += 2; continue }
+                if ($option -match '^(?:--unset|--argv0|--block-signal|--default-signal|--ignore-signal)=') { $index++; continue }
                 if ($option -match '^[A-Za-z_][A-Za-z0-9_]*=') { $index++; continue }
                 if ($option.StartsWith('-', [StringComparison]::Ordinal)) { return $true }
                 break
@@ -1476,7 +1573,31 @@ function Test-WorkflowCommandContainsUnsupportedExecution {
                 $option = ConvertFrom-WorkflowShellToken -Token ([string]$arguments[$index])
                 if ($option -eq '--') { $index++; break }
                 if (-not $option.StartsWith('-', [StringComparison]::Ordinal)) { break }
-                if (($programName -eq 'sudo' -or $programName -eq 'doas') -and $option -match '^(?:-u|-g|-h|-p|-C|-D|-R|-T|-U|-r|-a|--user|--group|--host|--pro(?:mpt)|--close-from|--chdir|--chroot|--command-timeout|--other-user|--role|--type)$') { $index += 2; continue }
+                if ($programName -eq 'sudo' -and $option -in @('-i', '--login', '-R', '--chroot')) { return $true }
+                if ($programName -eq 'sudo' -and $option -in @('-D', '--chdir')) {
+                    if ($index + 1 -ge $arguments.Count) { return $true }
+                    $resolvedDirectory = Resolve-WorkflowWrapperWorkingDirectory -CurrentDirectory $effectiveWorkingDirectory -Directory ([string]$arguments[$index + 1]) -ArtifactOutputPaths $ArtifactOutputPaths -CurrentDirectoryIsUnknown:$effectiveWorkingDirectoryIsUnknown
+                    if ($null -eq $resolvedDirectory) { $effectiveWorkingDirectoryIsUnknown = $true }
+                    else { $effectiveWorkingDirectory = $resolvedDirectory; $effectiveWorkingDirectoryIsUnknown = $false }
+                    $index += 2
+                    continue
+                }
+                if ($programName -eq 'sudo' -and $option -match '^(?:--chdir|-D|--chroot|-R)=(?<directory>.*)$') {
+                    if ($option -match '^(?:--chroot|-R)=') { return $true }
+                    $resolvedDirectory = Resolve-WorkflowWrapperWorkingDirectory -CurrentDirectory $effectiveWorkingDirectory -Directory $Matches['directory'] -ArtifactOutputPaths $ArtifactOutputPaths -CurrentDirectoryIsUnknown:$effectiveWorkingDirectoryIsUnknown
+                    if ($null -eq $resolvedDirectory) { $effectiveWorkingDirectoryIsUnknown = $true }
+                    else { $effectiveWorkingDirectory = $resolvedDirectory; $effectiveWorkingDirectoryIsUnknown = $false }
+                    $index++
+                    continue
+                }
+                if ($programName -eq 'sudo' -and $option -match '^-D(?<directory>.+)$') {
+                    $resolvedDirectory = Resolve-WorkflowWrapperWorkingDirectory -CurrentDirectory $effectiveWorkingDirectory -Directory $Matches['directory'] -ArtifactOutputPaths $ArtifactOutputPaths -CurrentDirectoryIsUnknown:$effectiveWorkingDirectoryIsUnknown
+                    if ($null -eq $resolvedDirectory) { $effectiveWorkingDirectoryIsUnknown = $true }
+                    else { $effectiveWorkingDirectory = $resolvedDirectory; $effectiveWorkingDirectoryIsUnknown = $false }
+                    $index++
+                    continue
+                }
+                if (($programName -eq 'sudo' -or $programName -eq 'doas') -and $option -match '^(?:-u|-g|-h|-p|-C|-T|-U|-r|-a|--user|--group|--host|--pro(?:mpt)|--close-from|--command-timeout|--other-user|--role|--type)$') { $index += 2; continue }
                 if ($programName -eq 'nice' -and $option -in @('-n', '--adjustment')) { $index += 2; continue }
                 if ($programName -eq 'stdbuf' -and $option -match '^(?:-i|-o|-e)$') { $index += 2; continue }
                 if ($programName -eq 'busybox') { $index++; break }
@@ -1504,16 +1625,18 @@ function Test-WorkflowCommandContainsUnsupportedExecution {
             if ($programName -eq 'source' -and $arguments.Count -gt 0 -and (ConvertFrom-WorkflowShellToken -Token ([string]$arguments[0])) -eq '--') { $pathIndex++ }
             if ($pathIndex -ge $arguments.Count) { return $true }
             $sourcePath = [string]$arguments[$pathIndex]
-            if (-not (Test-WorkflowPinnedScriptArgument -Token $sourcePath -Shell $Shell)) { return $true }
+            if (-not (Test-WorkflowPinnedScriptArgument -Token $sourcePath -Shell $Shell) -or
+                -not (Test-WorkflowScriptInputMatchesBaseDirectory -Token $sourcePath -Shell $Shell -WorkingDirectory $effectiveWorkingDirectory -BaseWorkingDirectory $baseWorkingDirectory -WorkingDirectoryIsUnknown:$effectiveWorkingDirectoryIsUnknown -ArtifactOutputPaths $ArtifactOutputPaths)) { return $true }
             return $false
         }
 
         if ($programName -match '^(?:bash|sh|dash|zsh|pwsh|powershell|python(?:\d+(?:\.\d+)*)?|node(?:js)?|ruby|perl)(?:\.exe)?$') {
             if ($program -match '[\\/]' ) { return $true }
-            return Test-WorkflowInterpreterInvocation -Name $programName -Arguments $arguments -Shell $Shell -ArtifactOutputPaths $ArtifactOutputPaths -WorkingDirectory $WorkingDirectory
+            return Test-WorkflowInterpreterInvocation -Name $programName -Arguments $arguments -Shell $Shell -ArtifactOutputPaths $ArtifactOutputPaths -WorkingDirectory $effectiveWorkingDirectory -BaseWorkingDirectory $baseWorkingDirectory -WorkingDirectoryIsUnknown:$effectiveWorkingDirectoryIsUnknown
         }
         if ($program -match '(?i)\.(?:ps1|sh|cmd|bat|py|js|rb|pl)$') {
-            return -not (Test-WorkflowPinnedScriptArgument -Token $program -Shell $Shell)
+            return -not (Test-WorkflowPinnedScriptArgument -Token $program -Shell $Shell) -or
+                -not (Test-WorkflowScriptInputMatchesBaseDirectory -Token $program -Shell $Shell -WorkingDirectory $effectiveWorkingDirectory -BaseWorkingDirectory $baseWorkingDirectory -WorkingDirectoryIsUnknown:$effectiveWorkingDirectoryIsUnknown -ArtifactOutputPaths $ArtifactOutputPaths)
         }
         if (Test-WorkflowRunnerTempReference -Value $program) { return $true }
         return $false
@@ -1526,7 +1649,7 @@ function Test-WorkflowRunContainsWrappedUnsupportedExecution {
         [Parameter(Mandatory)] [AllowEmptyString()] [string] $Text,
         [AllowNull()] [string] $Shell,
         [AllowEmptyCollection()] [object[]] $ArtifactOutputPaths = @(),
-        [string] $WorkingDirectory = '.',
+        [AllowEmptyString()] [string] $WorkingDirectory = '.',
         [switch] $NoDefaultCurrentDirectoryInExePath
     )
 
@@ -1551,7 +1674,7 @@ function Test-WorkflowRunContainsWrappedUnsupportedExecution {
         }
         $programPath = ConvertFrom-WorkflowShellToken -Token ([string]$tokens[0])
         if ($runnerTempDirectory -and $programPath -match '^(?:\./|\.\\)[^\\/]+') { return $true }
-        if ($tokens.Count -gt 0 -and (Test-WorkflowCommandContainsUnsupportedExecution -Tokens $tokens -Shell $Shell -ArtifactOutputPaths $ArtifactOutputPaths -WorkingDirectory $WorkingDirectory -NoDefaultCurrentDirectoryInExePath:$NoDefaultCurrentDirectoryInExePath)) { return $true }
+        if ($tokens.Count -gt 0 -and (Test-WorkflowCommandContainsUnsupportedExecution -Tokens $tokens -Shell $Shell -ArtifactOutputPaths $ArtifactOutputPaths -WorkingDirectory $WorkingDirectory -BaseWorkingDirectory $WorkingDirectory -NoDefaultCurrentDirectoryInExePath:$NoDefaultCurrentDirectoryInExePath)) { return $true }
     }
     return $false
 }

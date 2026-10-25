@@ -53,6 +53,8 @@ The guard also rejects wrapped stdin interpreter forms, including `env --`, `env
 
 The guard parses `exec -a` and GNU `time -o`/`--output` wrapper options, and recognizes GNU `timeout` and `gtimeout` kill-after and signal values in separate, attached, and `=` forms. Timeout parsing consumes the duration after `--` and fails closed when a required option value, duration, or command is missing. The guard rejects `env -S` values containing environment expansion, rejects variable-expanded executable names (including Bash variables that name downloaded runner-temp helpers), and fails closed when wrapper parsing reaches its depth bound. GNU time output destinations are checked as file sinks; immutable `runner.temp` expression paths with safe suffixes remain allowed while no path redirect is active.
 
+The source guard carries each supported wrapper directory into relative executable and script resolution. It tracks `env -C`/`--chdir` and `sudo -D`/`--chdir` across nested wrappers and normalized paths. A relative code input must still resolve to the same pinned tracked path from the effective wrapper directory as from the workflow step; when a directory cannot be proven, the guard rejects relative code inputs. Sudo login and chroot modes fail closed because they can change the directory or filesystem root.
+
 ## Project roles
 
 - `src/KeelMatrix.PackageSurface.Cli` is the only shipping packable project and produces the `KeelMatrix.PackageSurface` .NET tool.

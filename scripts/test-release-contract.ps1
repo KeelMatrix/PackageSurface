@@ -1054,6 +1054,54 @@ fi
         if (-not $rejected) { throw "Workflow contract accepted $($case.Name) in an indentation-preserving block scalar." }
     }
 
+    $wrapperDirectoryCases = @(
+        @{ Name = 'env -C resolves a relative script under downloaded artifact'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'env -C review-artifact pwsh -File scripts/validate-release-artifact-set.ps1' },
+        @{ Name = 'env --chdir resolves a relative script under downloaded artifact'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'env --chdir review-artifact pwsh -File scripts/validate-release-artifact-set.ps1' },
+        @{ Name = 'env --chdir equals form resolves a relative script under downloaded artifact'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'env --chdir=review-artifact pwsh -File scripts/validate-release-artifact-set.ps1' },
+        @{ Name = 'sudo -D resolves a relative script under downloaded artifact'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'sudo -D review-artifact pwsh -File scripts/validate-release-artifact-set.ps1' },
+        @{ Name = 'sudo --chdir resolves a relative script under downloaded artifact'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'sudo --chdir review-artifact pwsh -File scripts/validate-release-artifact-set.ps1' },
+        @{ Name = 'sudo --chdir equals form resolves a relative script under downloaded artifact'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'sudo --chdir=review-artifact pwsh -File scripts/validate-release-artifact-set.ps1' },
+        @{ Name = 'sudo login mode cannot prove its effective directory'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'sudo -i bash scripts/validate-release-artifact-set.ps1' },
+        @{ Name = 'sudo chroot mode cannot prove its effective source root'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'sudo -R /srv/release-root bash scripts/validate-release-artifact-set.ps1' },
+        @{ Name = 'nested env and sudo wrappers compose directories'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'env --chdir=review-artifact sudo -D nested bash ./scripts/validate-release-artifact-set.ps1' },
+        @{ Name = 'normalized nested wrapper directory still resolves under artifact'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'env -C review-artifact/nested/../ sudo --chdir=nested/.. bash scripts/validate-release-artifact-set.ps1' },
+        @{ Name = 'relative executable under downloaded artifact'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'env --chdir review-artifact ./rewrite CHANGELOG.md' },
+        @{ Name = 'relative executable writes nested tracked source through sudo chdir'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'sudo -D review-artifact/nested/.. ./rewrite src/KeelMatrix.PackageSurface.Cli/README.md' },
+        @{ Name = 'relative executable can create a workspace path link through env chdir'; Runner = 'ubuntu-latest'; DownloadPath = 'review-artifact'; Shell = 'bash'; Text = 'env -C review-artifact ./prepare "$GITHUB_WORKSPACE" "$RUNNER_TEMP/escape"' },
+        @{ Name = 'relative root writer under step working directory artifact output'; Runner = 'ubuntu-latest'; DownloadPath = 'release-artifacts'; WorkingDirectory = 'release-artifacts'; Shell = 'bash'; Text = 'sudo -D nested/../ ./rewrite CHANGELOG.md' },
+        @{ Name = 'relative nested writer under normalized Windows artifact path'; Runner = 'windows-latest'; DownloadPath = 'review-artifact/nested/..'; Shell = 'pwsh'; Text = 'env.exe --chdir="review-artifact\nested\.." pwsh -File scripts/validate-release-artifact-set.ps1' },
+        @{ Name = 'relative script under runner-temp artifact output'; Runner = 'ubuntu-latest'; DownloadPath = '${{ runner.temp }}/review-artifact'; Shell = 'bash'; Text = 'env -C "${{ runner.temp }}/review-artifact" pwsh -File scripts/validate-release-artifact-set.ps1' },
+        @{ Name = 'relative executable under runner-temp artifact output'; Runner = 'ubuntu-latest'; DownloadPath = '${{ runner.temp }}/review-artifact'; Shell = 'bash'; Text = 'sudo --chdir="${{ runner.temp }}/review-artifact" ./rewrite src/KeelMatrix.PackageSurface.Cli/README.md' }
+    )
+    foreach ($case in $wrapperDirectoryCases) {
+        $runStep = @{ Name = $case.Name; Text = $case.Text; Shell = $case.Shell }
+        if ($case.ContainsKey('WorkingDirectory')) { $runStep.WorkingDirectory = $case.WorkingDirectory }
+        $fixture = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -Runner $case.Runner -DownloadPath $case.DownloadPath -RunsAfterDownload @($runStep)
+        $rejected = $false
+        try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'wrapper-effective-directory.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot }
+        catch { $rejected = $true }
+        if (-not $rejected) { throw "Workflow contract accepted $($case.Name)." }
+    }
+
+    foreach ($restoreCommand in @('git checkout --detach ''${{ github.sha }}''', 'git switch --detach ''${{ github.sha }}''')) {
+        $wrapperAfterSwitch = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -Runner 'ubuntu-latest' -DownloadPath 'review-artifact' -RunsAfterDownload @(
+            @{ Name = 'Preserve candidate revision'; Text = $restoreCommand; Shell = 'bash' },
+            @{ Name = 'Run downloaded root-writing executable through env chdir'; Text = 'env -C review-artifact ./rewrite CHANGELOG.md'; Shell = 'bash' }
+        )
+        $wrapperAfterSwitchRejected = $false
+        try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'wrapper-after-shell-switch.yml'; Text = $wrapperAfterSwitch }) -RepositoryRoot $RepositoryRoot }
+        catch { $wrapperAfterSwitchRejected = $true }
+        if (-not $wrapperAfterSwitchRejected) { throw 'A pinned shell checkout or switch made a downloaded executable safe after wrapper chdir.' }
+    }
+
+    $wrappedRootScriptControl = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -Runner 'ubuntu-latest' -DownloadPath 'review-artifact' -RunsAfterDownload @(
+        @{ Name = 'Invoke pinned root script through a no-op env chdir'; Text = 'env -C ./ pwsh -File scripts/validate-release-artifact-set.ps1'; Shell = 'bash' }
+    )
+    $wrappedRootScriptControlResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'wrapped-pinned-root-script-control.yml'; Text = $wrappedRootScriptControl }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('wrapped-pinned-root-script-control.yml/future-consumer'))
+    if ($wrappedRootScriptControlResult.Count -ne 1 -or $wrappedRootScriptControlResult[0].Scripts -notcontains $script) {
+        throw 'A no-op wrapper directory must preserve the valid pinned workspace-root script control.'
+    }
+
     $directExecutableWriterCases = @(
         @{ Name = 'downloaded executable writes tracked root'; Text = ('curl --output "' + $workflowRunnerTemp + '/rewrite" https://host/payload; chmod +x "' + $workflowRunnerTemp + '/rewrite"; "' + $workflowRunnerTemp + '/rewrite" CHANGELOG.md'); Shell = 'bash' },
         @{ Name = 'downloaded executable writes nested tracked source'; Text = ('curl --output "' + $workflowRunnerTemp + '/rewrite" https://host/payload; chmod +x "' + $workflowRunnerTemp + '/rewrite"; "' + $workflowRunnerTemp + '/rewrite" src/KeelMatrix.PackageSurface.Cli/README.md'); Shell = 'bash' },
@@ -2369,7 +2417,7 @@ try {
     # exercised through synthetic jobs while the workflow parser below enforces that
     # the real consumers do not invoke repository scripts after downloading artifacts.
     Assert-WorkflowScriptSourceRegressionCoverage -CurrentConsumers @() -RepositoryRoot $root
-    Write-Output 'PASS: checkout-source guard tracks runner-aware artifact paths, quote/comment-aware flow env maps, workflow/job-container/step Bash startup environment, GNU cp symbolic-link options, workflow/action PATH state, Windows cmd lookup, working-directory changes, wrapped and stdin evaluators, runner-temp and artifact-output executables, response writers, redirects, tracked-byte restoration, and guarded script invocations.'
+    Write-Output 'PASS: checkout-source guard tracks runner-aware artifact paths, effective directories across nested env/sudo wrappers, quote/comment-aware flow env maps, workflow/job-container/step Bash startup environment, GNU cp symbolic-link options, workflow/action PATH state, Windows cmd lookup, working-directory changes, wrapped and stdin evaluators, runner-temp and artifact-output executables, response writers, redirects, tracked-byte restoration, and guarded script invocations.'
     if ($SourceGuardOnly) { return }
     $trackedRepositoryFiles = @(git -C $root ls-files)
     if ($LASTEXITCODE -ne 0) { throw 'Unable to enumerate tracked repository files for workflow-consumer checks.' }

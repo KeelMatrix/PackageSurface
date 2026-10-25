@@ -33,6 +33,7 @@ New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('packagesurface-gate-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $scratch | Out-Null
 $solution = Join-Path $root 'KeelMatrix.PackageSurface.sln'
+$cliProject = Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/KeelMatrix.PackageSurface.Cli.csproj'
 $shippingPackages = Join-Path $scratch 'shipping-packages'
 $nugetConfig = Join-Path $root 'NuGet.config'
 
@@ -89,6 +90,16 @@ function Ensure-DotnetRootForInstalledTool {
 }
 
 try {
+    $projectVersionOutput = @(& dotnet msbuild $cliProject -getProperty:Version)
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to read the shipping package version from the packable project.' }
+    $projectVersion = ($projectVersionOutput -join '').Trim()
+    $suppliedPackageVersion = if ($PSBoundParameters.ContainsKey('ExpectedVersion')) { [string]$ExpectedVersion } else { $projectVersion }
+    if ([string]::IsNullOrWhiteSpace($suppliedPackageVersion)) { throw 'The expected shipping package version is empty.' }
+    $packageVersion = $suppliedPackageVersion.Trim()
+    if ($packageVersion -cne $suppliedPackageVersion) { throw 'The expected shipping package version cannot include surrounding whitespace.' }
+    if ($packageVersion -notmatch '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$') { throw 'The expected shipping package version is empty or invalid.' }
+    if ($packageVersion -cne $projectVersion) { throw 'The expected shipping package version does not match the packable project.' }
+
     $env:CI = 'true'
     $env:KEELMATRIX_TELEMETRY = 'off'
     $env:NUGET_PACKAGES = $shippingPackages
@@ -171,7 +182,6 @@ try {
         Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-public-wording.ps1') -RepositoryRoot $root -PackagePath $nupkg.FullName
     }
 
-    $packageVersion = $ExpectedVersion
     $allArtifacts = @(Get-ChildItem -LiteralPath $feed -File)
     $expectedArtifactNames = @("KeelMatrix.PackageSurface.$packageVersion.nupkg", "KeelMatrix.PackageSurface.$packageVersion.snupkg")
     $actualArtifactNames = @($allArtifacts | Select-Object -ExpandProperty Name | Sort-Object)
@@ -337,9 +347,9 @@ try {
 
     $baselineCases = @{
         'malformed baseline' = '{not-json'
-        'null-entry baseline' = '{"schemaVersion":1,"toolVersion":"0.1.0","strictContent":false,"entries":[null],"incompleteReasons":[]}'
-        'invalid-hash baseline' = '{"schemaVersion":1,"toolVersion":"0.1.0","strictContent":true,"entries":[{"project":"SingleTarget.csproj","context":"Target","targetFramework":"net8.0","runtimeIdentifier":null,"packageId":"Example","version":"1.0.0","relationship":"direct","capability":"BuildProps","packageRelativePath":"build/example.props","present":true,"active":true,"sha256":"bad","incomplete":false,"incompleteReason":null}],"incompleteReasons":[]}'
-        'incomplete baseline' = '{"schemaVersion":1,"toolVersion":"0.1.0","strictContent":false,"entries":[],"incompleteReasons":["restore evidence missing"]}'
+        'null-entry baseline' = "{`"schemaVersion`":1,`"toolVersion`":`"$packageVersion`",`"strictContent`":false,`"entries`": [null],`"incompleteReasons`":[]}"
+        'invalid-hash baseline' = "{`"schemaVersion`":1,`"toolVersion`":`"$packageVersion`",`"strictContent`":true,`"entries`": [{`"project`":`"SingleTarget.csproj`",`"context`":`"Target`",`"targetFramework`":`"net8.0`",`"runtimeIdentifier`":null,`"packageId`":`"Example`",`"version`":`"1.0.0`",`"relationship`":`"direct`",`"capability`":`"BuildProps`",`"packageRelativePath`":`"build/example.props`",`"present`":true,`"active`":true,`"sha256`":`"bad`",`"incomplete`":false,`"incompleteReason`":null}],`"incompleteReasons`":[]}"
+        'incomplete baseline' = "{`"schemaVersion`":1,`"toolVersion`":`"$packageVersion`",`"strictContent`":false,`"entries`":[],`"incompleteReasons`": [`"restore evidence missing`"]}"
     }
     foreach ($case in $baselineCases.GetEnumerator()) {
         $casePath = Join-Path $scratch (($case.Key -replace '[^A-Za-z0-9]+', '-') + '.json')

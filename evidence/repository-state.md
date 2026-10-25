@@ -10,7 +10,7 @@ The canonical repository is the public `KeelMatrix/PackageSurface` GitHub reposi
 
 - `.github/workflows/ci.yml`: push to `main`, pull requests, and manual exact-SHA dispatch on `windows-latest`,
   `ubuntu-latest`, and `macos-latest`.
-- `.github/workflows/release.yml`: tag-only `v*.*.*` validation, publication, and GitHub Release chain.
+- `.github/workflows/release.yml`: tag-only `v*.*.*` validation, publication, and GitHub Release chain; the validate job checks the built artifact set before upload, and downstream consumers check downloaded artifacts inline without invoking tracked repository scripts.
 - `scripts/validate-release.ps1`: the shared version and changelog contract used by candidate checks and the release
   workflow.
 
@@ -35,7 +35,7 @@ COMMAND: git tag | Measure-Object | Select-Object -ExpandProperty Count
 EXPECTED: 0 before an approved release tag exists.
 
 COMMAND: pwsh -NoLogo -NoProfile -File scripts/test-release-contract.ps1
-EXPECTED: PASS for the workflow shape and shared fail-closed release-contract regression cases.
+EXPECTED: PASS for the workflow shape, script-free downstream artifact consumers, portable-root checkout regressions for future script consumers, and shared fail-closed release-contract cases.
 ```
 
 The exact command output for the checkout, including `git rev-parse HEAD`, `git rev-parse origin/main`, and
@@ -44,8 +44,11 @@ The exact command output for the checkout, including `git rev-parse HEAD`, `git 
 The history hygiene contract has one source of truth: `scripts/test-history-hygiene.ps1`, with disposable adversarial
 coverage in `scripts/test-history-hygiene-regressions.ps1`. It checks complete non-shallow history, KeelMatrix
 authorship, and the bounded developer-coordination vocabulary. Tracked working-tree files and every reachable
-historical blob are read as whole content strings rather than line-oriented matches; commit metadata is also matched
-as whole text. Every maximal run, including an empty run, of non-alphanumeric separator characters between phrase
+historical path/content version are read as whole content strings rather than line-oriented matches. Each historical
+commit with no parent contributes its added entries. Each later commit contributes entries added, modified, or
+type-changed relative to its first parent, including merge results. The current tracked snapshot is scanned separately;
+unchanged historical entries are not scanned again. Commit metadata is
+also matched as whole text. Every maximal run, including an empty run, of non-alphanumeric separator characters between phrase
 tokens is equivalent, including LF, CRLF, and repeated line boundaries. Two historical versions of this file share
 blob `61b630979e573a1feeae6f455105ff82a2c5c2c4`; only that path-and-blob pair is exempt from the phrase matcher.
 Encoding checks, content limits, common restricted markers, and all other history checks still apply. Git command

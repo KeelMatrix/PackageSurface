@@ -219,6 +219,131 @@ function Test-KnownSafeBinaryPath {
     return $Path.Replace('\', '/') -eq 'icon.png'
 }
 
+function Invoke-HistoricalArchiveBatch {
+    param(
+        [string] $Commit,
+        [string] $ArchiveRoot,
+        [int] $BatchIndex,
+        [string[]] $ExpectedPaths,
+        [string[]] $Pathspecs,
+        [long] $HistoryScannedBytes,
+        [long] $DecompressedBytes,
+        [long] $MaxArchiveEntryBytes,
+        [long] $MaxHistoryScannedBytes,
+        [long] $MaxTotalDecompressedBytes,
+        [Collections.Generic.List[string]] $Violations,
+        [hashtable] $HistoricalReviewBlobExceptions
+    )
+
+    $archivePath = Join-Path $ArchiveRoot ($Commit + '-' + $BatchIndex + '.zip')
+    try {
+        $archiveArguments = @('archive', '--format=zip', "--output=$archivePath", $Commit, '--') + $Pathspecs
+        [void](Invoke-GitChecked $archiveArguments)
+        if (-not (Test-Path -LiteralPath $archivePath -PathType Leaf)) {
+            throw "The historical-tree archive for commit $Commit batch $BatchIndex was not created."
+        }
+
+        $expected = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach ($expectedPath in $ExpectedPaths) {
+            if (-not $expected.Add($expectedPath)) {
+                throw "The changed-path list for commit $Commit contains duplicate path '$expectedPath'."
+            }
+        }
+
+        $archive = [IO.Compression.ZipFile]::OpenRead($archivePath)
+        try {
+            foreach ($entry in $archive.Entries) {
+                if ([string]::IsNullOrEmpty($entry.Name)) {
+                    continue
+                }
+                $normalizedEntryPath = $entry.FullName.Replace('\', '/')
+                if (-not $expected.Remove($normalizedEntryPath)) {
+                    throw "The historical-tree archive for '${Commit}:$normalizedEntryPath' contained an unexpected file entry."
+                }
+                if ($entry.Length -gt $MaxArchiveEntryBytes) {
+                    throw "Historical tree '${Commit}:$normalizedEntryPath' declared size exceeds the per-entry limit of $MaxArchiveEntryBytes bytes."
+                }
+
+                $memory = [IO.MemoryStream]::new()
+                try {
+                    $entryStream = $entry.Open()
+                    try {
+                        $buffer = [byte[]]::new(81920)
+                        $actualLength = [long]0
+                        while (($read = $entryStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                            Add-LimitedBytes ([ref]$actualLength) $read $MaxArchiveEntryBytes "Historical tree '${Commit}:$normalizedEntryPath' actual size"
+                            $projectedHistory = $HistoryScannedBytes + $actualLength
+                            if ($projectedHistory -gt $MaxHistoryScannedBytes) {
+                                throw "history scan byte budget exceeded while reading '${Commit}:$normalizedEntryPath'."
+                            }
+                            $projectedDecompressed = $DecompressedBytes + $actualLength
+                            if ($projectedDecompressed -gt $MaxTotalDecompressedBytes) {
+                                throw "decompressed history byte budget exceeded while reading '${Commit}:$normalizedEntryPath'."
+                            }
+                            $memory.Write($buffer, 0, $read)
+                        }
+                    }
+                    finally {
+                        $entryStream.Dispose()
+                    }
+
+                    if ($actualLength -ne $entry.Length) {
+                        throw "Historical tree '${Commit}:$normalizedEntryPath' declared $($entry.Length) bytes but yielded $actualLength bytes."
+                    }
+                    $HistoryScannedBytes += $actualLength
+                    $DecompressedBytes += $actualLength
+                    $bytes = $memory.ToArray()
+                    if (-not (Test-KnownSafeBinaryPath $normalizedEntryPath)) {
+                        try {
+                            $ignoreReviewPhrases = $false
+                            if ($normalizedEntryPath -ceq 'evidence/repository-state.md') {
+                                $treeEntry = Invoke-GitChecked @('ls-tree', $Commit, '--', (':(literal)' + $normalizedEntryPath)) -RequireOutput
+                                $treeMatch = [regex]::Match($treeEntry.Output, '^[0-7]{6} blob ([0-9a-f]{40})\t')
+                                if (-not $treeMatch.Success) {
+                                    throw "Historical tree '${Commit}:$normalizedEntryPath' did not resolve to one regular Git blob."
+                                }
+                                $ignoreReviewPhrases = $HistoricalReviewBlobExceptions['evidence/repository-state.md'].Contains($treeMatch.Groups[1].Value)
+                            }
+                            if (Test-RestrictedText ([Text.Encoding]::UTF8.GetString($bytes)) -IgnoreReviewPhrases:$ignoreReviewPhrases) {
+                                $Violations.Add("historical tree: ${Commit}:$normalizedEntryPath")
+                            }
+                            foreach ($candidate in @(Get-TextCandidates $bytes)) {
+                                if (Test-RestrictedText $candidate.Text -IgnoreReviewPhrases:$ignoreReviewPhrases) {
+                                    if ($Violations -notcontains "historical tree: ${Commit}:$normalizedEntryPath") {
+                                        $Violations.Add("historical tree: ${Commit}:$normalizedEntryPath")
+                                    }
+                                    break
+                                }
+                            }
+                        }
+                        catch {
+                            throw "Historical tree '${Commit}:$normalizedEntryPath' failed closed. $($_.Exception.Message)"
+                        }
+                    }
+                }
+                finally {
+                    $memory.Dispose()
+                }
+            }
+        }
+        finally {
+            $archive.Dispose()
+        }
+
+        if ($expected.Count -gt 0) {
+            foreach ($missingPath in $expected) {
+                throw "Historical tree '${Commit}:$missingPath' was missing from its archive."
+            }
+        }
+        return [pscustomobject]@{ HistoryScannedBytes = $HistoryScannedBytes; DecompressedBytes = $DecompressedBytes }
+    }
+    finally {
+        if (Test-Path -LiteralPath $archivePath) {
+            Remove-Item -LiteralPath $archivePath -Force
+        }
+    }
+}
+
 try {
     $defaultTrackedFileBytes = 4194304
     $defaultArchiveEntryBytes = 4194304
@@ -420,89 +545,89 @@ try {
     New-Item -ItemType Directory -Force -Path $archiveRoot | Out-Null
     try {
         foreach ($commit in $commits) {
-            $archivePath = Join-Path $archiveRoot ($commit + '.zip')
-            [void](Invoke-GitChecked @('archive', '--format=zip', "--output=$archivePath", [string]$commit))
-            if (-not (Test-Path -LiteralPath $archivePath -PathType Leaf)) {
-                throw "The historical-tree archive for commit $commit was not created."
+            $pathListPath = Join-Path $archiveRoot ($commit + '.paths')
+            [IO.File]::WriteAllBytes($pathListPath, [byte[]]::new(0))
+            [void](Invoke-GitChecked @(
+                    'diff-tree',
+                    '--root',
+                    '--diff-merges=first-parent',
+                    '--no-commit-id',
+                    '--no-renames',
+                    '--diff-filter=AMT',
+                    '--name-only',
+                    '-r',
+                    '-z',
+                    "--output=$pathListPath",
+                    [string]$commit
+                ))
+
+            $pathListFile = Get-Item -Force -LiteralPath $pathListPath
+            $remainingHistoryBytes = $MaxHistoryScannedBytes - $totalHistoryScannedBytes
+            if ($pathListFile.Length -gt $remainingHistoryBytes) {
+                throw 'history scan byte budget exceeded while reading a historical changed-path list.'
             }
 
-            $archive = [IO.Compression.ZipFile]::OpenRead($archivePath)
+            $pathListBytes = [IO.File]::ReadAllBytes($pathListPath)
+            if ($pathListBytes.Length -ne $pathListFile.Length) {
+                throw "The changed-path list for commit $commit changed while it was being read."
+            }
+            Add-LimitedBytes ([ref]$totalHistoryScannedBytes) $pathListBytes.Length $MaxHistoryScannedBytes 'history scan byte budget'
+
+            if ($pathListBytes.Length -eq 0) {
+                continue
+            }
+            if ($pathListBytes[$pathListBytes.Length - 1] -ne 0) {
+                throw "The changed-path list for commit $commit is incomplete or malformed."
+            }
+
             try {
-                foreach ($entry in $archive.Entries) {
-                    if ([string]::IsNullOrEmpty($entry.Name)) {
-                        continue
-                    }
-
-                    if ($entry.Length -gt $MaxArchiveEntryBytes) {
-                        throw "Historical tree '${commit}:$($entry.FullName)' declared size exceeds the per-entry limit of $MaxArchiveEntryBytes bytes."
-                    }
-
-                    $memory = [IO.MemoryStream]::new()
-                    try {
-                        $entryStream = $entry.Open()
-                        try {
-                            $buffer = [byte[]]::new(81920)
-                            $actualLength = [long]0
-                            while (($read = $entryStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
-                                Add-LimitedBytes ([ref]$actualLength) $read $MaxArchiveEntryBytes "Historical tree '${commit}:$($entry.FullName)' actual size"
-                                $projectedHistory = $totalHistoryScannedBytes + $actualLength
-                                if ($projectedHistory -gt $MaxHistoryScannedBytes) {
-                                    throw "history scan byte budget exceeded while reading '${commit}:$($entry.FullName)'."
-                                }
-                                $projectedDecompressed = $totalDecompressedBytes + $actualLength
-                                if ($projectedDecompressed -gt $MaxTotalDecompressedBytes) {
-                                    throw "decompressed history byte budget exceeded while reading '${commit}:$($entry.FullName)'."
-                                }
-                                $memory.Write($buffer, 0, $read)
-                            }
-                        }
-                        finally {
-                            $entryStream.Dispose()
-                        }
-
-                        if ($actualLength -ne $entry.Length) {
-                            throw "Historical tree '${commit}:$($entry.FullName)' declared $($entry.Length) bytes but yielded $actualLength bytes."
-                        }
-                        $totalHistoryScannedBytes += $actualLength
-                        $totalDecompressedBytes += $actualLength
-                        $bytes = $memory.ToArray()
-                        if (-not (Test-KnownSafeBinaryPath $entry.FullName)) {
-                            try {
-                                $ignoreReviewPhrases = $false
-                                $normalizedEntryPath = $entry.FullName.Replace('\', '/')
-                                if ($normalizedEntryPath -ceq 'evidence/repository-state.md') {
-                                    $treeEntry = Invoke-GitChecked @('ls-tree', $commit, '--', $normalizedEntryPath) -RequireOutput
-                                    $treeMatch = [regex]::Match($treeEntry.Output, '^[0-7]{6} blob ([0-9a-f]{40})\t')
-                                    if (-not $treeMatch.Success) {
-                                        throw "Historical tree '${commit}:$normalizedEntryPath' did not resolve to one regular Git blob."
-                                    }
-                                    $ignoreReviewPhrases = $historicalReviewBlobExceptions['evidence/repository-state.md'].Contains($treeMatch.Groups[1].Value)
-                                }
-
-                                if (Test-RestrictedText ([Text.Encoding]::UTF8.GetString($bytes)) -IgnoreReviewPhrases:$ignoreReviewPhrases) {
-                                    $violations.Add("historical tree: ${commit}:$($entry.FullName)")
-                                }
-                                foreach ($candidate in @(Get-TextCandidates $bytes)) {
-                                    if (Test-RestrictedText $candidate.Text -IgnoreReviewPhrases:$ignoreReviewPhrases) {
-                                        if ($violations -notcontains "historical tree: ${commit}:$($entry.FullName)") {
-                                            $violations.Add("historical tree: ${commit}:$($entry.FullName)")
-                                        }
-                                        break
-                                    }
-                                }
-                            }
-                            catch {
-                                throw "Historical tree '${commit}:$($entry.FullName)' failed closed. $($_.Exception.Message)"
-                            }
-                        }
-                    }
-                    finally {
-                        $memory.Dispose()
-                    }
-                }
+                $pathListText = [Text.UTF8Encoding]::new($false, $true).GetString($pathListBytes)
             }
-            finally {
-                $archive.Dispose()
+            catch {
+                throw "The changed-path list for commit $commit is not valid UTF-8."
+            }
+            $changedPaths = $pathListText.Substring(0, $pathListText.Length - 1).Split([char]0)
+            $seenChangedPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+            $archiveBatchIndex = 0
+            # Keep archive batches small and path arguments below platform command-line limits.
+            $maxArchivePathspecCount = 16
+            $maxArchivePathspecChars = 8000
+            $archivePaths = [Collections.Generic.List[string]]::new()
+            $archivePathspecs = [Collections.Generic.List[string]]::new()
+            $archivePathspecChars = 0
+            foreach ($changedPath in $changedPaths) {
+                if ([string]::IsNullOrEmpty($changedPath)) {
+                    throw "The changed-path list for commit $commit contains an empty path."
+                }
+                $normalizedEntryPath = $changedPath.Replace('\', '/')
+                if (-not $seenChangedPaths.Add($normalizedEntryPath)) {
+                    throw "The changed-path list for commit $commit contains duplicate path '$normalizedEntryPath'."
+                }
+                $pathspec = ':(literal)' + $changedPath
+                $pathspecChars = $pathspec.Length + 4
+                if ($pathspecChars -gt $maxArchivePathspecChars) {
+                    throw "The changed path '$($commit):$normalizedEntryPath' exceeds the safe Git archive argument size."
+                }
+                if ($archivePaths.Count -gt 0 -and
+                    ($archivePaths.Count -ge $maxArchivePathspecCount -or
+                     $archivePathspecChars + $pathspecChars -gt $maxArchivePathspecChars)) {
+                    $archiveBatchIndex++
+                    $archiveResult = Invoke-HistoricalArchiveBatch -Commit ([string]$commit) -ArchiveRoot $archiveRoot -BatchIndex $archiveBatchIndex -ExpectedPaths $archivePaths.ToArray() -Pathspecs $archivePathspecs.ToArray() -HistoryScannedBytes $totalHistoryScannedBytes -DecompressedBytes $totalDecompressedBytes -MaxArchiveEntryBytes $MaxArchiveEntryBytes -MaxHistoryScannedBytes $MaxHistoryScannedBytes -MaxTotalDecompressedBytes $MaxTotalDecompressedBytes -Violations $violations -HistoricalReviewBlobExceptions $historicalReviewBlobExceptions
+                    $totalHistoryScannedBytes = $archiveResult.HistoryScannedBytes
+                    $totalDecompressedBytes = $archiveResult.DecompressedBytes
+                    $archivePaths.Clear()
+                    $archivePathspecs.Clear()
+                    $archivePathspecChars = 0
+                }
+                $archivePaths.Add($normalizedEntryPath)
+                $archivePathspecs.Add($pathspec)
+                $archivePathspecChars += $pathspecChars
+            }
+            if ($archivePaths.Count -gt 0) {
+                $archiveBatchIndex++
+                $archiveResult = Invoke-HistoricalArchiveBatch -Commit ([string]$commit) -ArchiveRoot $archiveRoot -BatchIndex $archiveBatchIndex -ExpectedPaths $archivePaths.ToArray() -Pathspecs $archivePathspecs.ToArray() -HistoryScannedBytes $totalHistoryScannedBytes -DecompressedBytes $totalDecompressedBytes -MaxArchiveEntryBytes $MaxArchiveEntryBytes -MaxHistoryScannedBytes $MaxHistoryScannedBytes -MaxTotalDecompressedBytes $MaxTotalDecompressedBytes -Violations $violations -HistoricalReviewBlobExceptions $historicalReviewBlobExceptions
+                $totalHistoryScannedBytes = $archiveResult.HistoryScannedBytes
+                $totalDecompressedBytes = $archiveResult.DecompressedBytes
             }
         }
     }

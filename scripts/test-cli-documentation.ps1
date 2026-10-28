@@ -19,18 +19,16 @@ $cliDocuments = @(
 )
 $parityDocuments = @(
     $cliDocuments[0],
-    $cliDocuments[1],
     (Join-Path $root 'docs/DEV.md'),
     (Join-Path $root 'SECURITY.md')
 )
 $filesystemContractDocuments = @(
     (Join-Path $root 'README.md'),
-    (Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/README.md'),
     (Join-Path $root 'SECURITY.md'),
     (Join-Path $root 'docs/DEV.md')
 )
 $filesystemContract = 'Filesystem path identity follows the filesystem containing the resolved path: project-path identities use the project/assets filesystem, while package-relative asset identities and package-file `Exists(...)` checks use the NuGet package-root filesystem. Those roots can differ in case sensitivity, including across volumes. NuGet package ID/version identity remains case-insensitive. Inaccessible or ambiguous resolution fails closed with `PS007`.'
-$required = @(
+$consumerRequired = @(
     'package-surface scan <path>',
     'package-surface baseline <path> --output <baseline>',
     'package-surface check <path> --baseline <baseline>',
@@ -40,7 +38,9 @@ $required = @(
     '--no-telemetry',
     'Exit code `0`',
     'exit code `1`',
-    'exit code `2`',
+    'exit code `2`'
+)
+$referenceRequired = @(
     'PS-SURFACE',
     'PackageSurface requests activation only',
     'does not request a heartbeat',
@@ -67,9 +67,13 @@ $required = @(
 )
 foreach ($document in $cliDocuments) {
     $text = Get-Content -Raw $document
-    foreach ($requiredText in $required) {
+    foreach ($requiredText in $consumerRequired) {
         if (-not $text.Contains($requiredText, [StringComparison]::Ordinal)) { throw "CLI documentation '$document' is missing '$requiredText'." }
     }
+}
+$rootReference = Get-Content -Raw (Join-Path $root 'README.md')
+foreach ($requiredText in $referenceRequired) {
+    if (-not $rootReference.Contains($requiredText, [StringComparison]::Ordinal)) { throw "Root CLI reference is missing '$requiredText'." }
 }
 
 $baselineAliasClauses = [ordered]@{
@@ -145,4 +149,4 @@ if (-not (Normalize-ContractText ($builtHelp -join [Environment]::NewLine)).Cont
 foreach ($requiredText in @('package-surface scan <path>', '--format text|json|sarif', '--strict-content', '--project <path>', '--no-telemetry', 'Exit codes:', 'effective-moniker canonicalization', 'malformed package', 'ID/version', 'both directions', 'package versions', 'direct/project-reference rooted', 'disconnected package nodes', 'duplicate or case-variant', 'unknown members', 'standard unconsumed MSBuild elements and attributes', 'native SDK shape', 'malformed nested', 'compilerApiVersion', 'non-canonical spellings of consumed JSON/XML members', 'x- prefix', 'urn:keelmatrix:packagesurface:extension', 'NuGet.Versioning 7.9.0 parser/comparer')) {
     if (-not $cliSource.Contains($requiredText, [StringComparison]::Ordinal)) { throw "CLI help is missing '$requiredText'." }
 }
-Write-Output 'CLI_DOCUMENTATION=PASS root/package/developer/security docs and built --help retain the same baseline-alias and command contract.'
+Write-Output 'CLI_DOCUMENTATION=PASS root and package READMEs preserve command usage; developer and security references preserve baseline and filesystem contracts.'

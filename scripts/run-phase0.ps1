@@ -60,7 +60,10 @@ $packageProjects = @(
 foreach ($project in $packageProjects) {
     $path = Join-Path $root "fixtures/packages/$project"
     Invoke-Recorded "dotnet restore $path --configfile $root/NuGet.config --force-evaluate" { dotnet restore $path --configfile (Join-Path $root 'NuGet.config') --force-evaluate }
-    Invoke-Recorded "dotnet pack $path --configuration Release --output $feed --no-restore" { dotnet pack $path --configuration Release --output $feed --no-restore }
+    # The fixture gate consumes .nupkg contents only; empty symbol packages can fail with NU5017.
+    $packArguments = @('--configuration', 'Release', '--output', $feed, '--no-restore', '-p:IncludeSymbols=false')
+    $packCommand = "dotnet pack $path $($packArguments -join ' ')"
+    Invoke-Recorded $packCommand { dotnet pack $path @packArguments }
 }
 
 $transitive = Join-Path $root 'fixtures/packages/TransitiveBundle/TransitiveBundle.csproj'
@@ -129,7 +132,6 @@ Write-Output 'PROJECT_REFERENCE_ANALYZER=PASS exported analyzer is active throug
 
 $proofScript = Join-Path $root 'scripts/verify-no-execution.ps1'
 Invoke-Recorded "pwsh -NoProfile -File $proofScript" { Invoke-NestedPwsh -NoProfile -File $proofScript }
-
 $expected = @(Get-Content (Join-Path $root 'fixtures/expected.json') -Raw | ConvertFrom-Json)
 $classified = @{}
 foreach ($consumer in $consumers) {

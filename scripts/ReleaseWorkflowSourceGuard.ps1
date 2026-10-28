@@ -1797,6 +1797,28 @@ function Test-WorkflowRunContainsUnsupportedEvaluator {
     )
 
     $runText = ConvertTo-WorkflowLogicalRunText -Text $Text -Shell $Shell
+    if ($Shell -match '^(?i:pwsh|powershell)$') {
+        $tokens = $null
+        $parseErrors = $null
+        $scriptAst = [System.Management.Automation.Language.Parser]::ParseInput($runText, [ref]$tokens, [ref]$parseErrors)
+        # A call-operator scriptblock can hide code from the static command-token analysis below.
+        $scriptBlockCalls = @($scriptAst.FindAll({
+            param($node)
+            if ($node -isnot [System.Management.Automation.Language.CommandAst] -or
+                $node.InvocationOperator -ne [System.Management.Automation.Language.TokenKind]::Ampersand -or
+                $node.CommandElements.Count -eq 0) {
+                return $false
+            }
+
+            $commandTarget = $node.CommandElements[0]
+            if ($commandTarget -is [System.Management.Automation.Language.ScriptBlockExpressionAst]) { return $true }
+            return @($commandTarget.FindAll({
+                param($candidate)
+                $candidate -is [System.Management.Automation.Language.ScriptBlockExpressionAst]
+            }, $true)).Count -gt 0
+        }, $true))
+        if ($scriptBlockCalls.Count -gt 0) { return $true }
+    }
     if ($ArtifactOutputPaths.Count -gt 0 -and $runText -match '(?im)(?:^|[;&|({\r\n]\s*)@?\s*(?:cd|chdir|pushd|popd|sl|Set-Location|Push-Location|Pop-Location)\b') { return $true }
     if ($ArtifactOutputPaths.Count -gt 0 -and $runText -match '(?i)(?:\[(?:System\.)?Environment\]::CurrentDirectory\s*=|\[(?:System\.)?(?:IO\.)?Directory\]::SetCurrentDirectory\s*\()') { return $true }
     if ($ArtifactOutputPaths.Count -gt 0 -and (Test-WorkflowCmdShell -Shell $Shell) -and $runText -match '(?im)(?:^|[;&|({\r\n]\s*)@?\s*(?:call|start|for|if)\b') { return $true }

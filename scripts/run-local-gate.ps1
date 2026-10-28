@@ -15,7 +15,9 @@ if (-not $PSBoundParameters.ContainsKey('ExpectedVersion')) {
     $ExpectedVersion = $versionMatch.Groups['version'].Value.Trim()
 }
 if ([string]::IsNullOrWhiteSpace($ExpectedVersion)) { throw 'Expected package version must not be empty.' }
-Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/validate-release.ps1') -Version $ExpectedVersion
+$releaseValidationArguments = @('-Version', $ExpectedVersion)
+if (-not $PSBoundParameters.ContainsKey('ExpectedVersion')) { $releaseValidationArguments += '-RequireUnreleased' }
+Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/validate-release.ps1') @releaseValidationArguments
 $releaseContractExitCode = $LASTEXITCODE
 if ($releaseContractExitCode -ne 0) { throw "Release version validation failed with exit code $releaseContractExitCode." }
 $launchGuard = Join-Path $root 'build/Test-NestedPwshLaunch.ps1'
@@ -170,7 +172,6 @@ try {
     Invoke-GateStep 'package build' {
         & dotnet pack $cliProject --configuration Release --no-restore --output $feed
     }
-
     $allArtifacts = @(Get-ChildItem -LiteralPath $feed -File)
     $expectedArtifactNames = @("KeelMatrix.PackageSurface.$packageVersion.nupkg", "KeelMatrix.PackageSurface.$packageVersion.snupkg")
     $actualArtifactNames = @($allArtifacts | Select-Object -ExpandProperty Name | Sort-Object)

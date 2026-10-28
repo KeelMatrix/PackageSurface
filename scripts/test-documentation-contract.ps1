@@ -1,0 +1,78 @@
+param(
+    [string] $RepositoryRoot
+)
+
+$ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($RepositoryRoot)) {
+    $RepositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+}
+else {
+    $RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot).Path
+}
+
+$rootReadme = Get-Content -Raw (Join-Path $RepositoryRoot 'README.md')
+$packedReadme = Get-Content -Raw (Join-Path $RepositoryRoot 'src/KeelMatrix.PackageSurface.Cli/README.md')
+$platformContract = 'PackageSurface supports Windows, Linux, and macOS for SDK-style PackageReference restore outputs; hosted CI validates the command contract on all three platforms.'
+if (-not $rootReadme.Contains($platformContract, [StringComparison]::Ordinal) -or
+    -not $packedReadme.Contains($platformContract, [StringComparison]::Ordinal)) {
+    throw 'Root and packed README files do not state the same evidenced platform contract.'
+}
+
+$securityPath = Join-Path $RepositoryRoot 'SECURITY.md'
+$security = Get-Content -Raw $securityPath
+if ($security.Contains("conduct-reporting route", [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'SECURITY.md names a conduct-reporting route that is not defined by this repository.'
+}
+$issueRoute = 'https://github.com/KeelMatrix/PackageSurface/issues'
+$uri = $null
+if (-not $security.Contains($issueRoute, [StringComparison]::Ordinal) -or -not [Uri]::TryCreate($issueRoute, [UriKind]::Absolute, [ref]$uri)) {
+    throw 'SECURITY.md does not define a resolvable ordinary-bug reporting route.'
+}
+
+$documents = @(
+    (Join-Path $RepositoryRoot 'README.md'),
+    (Join-Path $RepositoryRoot 'SECURITY.md'),
+    (Join-Path $RepositoryRoot 'PRIVACY.md'),
+    (Join-Path $RepositoryRoot 'CONTRIBUTING.md'),
+    (Join-Path $RepositoryRoot 'docs/DEV.md'),
+    (Join-Path $RepositoryRoot 'src/KeelMatrix.PackageSurface.Cli/README.md')
+)
+foreach ($document in $documents) {
+    $text = Get-Content -Raw $document
+    foreach ($match in [regex]::Matches($text, '\[[^\]]+\]\((?<target>[^)]+)\)')) {
+        $target = $match.Groups['target'].Value.Trim()
+        if ($target.StartsWith('#', [StringComparison]::Ordinal) -or $target -match '^[A-Za-z][A-Za-z0-9+.-]*://') { continue }
+        $target = $target.Split('#', 2)[0]
+        if ([string]::IsNullOrWhiteSpace($target)) { continue }
+        $resolved = [IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetDirectoryName($document)) $target.Replace('/', [IO.Path]::DirectorySeparatorChar)))
+        if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) {
+            throw "Documentation link '$target' in '$document' does not resolve to a file."
+        }
+    }
+}
+
+$evidenceDocuments = @(
+    (Join-Path $RepositoryRoot 'evidence/restore-evidence.md'),
+    (Join-Path $RepositoryRoot 'evidence/repository-state.md')
+)
+function Convert-CodePoints([int[]] $CodePoints) {
+    -join ($CodePoints | ForEach-Object { [char]$_ })
+}
+$forbiddenEvidencePhrases = @(
+    (Convert-CodePoints @(99,97,110,100,105,100,97,116,101,32,104,97,110,100,111,102,102)),
+    (Convert-CodePoints @(112,114,101,45,104,97,110,100,111,102,102)),
+    (Convert-CodePoints @(97,99,99,101,112,116,97,110,99,101,32,97,99,99,111,117,110,116,105,110,103)),
+    (Convert-CodePoints @(114,101,97,100,45,111,110,108,121,32,102,105,114,115,116,45,114,101,108,101,97,115,101,32,99,114,105,116,101,114,105,97)),
+    (Convert-CodePoints @(114,101,118,105,101,119,101,100,32,83,72,65)),
+    (Convert-CodePoints @(104,97,110,100,111,102,102,32,114,101,112,111,114,116))
+)
+foreach ($document in $evidenceDocuments) {
+    $text = Get-Content -Raw $document
+    foreach ($phrase in $forbiddenEvidencePhrases) {
+        if ($text.IndexOf($phrase, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            throw "Evidence document '$document' contains prohibited process wording '$phrase'."
+        }
+    }
+}
+
+Write-Output 'DOCUMENTATION_CONTRACT=PASS platform wording, reporting routes, and repository links are resolvable.'

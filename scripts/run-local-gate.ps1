@@ -1,0 +1,548 @@
+param(
+    [string] $ArtifactDirectory,
+    [ValidateNotNullOrEmpty()]
+    [string] $ExpectedVersion
+)
+
+$ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot '../build/Invoke-NestedPwsh.ps1')
+$root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$cliProject = Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/KeelMatrix.PackageSurface.Cli.csproj'
+if (-not $PSBoundParameters.ContainsKey('ExpectedVersion')) {
+    $projectText = Get-Content -LiteralPath $cliProject -Raw
+    $versionMatch = [regex]::Match($projectText, '<Version>\s*(?<version>[^<]+?)\s*</Version>', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if (-not $versionMatch.Success) { throw 'The packable CLI project has no explicit package version.' }
+    $ExpectedVersion = $versionMatch.Groups['version'].Value.Trim()
+}
+if ([string]::IsNullOrWhiteSpace($ExpectedVersion)) { throw 'Expected package version must not be empty.' }
+Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/validate-release.ps1') -Version $ExpectedVersion
+$releaseContractExitCode = $LASTEXITCODE
+if ($releaseContractExitCode -ne 0) { throw "Release version validation failed with exit code $releaseContractExitCode." }
+$launchGuard = Join-Path $root 'build/Test-NestedPwshLaunch.ps1'
+& $launchGuard -SelfTest
+if ($LASTEXITCODE -ne 0) { throw 'Nested PowerShell launch guard self-test failed.' }
+& $launchGuard
+if ($LASTEXITCODE -ne 0) { throw 'Nested PowerShell launch guard failed.' }
+Set-Location -LiteralPath $root
+$timer = [Diagnostics.Stopwatch]::StartNew()
+$previousCi = $env:CI
+$previousTelemetry = $env:KEELMATRIX_TELEMETRY
+$previousNugetPackages = $env:NUGET_PACKAGES
+$artifactRoot = if ([string]::IsNullOrWhiteSpace($ArtifactDirectory)) { Join-Path $root 'artifacts/gate' } else { [IO.Path]::GetFullPath($ArtifactDirectory) }
+New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
+$scratch = Join-Path ([IO.Path]::GetTempPath()) ('packagesurface-gate-' + [Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Force -Path $scratch | Out-Null
+$solution = Join-Path $root 'KeelMatrix.PackageSurface.sln'
+$cliProject = Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/KeelMatrix.PackageSurface.Cli.csproj'
+$shippingPackages = Join-Path $scratch 'shipping-packages'
+$nugetConfig = Join-Path $root 'NuGet.config'
+
+function Invoke-GateStep {
+    param(
+        [Parameter(Mandatory)] [string] $Name,
+        [Parameter(Mandatory)] [scriptblock] $Action,
+        [int] $ExpectedExitCode = 0
+    )
+
+    $stepTimer = [Diagnostics.Stopwatch]::StartNew()
+    $output = @(& $Action 2>&1)
+    $exitCode = $LASTEXITCODE
+    $stepTimer.Stop()
+    Write-Output "STEP: $Name"
+    Write-Output "COMMAND_EXIT_CODE: $exitCode"
+    Write-Output "DURATION_MS: $($stepTimer.ElapsedMilliseconds)"
+    if ($output.Count -gt 0) { $output | ForEach-Object { Write-Output ([string]$_) } }
+    if ($exitCode -ne $ExpectedExitCode) {
+        throw "Gate step '$Name' failed with exit code $exitCode; expected $ExpectedExitCode."
+    }
+}
+
+function Ensure-DotnetRootForInstalledTool {
+    if ($IsWindows -or -not [string]::IsNullOrWhiteSpace($env:DOTNET_ROOT)) {
+        return
+    }
+
+    $dotnetCommand = Get-Command dotnet -CommandType Application -ErrorAction Stop | Select-Object -First 1
+    $dotnetPath = $dotnetCommand.Source
+    try {
+        $dotnetPath = (Resolve-Path -LiteralPath $dotnetPath -ErrorAction Stop).Path
+    }
+    catch {
+        # The command path is still useful when the host exposes no resolvable symlink target.
+    }
+
+    $candidate = Split-Path -Parent $dotnetPath
+    while (-not [string]::IsNullOrWhiteSpace($candidate)) {
+        if (Test-Path -LiteralPath (Join-Path $candidate 'host/fxr') -PathType Container) {
+            $env:DOTNET_ROOT = $candidate
+            Write-Output "DOTNET_ROOT_FOR_TOOL: $candidate"
+            return
+        }
+
+        $parent = Split-Path -Parent $candidate
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $candidate) {
+            break
+        }
+        $candidate = $parent
+    }
+
+    throw "Unable to derive DOTNET_ROOT for the installed Linux tool from '$dotnetPath'. Set DOTNET_ROOT to the directory containing host/fxr and rerun the gate."
+}
+
+try {
+    $projectVersionOutput = @(& dotnet msbuild $cliProject -getProperty:Version)
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to read the shipping package version from the packable project.' }
+    $projectVersion = ($projectVersionOutput -join '').Trim()
+    $suppliedPackageVersion = if ($PSBoundParameters.ContainsKey('ExpectedVersion')) { [string]$ExpectedVersion } else { $projectVersion }
+    if ([string]::IsNullOrWhiteSpace($suppliedPackageVersion)) { throw 'The expected shipping package version is empty.' }
+    $packageVersion = $suppliedPackageVersion.Trim()
+    if ($packageVersion -cne $suppliedPackageVersion) { throw 'The expected shipping package version cannot include surrounding whitespace.' }
+    if ($packageVersion -notmatch '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$') { throw 'The expected shipping package version is empty or invalid.' }
+    if ($packageVersion -cne $projectVersion) { throw 'The expected shipping package version does not match the packable project.' }
+
+    $env:CI = 'true'
+    $env:KEELMATRIX_TELEMETRY = 'off'
+    $env:NUGET_PACKAGES = $shippingPackages
+    Invoke-GateStep 'shipping restore' {
+        & dotnet restore $solution --configfile $nugetConfig --packages $shippingPackages --no-cache --force
+    }
+    $phase0Evidence = Join-Path $root 'evidence/phase0.md'
+    $phase0EvidenceCopy = Join-Path $scratch 'phase0.md'
+    $hadPhase0Evidence = Test-Path -LiteralPath $phase0Evidence -PathType Leaf
+    if ($hadPhase0Evidence) {
+        Copy-Item -LiteralPath $phase0Evidence -Destination $phase0EvidenceCopy -Force
+    }
+    try {
+        Invoke-GateStep 'controlled restore and permanent fixture suite' {
+            Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/run-phase0.ps1')
+        }
+    }
+    finally {
+        if ($hadPhase0Evidence) {
+            Copy-Item -LiteralPath $phase0EvidenceCopy -Destination $phase0Evidence -Force
+        }
+        elseif (Test-Path -LiteralPath $phase0Evidence) {
+            Remove-Item -LiteralPath $phase0Evidence -Force
+        }
+        $env:NUGET_PACKAGES = $shippingPackages
+    }
+    Invoke-GateStep 'format verification' {
+        & dotnet format $solution --verify-no-changes --no-restore
+    }
+    Invoke-GateStep 'restore identity canonicalization' {
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-restore-identity-canonicalization.ps1') -RepositoryRoot $root
+    }
+    Invoke-GateStep 'packability graph audit' {
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-packability.ps1')
+    }
+    Invoke-GateStep 'Release build' {
+        & dotnet build $solution --configuration Release --no-restore
+    }
+    Invoke-GateStep 'CLI documentation contract' {
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-cli-documentation.ps1') -BuiltHelpPath (Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/bin/Release/net8.0/KeelMatrix.PackageSurface.dll')
+    }
+    Invoke-GateStep 'CLI documentation negative controls' {
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-cli-documentation-regressions.ps1') -RepositoryRoot $root
+    }
+    Invoke-GateStep 'documentation route and support contract' {
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-documentation-contract.ps1') -RepositoryRoot $root
+    }
+    Invoke-GateStep 'no-code-execution proof' {
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/verify-no-execution.ps1')
+    }
+    $cliTests = Join-Path $root 'tests/KeelMatrix.PackageSurface.Cli.Tests/KeelMatrix.PackageSurface.Cli.Tests.csproj'
+    Invoke-GateStep 'CLI contract and resource tests' {
+        & dotnet run --project $cliTests --configuration Release --no-build
+    }
+    Invoke-GateStep 'release contract regressions' {
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-release-contract.ps1')
+    }
+    Invoke-GateStep 'vulnerability audit regressions' {
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-vulnerability-audit.ps1')
+    }
+
+    $singleProject = Join-Path $root 'fixtures/consumer/SingleTarget'
+    $singleAssets = Join-Path $singleProject 'obj/project.assets.json'
+    $feed = $artifactRoot
+    Get-ChildItem -LiteralPath $feed -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Extension -in '.nupkg', '.snupkg' } |
+        Remove-Item -Force
+    Invoke-GateStep 'package build' {
+        & dotnet pack $cliProject --configuration Release --no-restore --output $feed
+    }
+
+    $allArtifacts = @(Get-ChildItem -LiteralPath $feed -File)
+    $expectedArtifactNames = @("KeelMatrix.PackageSurface.$packageVersion.nupkg", "KeelMatrix.PackageSurface.$packageVersion.snupkg")
+    $actualArtifactNames = @($allArtifacts | Select-Object -ExpandProperty Name | Sort-Object)
+    if (@(Compare-Object -CaseSensitive ($expectedArtifactNames | Sort-Object) $actualArtifactNames).Count -ne 0) { throw ('The package output set is not exact: ' + ($actualArtifactNames -join ', ')) }
+    $nupkgs = @($allArtifacts | Where-Object Name -eq "KeelMatrix.PackageSurface.$packageVersion.nupkg")
+    $snupkgs = @($allArtifacts | Where-Object Name -eq "KeelMatrix.PackageSurface.$packageVersion.snupkg")
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    function Read-ZipEntryBytes([IO.Compression.ZipArchive] $Archive, [string] $Name) {
+        $entry = $Archive.GetEntry($Name)
+        if ($null -eq $entry) { throw "Required package entry '$Name' is missing." }
+        $memory = [IO.MemoryStream]::new()
+        try {
+            $stream = $entry.Open()
+            try { $stream.CopyTo($memory) } finally { $stream.Dispose() }
+            return $memory.ToArray()
+        }
+        finally { $memory.Dispose() }
+    }
+
+    $package = [IO.Compression.ZipFile]::OpenRead($nupkgs[0].FullName)
+    try {
+        $names = @($package.Entries | ForEach-Object FullName | Sort-Object)
+        Write-Output 'PACKAGE_FILE_SET:'
+        $names | ForEach-Object { Write-Output $_ }
+        $nuspecEntry = $package.GetEntry('KeelMatrix.PackageSurface.nuspec')
+        if ($null -eq $nuspecEntry) { throw 'The package has no nuspec.' }
+        $reader = [IO.StreamReader]::new($nuspecEntry.Open())
+        try { [xml] $nuspec = $reader.ReadToEnd() } finally { $reader.Dispose() }
+        if ($nuspec.package.metadata.id -ne 'KeelMatrix.PackageSurface' -or $nuspec.package.metadata.version -ne $packageVersion -or $nuspec.package.metadata.packageTypes.packageType.name -ne 'DotnetTool') { throw 'Package identity, version, or type is incorrect.' }
+        if ($nuspec.package.metadata.readme -ne 'README.md' -or $nuspec.package.metadata.license.type -ne 'expression' -or $nuspec.package.metadata.license.'#text' -ne 'MIT') { throw 'README or license metadata is incorrect.' }
+        if ($nuspec.package.metadata.icon -ne 'icon.png') { throw 'Package icon metadata must point to icon.png.' }
+        if ($nuspec.package.metadata.repository.url -ne 'https://github.com/KeelMatrix/PackageSurface') { throw 'Repository metadata is incorrect.' }
+        $unwanted = @($names | Where-Object { $_ -match '(^|/)(fixtures|tests|research|\.env|obj|bin|\.phase0|nonshipping|appsettings\.local|secrets)' })
+        if ($unwanted.Count -gt 0) { throw ('Unwanted package files: ' + ($unwanted -join ', ')) }
+        $requiredToolFiles = @(
+            'tools/net8.0/any/DotnetToolSettings.xml',
+            'tools/net8.0/any/KeelMatrix.PackageSurface.Core.dll',
+            'tools/net8.0/any/KeelMatrix.PackageSurface.Core.pdb',
+            'tools/net8.0/any/KeelMatrix.PackageSurface.deps.json',
+            'tools/net8.0/any/KeelMatrix.PackageSurface.dll',
+            'tools/net8.0/any/KeelMatrix.PackageSurface.runtimeconfig.json',
+            'tools/net8.0/any/KeelMatrix.Telemetry.dll',
+            'tools/net8.0/any/NuGet.Versioning.dll'
+        )
+        if (@(Compare-Object ($requiredToolFiles | Sort-Object) @($names | Where-Object { $_ -like 'tools/net8.0/any/*' } | Sort-Object)).Count -ne 0) { throw 'The package runtime payload is not exact.' }
+        $unexpected = @($names | Where-Object { $_ -notin @('[Content_Types].xml', 'KeelMatrix.PackageSurface.nuspec', 'README.md', 'LICENSE/LICENSE', 'icon.png', '_rels/.rels') -and $_ -notlike 'package/services/metadata/core-properties/*.psmdcp' -and $_ -notin $requiredToolFiles })
+        if ($unexpected.Count -gt 0) { throw ('Unexpected package files: ' + ($unexpected -join ', ')) }
+        if (@($names | Where-Object { $_ -like 'package/services/metadata/core-properties/*.psmdcp' }).Count -ne 1) { throw 'The package metadata payload is not exact.' }
+        if ([Convert]::ToBase64String((Read-ZipEntryBytes $package 'README.md')) -ne [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/README.md')))) { throw 'Packed README does not match its configured source.' }
+        $sourceIconHash = (Get-FileHash -LiteralPath (Join-Path $root 'icon.png') -Algorithm SHA256).Hash
+        $packedIconHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData((Read-ZipEntryBytes $package 'icon.png')))
+        if ($sourceIconHash -ne $packedIconHash) { throw 'Packed icon does not match the repository icon.' }
+    }
+    finally { $package.Dispose() }
+
+    $snupkg = [IO.Compression.ZipFile]::OpenRead($snupkgs[0].FullName)
+    try {
+        $symbolNames = @($snupkg.Entries | ForEach-Object FullName | Sort-Object)
+        $expectedSymbolFixed = @('[Content_Types].xml', '_rels/.rels', 'KeelMatrix.PackageSurface.nuspec')
+        $expectedSymbolPdb = @('tools/net8.0/any/KeelMatrix.PackageSurface.Core.pdb')
+        $expectedSymbolNames = $expectedSymbolFixed + $expectedSymbolPdb + @($symbolNames | Where-Object { $_ -like 'package/services/metadata/core-properties/*.psmdcp' })
+        if (@(Compare-Object ($expectedSymbolNames | Sort-Object) $symbolNames).Count -ne 0 -or @($symbolNames | Where-Object { $_ -like 'package/services/metadata/core-properties/*.psmdcp' }).Count -ne 1) { throw ('The symbols package file set is not exact: ' + ($symbolNames -join ', ')) }
+        Write-Output 'SYMBOLS_FILE_SET:'
+        $symbolNames | ForEach-Object { Write-Output $_ }
+    }
+    finally { $snupkg.Dispose() }
+
+    Invoke-GateStep 'final package metadata and symbol contract' {
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/validate-package-artifact.ps1') -PackagePath $nupkgs[0].FullName -SymbolsPath $snupkgs[0].FullName -ExpectedVersion $packageVersion
+    }
+
+    Invoke-GateStep 'package-content negative regressions' {
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-package-content-gate.ps1') -PackagePath $nupkgs[0].FullName -ArtifactDirectory $feed -ExpectedVersion $packageVersion
+    }
+
+    Invoke-GateStep 'sensitive/local pack-input regressions' {
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-sensitive-pack-inputs.ps1') -ProjectFile $cliProject
+    }
+
+    $expectedAuditProjects = @(
+        (Join-Path $root 'src/KeelMatrix.PackageSurface.Probe/KeelMatrix.PackageSurface.Probe.csproj'),
+        (Join-Path $root 'src/KeelMatrix.PackageSurface.Core/KeelMatrix.PackageSurface.Core.csproj'),
+        (Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/KeelMatrix.PackageSurface.Cli.csproj'),
+        (Join-Path $root 'tests/KeelMatrix.PackageSurface.Probe.Tests/KeelMatrix.PackageSurface.Probe.Tests.csproj'),
+        (Join-Path $root 'tests/KeelMatrix.PackageSurface.Cli.Tests/KeelMatrix.PackageSurface.Cli.Tests.csproj'),
+        (Join-Path $root 'tools/NoExecutionProof/NoExecutionProof.csproj')
+    )
+    $coverageFile = Join-Path $scratch 'package-graph-report.json'
+    $auditFile = Join-Path $scratch 'vulnerability-report.json'
+    Invoke-GateStep 'dependency graph coverage audit' {
+        $coverage = @(& dotnet list $solution package --include-transitive --configfile $nugetConfig --format json 2>&1)
+        $coverageExitCode = $LASTEXITCODE
+        if ($coverageExitCode -ne 0) { $coverage | ForEach-Object { Write-Output ([string]$_) }; throw "Dependency graph coverage failed with exit code $coverageExitCode." }
+        [IO.File]::WriteAllText($coverageFile, ($coverage -join [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+    }
+    Invoke-GateStep 'dependency vulnerability audit' {
+        $audit = @(& dotnet list $solution package --vulnerable --include-transitive --configfile $nugetConfig --format json 2>&1)
+        $auditExitCode = $LASTEXITCODE
+        if ($auditExitCode -ne 0) { $audit | ForEach-Object { Write-Output ([string]$_) }; throw "Vulnerability audit failed with exit code $auditExitCode." }
+        [IO.File]::WriteAllText($auditFile, ($audit -join [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+    }
+    Invoke-GateStep 'vulnerability finding policy' {
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/assert-no-vulnerabilities.ps1') -InputPath $auditFile -CoveragePath $coverageFile -ExpectedProjectPath ($expectedAuditProjects -join '|') -ExpectedFramework net8.0
+    }
+
+    $toolConfig = Join-Path $scratch 'tool.config'
+    $toolRoot = Join-Path $scratch 'tool'
+    $toolXml = "<configuration><packageSources><clear /><add key='local' value='$feed' /><add key='nuget.org' value='https://api.nuget.org/v3/index.json' /></packageSources><packageSourceMapping><packageSource key='local'><package pattern='KeelMatrix.PackageSurface' /></packageSource><packageSource key='nuget.org'><package pattern='KeelMatrix.Telemetry' /></packageSource></packageSourceMapping></configuration>"
+    [IO.File]::WriteAllText($toolConfig, $toolXml, [Text.UTF8Encoding]::new($false))
+    New-Item -ItemType Directory -Force -Path $toolRoot | Out-Null
+    Invoke-GateStep 'isolated tool install' {
+        & dotnet tool install --tool-path $toolRoot --configfile $toolConfig --no-cache KeelMatrix.PackageSurface --version $packageVersion
+    }
+    $toolName = if ($IsWindows) { 'package-surface.exe' } else { 'package-surface' }
+    $tool = Join-Path $toolRoot $toolName
+    if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) { throw 'The isolated tool command was not installed.' }
+    Ensure-DotnetRootForInstalledTool
+    Invoke-GateStep 'installed hardening regressions' {
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-installed-hardening.ps1') -ToolPath $tool
+    }
+    Invoke-GateStep 'framework moniker regressions' {
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-framework-moniker-regressions.ps1') -ToolPath $tool
+    }
+    Invoke-GateStep 'installed tool version' { & $tool --version }
+    Invoke-GateStep 'installed tool scan' { & $tool scan $singleProject --format json --no-telemetry }
+    $zeroDependencyRoot = Join-Path $scratch 'zero-dependency-consumer'
+    $zeroDependencyProject = Join-Path $zeroDependencyRoot 'ZeroDependency.csproj'
+    New-Item -ItemType Directory -Force -Path $zeroDependencyRoot | Out-Null
+    [IO.File]::WriteAllText($zeroDependencyProject, '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>', [Text.UTF8Encoding]::new($false))
+    Invoke-GateStep 'installed zero-dependency restore' {
+        & dotnet restore $zeroDependencyProject --configfile $nugetConfig --packages $shippingPackages --force --nologo
+    }
+    $zeroDependencyAssets = Join-Path $zeroDependencyRoot 'obj/project.assets.json'
+    $zeroDependencyAssetsDocument = Get-Content -LiteralPath $zeroDependencyAssets -Raw | ConvertFrom-Json
+    if ($zeroDependencyAssetsDocument.version -notin @(3, 4)) { throw "The pinned SDK produced an unsupported restore assets format: $($zeroDependencyAssetsDocument.version)." }
+    Write-Output "ZERO_DEPENDENCY_ASSETS_FORMAT=$($zeroDependencyAssetsDocument.version)"
+    Invoke-GateStep 'installed zero-dependency scan' { & $tool scan $zeroDependencyRoot --format json --no-telemetry }
+    $zeroDependencyBaseline = Join-Path $scratch 'zero-dependency-baseline.json'
+    Invoke-GateStep 'installed zero-dependency baseline' { & $tool baseline $zeroDependencyRoot --output $zeroDependencyBaseline --format json --no-telemetry }
+    $zeroDependencyBaselineDocument = Get-Content -LiteralPath $zeroDependencyBaseline -Raw | ConvertFrom-Json
+    if (@($zeroDependencyBaselineDocument.entries).Count -ne 0 -or @($zeroDependencyBaselineDocument.incompleteReasons).Count -ne 0) { throw 'The zero-dependency baseline was not a complete empty capability surface.' }
+    Invoke-GateStep 'installed zero-dependency passing check' { & $tool check $zeroDependencyRoot --baseline $zeroDependencyBaseline --format json --no-telemetry }
+    Invoke-GateStep 'package XML primitive inspection' {
+        $inspectionOutput = @(& $tool scan $singleProject --format json --no-telemetry)
+        if ($LASTEXITCODE -ne 0) { throw 'Installed package XML inspection scan failed.' }
+        $inspection = ($inspectionOutput -join [Environment]::NewLine) | ConvertFrom-Json
+        $observed = @($inspection.entries | ForEach-Object { $_.observedPrimitives } | Where-Object { $_ } | Sort-Object -Unique)
+        $expected = @('Exec', 'Import', 'InlineTaskFactory', 'UsingTask')
+        if (@(Compare-Object ($expected | Sort-Object) $observed).Count -ne 0) { throw ('Package XML primitive observations were not exact: ' + ($observed -join ', ')) }
+    }
+
+    $baselineA = Join-Path $scratch 'baseline-a.json'
+    $baselineB = Join-Path $scratch 'baseline-b.json'
+    Invoke-GateStep 'installed tool baseline' { & $tool baseline $singleProject --output $baselineA --strict-content --format json --no-telemetry }
+    Invoke-GateStep 'deterministic baseline repeat' { & $tool baseline $singleProject --output $baselineB --strict-content --format json --no-telemetry }
+    if ((Get-FileHash -LiteralPath $baselineA -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $baselineB -Algorithm SHA256).Hash) { throw 'Repeated baseline creation was not byte-identical.' }
+    if ([IO.File]::ReadAllText($baselineA, [Text.UTF8Encoding]::new($false)).Contains("`r`n", [StringComparison]::Ordinal)) { throw 'Baseline output used a non-canonical CRLF newline.' }
+    Invoke-GateStep 'installed tool passing check' { & $tool check $singleProject --baseline $baselineA --strict-content --format json --no-telemetry }
+    $nonStrictBaseline = Join-Path $scratch 'baseline-nonstrict.json'
+    Invoke-GateStep 'installed tool non-strict baseline' { & $tool baseline $singleProject --output $nonStrictBaseline --format json --no-telemetry }
+    Invoke-GateStep 'strict flag against non-strict baseline' { & $tool check $singleProject --baseline $nonStrictBaseline --strict-content --format text --no-telemetry } 2
+
+    $baselineCases = @{
+        'malformed baseline' = '{not-json'
+        'null-entry baseline' = "{`"schemaVersion`":1,`"toolVersion`":`"$packageVersion`",`"strictContent`":false,`"entries`": [null],`"incompleteReasons`":[]}"
+        'invalid-hash baseline' = "{`"schemaVersion`":1,`"toolVersion`":`"$packageVersion`",`"strictContent`":true,`"entries`": [{`"project`":`"SingleTarget.csproj`",`"context`":`"Target`",`"targetFramework`":`"net8.0`",`"runtimeIdentifier`":null,`"packageId`":`"Example`",`"version`":`"1.0.0`",`"relationship`":`"direct`",`"capability`":`"BuildProps`",`"packageRelativePath`":`"build/example.props`",`"present`":true,`"active`":true,`"sha256`":`"bad`",`"incomplete`":false,`"incompleteReason`":null}],`"incompleteReasons`":[]}"
+        'incomplete baseline' = "{`"schemaVersion`":1,`"toolVersion`":`"$packageVersion`",`"strictContent`":false,`"entries`":[],`"incompleteReasons`": [`"restore evidence missing`"]}"
+    }
+    foreach ($case in $baselineCases.GetEnumerator()) {
+        $casePath = Join-Path $scratch (($case.Key -replace '[^A-Za-z0-9]+', '-') + '.json')
+        [IO.File]::WriteAllText($casePath, $case.Value, [Text.UTF8Encoding]::new($false))
+        Invoke-GateStep $case.Key { & $tool check $singleProject --baseline $casePath --format text --no-telemetry } 2
+    }
+    $generatedProps = @(Get-ChildItem -LiteralPath (Join-Path $singleProject 'obj') -Filter '*.nuget.g.props' -File | Select-Object -First 1)
+    if ($generatedProps.Count -ne 1) { throw 'The restored consumer did not produce a generated NuGet props file for the missing-import regression.' }
+    $generatedPropsBackup = Join-Path $scratch 'generated-props.backup'
+    Copy-Item -LiteralPath $generatedProps[0].FullName -Destination $generatedPropsBackup -Force
+    try {
+        Remove-Item -LiteralPath $generatedProps[0].FullName -Force
+        Invoke-GateStep 'deleted required generated imports' { & $tool check $singleProject --baseline $baselineA --format text --no-telemetry } 2
+    }
+    finally { Copy-Item -LiteralPath $generatedPropsBackup -Destination $generatedProps[0].FullName -Force }
+    $wrongGeneratedProps = Join-Path (Split-Path -Parent $generatedProps[0].FullName) 'Other.csproj.nuget.g.props'
+    if (Test-Path -LiteralPath $wrongGeneratedProps) { throw 'The wrong-name generated NuGet props test target already exists.' }
+    try {
+        Move-Item -LiteralPath $generatedProps[0].FullName -Destination $wrongGeneratedProps
+        [IO.File]::WriteAllText($wrongGeneratedProps, '<Project />', [Text.UTF8Encoding]::new($false))
+        Invoke-GateStep 'wrong generated import filename' { & $tool check $singleProject --baseline $baselineA --format text --no-telemetry } 2
+    }
+    finally {
+        if (Test-Path -LiteralPath $wrongGeneratedProps) { Remove-Item -LiteralPath $wrongGeneratedProps -Force }
+        Copy-Item -LiteralPath $generatedPropsBackup -Destination $generatedProps[0].FullName -Force
+    }
+    $oversizedBaseline = Join-Path $scratch 'oversized-baseline.json'
+    [IO.File]::WriteAllText($oversizedBaseline, ('x' * (16 * 1024 * 1024 + 1)), [Text.UTF8Encoding]::new($false))
+    Invoke-GateStep 'oversized baseline' { & $tool check $singleProject --baseline $oversizedBaseline --format text --no-telemetry } 2
+
+    $assetsDocument = Get-Content -LiteralPath $singleAssets -Raw | ConvertFrom-Json
+    $packageFolder = @($assetsDocument.packageFolders.psobject.Properties.Name | Select-Object -First 1)
+    $buildPropsLibrary = $assetsDocument.libraries.psobject.Properties['KeelMatrix.Phase0.BuildProps/1.0.0']
+    if ($null -eq $buildPropsLibrary) { throw 'The strict-content regression package is missing from the restored graph.' }
+    $inactiveAsset = Join-Path (Join-Path $packageFolder $buildPropsLibrary.Value.path) 'build/net9.0/KeelMatrix.Phase0.BuildProps.props'
+    if (-not (Test-Path -LiteralPath $inactiveAsset -PathType Leaf)) { throw "The strict-content regression asset is missing: $inactiveAsset" }
+    $inactiveAssetBackup = Join-Path $scratch 'inactive-build-props.backup'
+    Copy-Item -LiteralPath $inactiveAsset -Destination $inactiveAssetBackup -Force
+    try {
+        [IO.File]::AppendAllText($inactiveAsset, '<!-- strict-inactive-repro -->' + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+        Invoke-GateStep 'strict inactive content remains informational' { & $tool check $singleProject --baseline $baselineA --format text --no-telemetry }
+    }
+    finally { Copy-Item -LiteralPath $inactiveAssetBackup -Destination $inactiveAsset -Force }
+
+    $toolLibrary = $assetsDocument.libraries.psobject.Properties['KeelMatrix.Phase0.ToolScript/1.0.0']
+    $toolAsset = Join-Path (Join-Path $packageFolder $toolLibrary.Value.path) 'tools/phase0-tool.ps1'
+    $toolBackup = Join-Path $scratch 'phase0-tool.ps1.backup'
+    Copy-Item -LiteralPath $toolAsset -Destination $toolBackup -Force
+    try {
+        [IO.File]::WriteAllBytes($toolAsset, [byte[]]::new(16 * 1024 * 1024 + 1))
+        Invoke-GateStep 'strict retry ordinary scan remains complete' { & $tool scan $singleProject --format json --no-telemetry }
+        Invoke-GateStep 'strict retry informational tool content remains complete' { & $tool check $singleProject --baseline $baselineA --format text --no-telemetry }
+    }
+    finally { Copy-Item -LiteralPath $toolBackup -Destination $toolAsset -Force }
+
+    $changedBaseline = Join-Path $scratch 'baseline-changed.json'
+    $changed = Get-Content -LiteralPath $baselineA -Raw | ConvertFrom-Json
+    $firstActive = @($changed.entries | Where-Object active | Select-Object -First 1)
+    if ($firstActive.Count -ne 1) { throw 'The fixture baseline did not contain an active entry for the deliberate-difference check.' }
+    $changed.entries = @($changed.entries | Where-Object { $_.packageRelativePath -ne $firstActive[0].packageRelativePath -or $_.packageId -ne $firstActive[0].packageId })
+    [IO.File]::WriteAllText($changedBaseline, ($changed | ConvertTo-Json -Depth 20) + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+    Invoke-GateStep 'deliberate capability difference' { & $tool check $singleProject --baseline $changedBaseline --strict-content --format text --no-telemetry } 1
+
+    $dependencyProject = Join-Path $root 'fixtures/consumer/RidTarget'
+    $dependencyProjectFile = Join-Path $dependencyProject 'RidTarget.csproj'
+    $dependencyBaseline = Join-Path $scratch 'dependency-baseline.json'
+    Invoke-GateStep 'installed dependency original baseline' { & $tool baseline $dependencyProject --output $dependencyBaseline --strict-content --format json --no-telemetry }
+    $projectBackup = Join-Path $scratch 'RidTarget.csproj.backup'
+    Copy-Item -LiteralPath $dependencyProjectFile -Destination $projectBackup -Force
+    try {
+        $projectText = Get-Content -LiteralPath $dependencyProjectFile -Raw
+        $dependencyLine = '    <PackageReference Include="KeelMatrix.Phase0.BuildBoth" />' + [Environment]::NewLine + '  </ItemGroup>'
+        $projectText = $projectText -replace '  </ItemGroup>', $dependencyLine
+        [IO.File]::WriteAllText($dependencyProjectFile, $projectText, [Text.UTF8Encoding]::new($false))
+        Invoke-GateStep 'installed consumer dependency restore' { & dotnet restore $dependencyProjectFile --configfile $nugetConfig --packages $shippingPackages --force-evaluate }
+        Invoke-GateStep 'installed dependency capability difference' { & $tool check $dependencyProject --baseline $dependencyBaseline --format text --no-telemetry } 1
+    }
+    finally {
+        Copy-Item -LiteralPath $projectBackup -Destination $dependencyProjectFile -Force
+        & dotnet restore $dependencyProjectFile --configfile $nugetConfig --packages $shippingPackages --force-evaluate | Out-Null
+    }
+
+    $projectReferenceProject = Join-Path $root 'fixtures/consumer/ProjectReferenceAnalyzer'
+    $projectReferenceFile = Join-Path $projectReferenceProject 'ProjectReferenceAnalyzer.csproj'
+    $projectReferenceBaseline = Join-Path $scratch 'project-reference-baseline.json'
+    Invoke-GateStep 'installed project-reference analyzer baseline' { & $tool baseline $projectReferenceProject --output $projectReferenceBaseline --strict-content --format json --no-telemetry }
+    $projectReferenceBaselineDocument = Get-Content -LiteralPath $projectReferenceBaseline -Raw | ConvertFrom-Json
+    if (@($projectReferenceBaselineDocument.entries | Where-Object { $_.capability -eq 'CompilerExtension' -and $_.active }).Count -eq 0) {
+        throw 'Installed tool did not activate the analyzer exported only through a project reference.'
+    }
+    $projectReferenceNoAnalyzerBaseline = Join-Path $scratch 'project-reference-no-analyzer-baseline.json'
+    $projectReferenceAddBackup = Join-Path $scratch 'ProjectReferenceAnalyzer.add.backup'
+    Copy-Item -LiteralPath $projectReferenceFile -Destination $projectReferenceAddBackup -Force
+    try {
+        $projectReferenceWithoutAnalyzer = Get-Content -LiteralPath $projectReferenceFile -Raw
+        $projectReferenceWithoutAnalyzer = $projectReferenceWithoutAnalyzer.Replace('    <ProjectReference Include="..\ReferencedAnalyzer\ReferencedAnalyzer.csproj" />', '', [StringComparison]::Ordinal)
+        [IO.File]::WriteAllText($projectReferenceFile, $projectReferenceWithoutAnalyzer, [Text.UTF8Encoding]::new($false))
+        Invoke-GateStep 'installed project-reference removal restore' { & dotnet restore $projectReferenceFile --configfile $nugetConfig --packages $shippingPackages --force-evaluate }
+        Invoke-GateStep 'installed project-reference no-analyzer baseline' { & $tool baseline $projectReferenceProject --output $projectReferenceNoAnalyzerBaseline --strict-content --format json --no-telemetry }
+    }
+    finally {
+        Copy-Item -LiteralPath $projectReferenceAddBackup -Destination $projectReferenceFile -Force
+        & dotnet restore $projectReferenceFile --configfile $nugetConfig --packages $shippingPackages --force-evaluate | Out-Null
+    }
+    $projectReferenceAdditionOutput = @(& $tool check $projectReferenceProject --baseline $projectReferenceNoAnalyzerBaseline --strict-content --format json --no-telemetry 2>&1)
+    $projectReferenceAdditionExitCode = $LASTEXITCODE
+    if ($projectReferenceAdditionExitCode -ne 1 -or -not (($projectReferenceAdditionOutput -join [Environment]::NewLine).Contains('PS002', [StringComparison]::Ordinal))) {
+        throw 'Installed tool did not report an analyzer difference when the project reference was added.'
+    }
+    Write-Output 'PROJECT_REFERENCE_ANALYZER_ADD=PASS installed tool detects the analyzer exported when the project reference is added.'
+    $projectReferenceAssets = Join-Path $projectReferenceProject 'obj/project.assets.json'
+    $projectReferenceAssetsDocument = Get-Content -LiteralPath $projectReferenceAssets -Raw | ConvertFrom-Json
+    $projectReferenceFolder = @($projectReferenceAssetsDocument.packageFolders.psobject.Properties.Name | Select-Object -First 1)
+    $projectReferenceLibrary = $projectReferenceAssetsDocument.libraries.psobject.Properties['keelmatrix.phase0.compilerextension/1.0.0']
+    if ($null -eq $projectReferenceLibrary) { throw 'Project-reference analyzer package is missing from the restored graph.' }
+    $projectReferenceAnalyzer = Join-Path (Join-Path $projectReferenceFolder $projectReferenceLibrary.Value.path) 'analyzers/dotnet/cs/KeelMatrix.Phase0.SourceGeneratorStyle.dll'
+    $projectReferenceAnalyzerBackup = Join-Path $scratch 'project-reference-analyzer.backup'
+    Copy-Item -LiteralPath $projectReferenceAnalyzer -Destination $projectReferenceAnalyzerBackup -Force
+    try {
+        [IO.File]::AppendAllText($projectReferenceAnalyzer, "`nproject-reference-content-change", [Text.UTF8Encoding]::new($false))
+        $projectReferenceChangeOutput = @(& $tool check $projectReferenceProject --baseline $projectReferenceBaseline --strict-content --format json --no-telemetry 2>&1)
+        $projectReferenceChangeExitCode = $LASTEXITCODE
+        if ($projectReferenceChangeExitCode -ne 1 -or -not (($projectReferenceChangeOutput -join [Environment]::NewLine).Contains('PS005', [StringComparison]::Ordinal))) {
+            throw 'Installed tool did not report PS005 for changed project-reference analyzer content.'
+        }
+        Write-Output 'PROJECT_REFERENCE_ANALYZER_STRICT=PASS active analyzer addition and content change are enforced by the installed tool.'
+    }
+    finally { Copy-Item -LiteralPath $projectReferenceAnalyzerBackup -Destination $projectReferenceAnalyzer -Force }
+
+    $projectReferenceFileBackup = Join-Path $scratch 'ProjectReferenceAnalyzer.csproj.backup'
+    Copy-Item -LiteralPath $projectReferenceFile -Destination $projectReferenceFileBackup -Force
+    try {
+        $projectReferenceText = Get-Content -LiteralPath $projectReferenceFile -Raw
+        $projectReferenceText = $projectReferenceText.Replace('<ProjectReference Include="..\ReferencedAnalyzer\ReferencedAnalyzer.csproj" />', '<ProjectReference Include="..\ReferencedAnalyzer\ReferencedAnalyzer.csproj" ExcludeAssets="analyzers" />', [StringComparison]::Ordinal)
+        [IO.File]::WriteAllText($projectReferenceFile, $projectReferenceText, [Text.UTF8Encoding]::new($false))
+        Invoke-GateStep 'installed project-reference analyzer exclusion restore' { & dotnet restore $projectReferenceFile --configfile $nugetConfig --packages $shippingPackages --force-evaluate }
+        $projectReferenceExcludeOutput = @(& $tool scan $projectReferenceProject --format json --no-telemetry 2>&1)
+        $projectReferenceExcludeExitCode = $LASTEXITCODE
+        $projectReferenceExcludeDocument = ($projectReferenceExcludeOutput -join [Environment]::NewLine) | ConvertFrom-Json
+        if ($projectReferenceExcludeExitCode -ne 0 -or @($projectReferenceExcludeDocument.entries | Where-Object { $_.capability -eq 'CompilerExtension' -and $_.active }).Count -ne 0) {
+            throw 'Installed tool did not honor ExcludeAssets=analyzers on a project reference.'
+        }
+        Write-Output 'PROJECT_REFERENCE_ANALYZER_EXCLUDE=PASS project-reference analyzer exclusion is enforced by the installed tool.'
+    }
+    finally {
+        Copy-Item -LiteralPath $projectReferenceFileBackup -Destination $projectReferenceFile -Force
+        & dotnet restore $projectReferenceFile --configfile $nugetConfig --packages $shippingPackages --force-evaluate | Out-Null
+    }
+
+    $incompleteRoot = Join-Path $scratch 'incomplete'
+    New-Item -ItemType Directory -Force -Path $incompleteRoot | Out-Null
+    Invoke-GateStep 'incomplete restore fail-closed' { & $tool check $incompleteRoot --baseline $baselineA --format text --no-telemetry } 2
+
+    $env:HTTP_PROXY = 'http://127.0.0.1:1'
+    $env:HTTPS_PROXY = 'http://127.0.0.1:1'
+    Invoke-GateStep 'no-network scan with disabled telemetry' { & $tool scan $singleProject --format json --no-telemetry }
+    Remove-Item Env:HTTP_PROXY -ErrorAction SilentlyContinue
+    Remove-Item Env:HTTPS_PROXY -ErrorAction SilentlyContinue
+
+    $commandLineSource = Get-Content -LiteralPath (Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/CommandLine.cs') -Raw
+    $telemetryCalls = [regex]::Matches($commandLineSource, '\.Track(?:Activation|Heartbeat)\s*\((?<arguments>[^)]*)\)')
+    if ($telemetryCalls.Count -ne 1 -or $telemetryCalls[0].Groups['arguments'].Value.Trim().Length -ne 0) {
+        throw 'Telemetry call path must contain exactly one argument-free activation call.'
+    }
+    $privacyText = Get-Content -LiteralPath (Join-Path $root 'PRIVACY.md') -Raw
+    foreach ($requiredText in @(
+        'https://github.com/KeelMatrix/Telemetry/blob/main/PRIVACY.md',
+        'analyzed dependency package IDs or versions',
+        'content hashes',
+        'PackageSurface calls the shared client with only its stable product name and the CLI type.',
+        'The shared client owns the payload fields and anonymous identifiers',
+        'PackageSurface requests activation only')) {
+        if (-not $privacyText.Contains($requiredText, [StringComparison]::Ordinal)) {
+            throw "Product privacy contract is missing '$requiredText'."
+        }
+    }
+    Write-Output 'TELEMETRY_PRIVACY=PASS PackageSurface requests activation only and passes no analyzed data to the shared client; local gate uses --no-telemetry.'
+
+    Invoke-GateStep 'working tree cleanliness' {
+        $status = @(git status --porcelain --untracked-files=all)
+        if ($LASTEXITCODE -ne 0) {
+            throw "Unable to verify working tree cleanliness (git exit code $LASTEXITCODE)."
+        }
+        if ($status.Count -ne 0) {
+            throw "Working tree is not clean after the gate:`n$($status -join "`n")"
+        }
+        Write-Output 'WORKTREE_STATUS=CLEAN'
+    }
+
+    $timer.Stop()
+    Write-Output "LOCAL_GATE=PASS"
+    Write-Output "LOCAL_GATE_DURATION_MS=$($timer.ElapsedMilliseconds)"
+    exit 0
+}
+catch {
+    $timer.Stop()
+    Write-Error $_
+    Write-Output 'LOCAL_GATE=FAIL'
+    Write-Output "LOCAL_GATE_DURATION_MS=$($timer.ElapsedMilliseconds)"
+    exit 1
+}
+finally {
+    if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue }
+    if ($null -eq $previousCi) { Remove-Item Env:CI -ErrorAction SilentlyContinue } else { $env:CI = $previousCi }
+    if ($null -eq $previousTelemetry) { Remove-Item Env:KEELMATRIX_TELEMETRY -ErrorAction SilentlyContinue } else { $env:KEELMATRIX_TELEMETRY = $previousTelemetry }
+    if ($null -eq $previousNugetPackages) { Remove-Item Env:NUGET_PACKAGES -ErrorAction SilentlyContinue } else { $env:NUGET_PACKAGES = $previousNugetPackages }
+}

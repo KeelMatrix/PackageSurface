@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
+    <IsPackable>true</IsPackable>
     <AssemblyName>KeelMatrix.Phase0.SourceGeneratorStyle</AssemblyName>
     <PackageId>KeelMatrix.Phase0.CompilerExtension</PackageId>
     <PackageVersion>1.0.0</PackageVersion>
@@ -10,6 +11,7 @@
   </PropertyGroup>
   <ItemGroup>
     <None Include="$(TargetPath)" Pack="true" PackagePath="analyzers/dotnet/cs/KeelMatrix.Phase0.SourceGeneratorStyle.dll" Visible="false" />
+    <None Include="$(TargetPath)" Pack="true" PackagePath="analyzers/dotnet/vb/KeelMatrix.Phase0.VisualBasicOnly.dll" Visible="false" />
     <None Include="$(TargetPath)" Pack="true" PackagePath="analyzers/net9.0/KeelMatrix.Phase0.SourceGeneratorStyle.dll" Visible="false" />
   </ItemGroup>
 </Project>

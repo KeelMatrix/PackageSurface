@@ -1,13 +1,23 @@
 <Project>
+  <Import Project="$(MSBuildThisFileDirectory)SensitiveInputPatterns.props" />
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <Deterministic>true</Deterministic>
-    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+    <PathMap>$(MSBuildThisFileDirectory)=/_/</PathMap>
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
     <TreatWarningsAsErrors Condition="'$(Configuration)' == 'Release'">true</TreatWarningsAsErrors>
     <LangVersion>latestMajor</LangVersion>
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
+  <Target Name="ValidateSensitivePackInputs" AfterTargets="_GetPackageFiles" Condition="'$(IsPackable)' == 'true'">
+    <ItemGroup>
+      <_SensitivePackFile Include="@(_PackageFiles)"
+        Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('%(_PackageFiles.Identity)', '$(SensitivePackInputRegex)')) And !$([System.Text.RegularExpressions.Regex]::IsMatch('%(_PackageFiles.Identity)', '$(SensitivePackInputExceptionRegex)'))" />
+    </ItemGroup>
+    <Error Condition="'@(_SensitivePackFile)' != ''" Text="Sensitive or machine-local file '%(_SensitivePackFile.Identity)' cannot be included in the package." />
+  </Target>
 </Project>

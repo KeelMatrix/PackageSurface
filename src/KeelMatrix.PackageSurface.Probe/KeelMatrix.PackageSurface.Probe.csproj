@@ -3,6 +3,12 @@
     <OutputType>Exe</OutputType>
     <AssemblyName>KeelMatrix.PackageSurface.Probe</AssemblyName>
     <RootNamespace>KeelMatrix.PackageSurface.Probe</RootNamespace>
+    <IsPackable>false</IsPackable>
     <NoWarn>$(NoWarn);CA1849</NoWarn>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="*.cs" />
+    <Compile Include="Program.cs" />
+    <ProjectReference Include="..\KeelMatrix.PackageSurface.Core\KeelMatrix.PackageSurface.Core.csproj" />
+  </ItemGroup>
 </Project>

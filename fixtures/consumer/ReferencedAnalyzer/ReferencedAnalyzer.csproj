@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>Phase0.ReferencedAnalyzer</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="KeelMatrix.Phase0.CompilerExtension" PrivateAssets="none" />
+  </ItemGroup>
+</Project>

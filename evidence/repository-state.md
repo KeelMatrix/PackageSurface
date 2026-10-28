@@ -1,27 +1,46 @@
-# Repository state evidence
+# Repository state verification
 
-## Canonical repository and remote
+This document defines the repository-state checks used to verify a checkout. A validation record should include the exact
+commit, remote ref, command output, and residual platform evidence for that checkout; this file is not a substitute for
+that checkout-specific record.
+
+## Canonical repository and hosted validation
+
+The canonical repository is the public `KeelMatrix/PackageSurface` GitHub repository. Hosted validation is defined by:
+
+- `.github/workflows/ci.yml`: push to `main`, pull requests, and manual exact-SHA dispatch on `windows-latest`,
+  `ubuntu-latest`, and `macos-latest`.
+- `.github/workflows/release.yml`: tag-only `v*.*.*` validation, publication, and GitHub Release chain; the validate job checks the built artifact set before upload, and downstream consumers check downloaded artifacts inline without invoking tracked repository scripts.
+- `scripts/validate-release.ps1`: the shared version and changelog contract used by candidate checks and the release
+  workflow.
+
+Both workflows disable telemetry and use least-privilege job permissions. The local gate is the authoritative repository
+validation entrypoint; hosted CI supplies independent platform evidence for the exact pushed commit.
+
+## Required checks
 
 ```text
 COMMAND: git remote -v
-EXIT_CODE: 0
-OUTPUT:
-origin  https://github.com/KeelMatrix/PackageSurface.git (fetch)
-origin  https://github.com/KeelMatrix/PackageSurface.git (push)
+EXPECTED: the canonical PackageSurface remote is the only configured remote.
 
 COMMAND: git status --short --branch
-EXIT_CODE: 0
-OUTPUT:
-## main...origin/main
+EXPECTED: the working checkout is clean and equal to the remote branch.
 
-COMMAND: git ls-tree -r --name-only HEAD | Select-String "^\.github/"
-EXIT_CODE: 1
-OUTPUT:
-NO WORKFLOW FILES
+COMMAND: git ls-tree -r --name-only HEAD | Select-String "^\.github/workflows/"
+EXPECTED:
+    .github/workflows/ci.yml
+    .github/workflows/release.yml
+
+COMMAND: git tag | Measure-Object | Select-Object -ExpandProperty Count
+EXPECTED: 0 before an approved release tag exists.
+
+COMMAND: pwsh -NoLogo -NoProfile -File scripts/test-release-contract.ps1
+EXPECTED: PASS for the workflow shape, script-free downstream artifact consumers, portable-root checkout regressions for future script consumers, and shared fail-closed release-contract cases.
 ```
 
-## Repository checks
+The exact command output for the checkout, including `git rev-parse HEAD`, `git rev-parse origin/main`, and
+`git ls-remote origin refs/heads/main`, belongs in its validation record.
 
-The canonical checkout is clean, all commits use the `KeelMatrix <keelmatrix@gmail.com>` identity, and tracked material is checked for restricted coordination markers in both the working tree and complete history.
+
 
 Pinned SDK: `8.0.425`, recorded in `global.json`.

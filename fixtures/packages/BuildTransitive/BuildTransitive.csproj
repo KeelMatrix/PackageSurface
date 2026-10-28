@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
+    <IsPackable>true</IsPackable>
     <PackageId>KeelMatrix.Phase0.BuildTransitive</PackageId>
     <PackageVersion>1.0.0</PackageVersion>
     <PackageDescription>Phase 0 transitive build fixture.</PackageDescription>
@@ -11,6 +12,8 @@
   <ItemGroup>
     <None Include="content/buildTransitive/KeelMatrix.Phase0.BuildTransitive.targets" Pack="true" PackagePath="buildTransitive/KeelMatrix.Phase0.BuildTransitive.targets" />
     <None Include="content/buildTransitive/net9.0/KeelMatrix.Phase0.BuildTransitive.targets" Pack="true" PackagePath="buildTransitive/net9.0/KeelMatrix.Phase0.BuildTransitive.targets" />
+    <None Include="content/buildTransitive/KeelMatrix.Phase0.BuildTransitive.props" Pack="true" PackagePath="buildTransitive/KeelMatrix.Phase0.BuildTransitive.props" />
+    <None Include="content/buildTransitive/net9.0/KeelMatrix.Phase0.BuildTransitive.props" Pack="true" PackagePath="buildTransitive/net9.0/KeelMatrix.Phase0.BuildTransitive.props" />
     <None Include="content/lib/net9.0/_._" Pack="true" PackagePath="lib/net9.0/_._" />
   </ItemGroup>
 </Project>

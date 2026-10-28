@@ -3,12 +3,14 @@
     <TargetFrameworks>net8.0;net8.0-windows</TargetFrameworks>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <AssemblyName>Phase0.MultiTarget</AssemblyName>
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="KeelMatrix.Phase0.BuildMultiTargeting" Version="1.0.0" />
-    <PackageReference Include="KeelMatrix.Phase0.ContentInjection" Version="1.0.0" />
-    <PackageReference Include="KeelMatrix.Phase0.CompilerExtension" Version="1.0.0" />
-    <PackageReference Include="KeelMatrix.Phase0.OrdinaryLibrary" Version="1.0.0" />
-    <PackageReference Include="KeelMatrix.Phase0.TransitiveRoot" Version="1.0.0" />
+    <PackageReference Include="KeelMatrix.Phase0.BuildMultiTargeting" />
+    <PackageReference Include="KeelMatrix.Phase0.ContentInjection" />
+    <PackageReference Include="KeelMatrix.Phase0.CompilerExtension" />
+    <PackageReference Update="KeelMatrix.Phase0.CompilerExtension" ExcludeAssets="analyzers" Condition="'$(TargetFramework)' == 'net8.0-windows'" />
+    <PackageReference Include="KeelMatrix.Phase0.OrdinaryLibrary" />
+    <PackageReference Include="KeelMatrix.Phase0.TransitiveRoot" />
   </ItemGroup>
 </Project>

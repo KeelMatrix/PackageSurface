@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <IsPackable>true</IsPackable>
+    <PackageId>KeelMatrix.Phase0.ContentInjectionLanguages</PackageId>
+    <PackageVersion>1.0.0</PackageVersion>
+    <PackageDescription>Phase 0 multi-language content-files fixture.</PackageDescription>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Update="content/contentFiles/cs/any/Active.cs" Pack="true" PackagePath="contentFiles/cs/any/Active.cs" />
+    <None Include="content/contentFiles/vb/any/Active.vb" Pack="true" PackagePath="contentFiles/vb/any/Active.vb" BuildAction="Compile" CodeLanguage="vb" />
+    <None Include="content/contentFiles/fs/any/Active.fs" Pack="true" PackagePath="contentFiles/fs/any/Active.fs" BuildAction="Compile" CodeLanguage="fs" />
+    <None Include="content/contentFiles/any/any/Active.cs" Pack="true" PackagePath="contentFiles/any/any/Active.cs" BuildAction="Compile" CodeLanguage="any" />
+  </ItemGroup>
+</Project>

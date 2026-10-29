@@ -506,7 +506,7 @@ public sealed record Options(
     bool TelemetryEnabled)
 {
     public static readonly string HelpText = """
-        PackageSurface tells you when a NuGet dependency starts participating in your build in a new way.
+        PackageSurface shows when a NuGet dependency starts participating in your build in a new way.
 
         Usage:
           package-surface scan <path> [options]
@@ -516,70 +516,27 @@ public sealed record Options(
           package-surface --version
 
         Options:
-          --format text|json|sarif  Report format (default: text).
-                                   SARIF scan/baseline output includes one note per classified surface fact.
-          --strict-content          Record SHA-256 fingerprints for present, active build/compiler execution assets.
-          --compiler-api-version <v>  Declare the consuming compiler API version for versioned analyzer assets.
-          --project <path>          Select one project when a solution contains several projects.
-          --no-telemetry            Suppress the activation request for this invocation.
-
-        Telemetry privacy:
-          PackageSurface requests activation only and passes no analyzed package or build data
-          to the shared client. See the product and shared privacy policies for payload fields,
-          opt-out, storage, delivery, and retention details:
-          https://github.com/KeelMatrix/PackageSurface/blob/main/PRIVACY.md
-          https://github.com/KeelMatrix/Telemetry/blob/main/PRIVACY.md.
+          --format text|json|sarif       Report format (default: text).
+          --output <baseline>            Baseline output path (required by baseline).
+          --baseline <baseline>          Baseline input path (required by check).
+          --strict-content               Fingerprint present, active build/compiler execution assets (default: off).
+          --compiler-api-version <v>     Set the versioned analyzer compatibility context.
+          --project <path>               Select one project when a solution contains several projects.
+          --no-telemetry                 Suppress the optional activation request for this invocation.
 
         Exit codes:
           0  Scan/baseline succeeded, or check passed.
-          1  Check found a reviewed surface or policy difference.
-          2  Invalid invocation, missing restore artifacts, or incomplete analysis.
+          1  Check found a surface or policy difference.
+          2  Invalid invocation, missing/unsupported input, incomplete analysis, or environment error.
 
-        Analysis is offline and non-executing. It consumes restore evidence already on disk,
-        follows only bounded static package-import chains, and reports PS007 when applicability
-        or restore consistency cannot be established. A single direct/project-reference rooted
-        package closure is required for each applicable target graph; disconnected package nodes,
-        dependency islands, and graphs containing more than one distinct version for one package ID
-        fail closed before package inventory inspection. Generated top-level
-        and nested imports must resolve to packages in every applicable target graph. An incomplete invocation
-        emits no surface entries and never replaces a baseline. Framework, target, dependency-
-        group, target/RID, and library identities use one canonical key/effective-framework/
-        target-alias relation with case/effective-moniker canonicalization before reachability
-        and capability filtering; project/restore and dependency-group sets must be complete in
-        both directions, dependency values must use supported restore grammar; package versions must
-        match exactly one selected package version, and incoherent metadata, duplicate aliases, duplicate or case-variant
-        restore JSON properties, unknown members of consumed JSON objects, non-canonical spellings of consumed JSON/XML members, or malformed package ID/version keys are PS007.
-        Package XML validates the consumed Import, UsingTask, Exec, and Code contract and tolerates standard unconsumed MSBuild elements and attributes;
-        exact, case-variant, near-spelled, or duplicate consumed members remain PS007. JSON extensions are tolerated only with the explicit x- prefix;
-        XML extensions require the explicit urn:keelmatrix:packagesurface:extension namespace. One NuGet.Versioning 7.9.0 parser/comparer governs package identities,
-        and every admitted restore metadata member is validated against its native SDK shape before graph closure: strings,
-        booleans, string arrays, string- or object-valued maps, nullable suppressed-advisory values, and download-dependency
-        objects are accepted only in those shapes; wrong primitives, nulls, array elements, map values, and malformed nested
-        metadata are PS007 while absent members remain valid. This contract is exercised against SDK 8.0.425, 9.0.121,
-        and 10.0.401 assets in formats 3 and 4; compilerApiVersion is rejected when it is not a string rather than treated as absent.
-        dependency ranges, package roots, imports, baseline provenance, and format-4 requirements. Target-package asset groups use NuGet's exact canonical
-        property names; unknown or case-variant groups, malformed packageFolders entries, and
-        baseline output aliases are checked before any write. An explicit baseline --output path
-        is preflighted against every reachable package-inventory file resolved from packageFolders,
-        including global and fallback roots, direct and transitive packages, every TFM/RID, nested
-        static imports, and all inventory categories. Baseline inventory coverage includes every
-        TFM/RID and all inventory categories. Lexical . and .. aliases, single and multiple
-        hardlinks, and direct, interior, and ancestor reparse/symlink aliases are rejected with
-        PS007 and controlled exit code 2 before any mutation. A rejection preserves existing output
-        and input bytes; genuinely distinct outputs are accepted. PackageSurface supports Windows, Linux, and macOS
-        for SDK-style PackageReference restore outputs; hosted CI validates the command contract
-        on all three platforms. On macOS, only the standard root-level /var to /private/var
-        alias is ignored; caller-controlled root aliases and links nested below /var remain
-        rejected. Filesystem path identity follows the filesystem containing the resolved path:
-        project-path identities use the project/assets filesystem, while package-relative asset
-        identities and package-file `Exists(...)` checks use the NuGet package-root filesystem.
-        Those roots can differ in case sensitivity, including across volumes. NuGet package ID/version
-        identity remains case-insensitive. Inaccessible or ambiguous resolution fails closed with `PS007`.
-        Baseline JSON uses exact camelCase property names, named string
-        enums, and rejects duplicate or unknown members. It does not execute full MSBuild
-        evaluation, execute package code, or crawl the global package cache. It proves only
-        the bounded condition grammar documented below; unsupported expansions stay unknown
-        and produce PS007.
+        Analysis reads existing restore evidence. It does not restore packages, evaluate MSBuild,
+        or execute package code. PS007 means analysis is incomplete; reports contain no surface
+        entries, and baseline files are not replaced. Supported input and safety details:
+        https://github.com/KeelMatrix/PackageSurface/blob/main/docs/restore-and-baseline-safety.md
+        Product scope and examples:
+        https://github.com/KeelMatrix/PackageSurface/blob/main/README.md
+        Telemetry details:
+        https://github.com/KeelMatrix/PackageSurface/blob/main/PRIVACY.md
         """;
 
     public static ParseResult Parse(string[] args)

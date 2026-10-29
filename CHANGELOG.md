@@ -11,3 +11,7 @@ PackageSurface release history.
 - Analyzes existing restore evidence without restoring packages, querying feeds, loading dependency assemblies, or executing package or MSBuild code. Incomplete evidence fails closed as `PS007`; capability reports are not malware, vulnerability, or safety verdicts.
 - Uses best-effort activation telemetry only after a successful baseline or check of at least one PackageReference graph. `--no-telemetry` suppresses the request, and analyzed package/build data is not sent.
 - Supports modern SDK-style `PackageReference` projects targeting .NET 8 on Windows, Linux, and macOS.
+
+### Fixed
+
+- Ignore MSBuild imports and tasks inside ProjectExtensions; accept consumed XML elements only in supported MSBuild contexts and fail closed on unsupported contexts. Consolidate detailed restore and baseline safety rules in one reference.

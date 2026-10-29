@@ -25,7 +25,7 @@ Review `package-surface.json` before committing it. The `check` command reports 
 
 ## Limitations
 
-PackageSurface supports SDK-style `PackageReference` projects with existing restore output. It does not restore packages, evaluate MSBuild, load dependency assemblies, run package code, or query a feed. A reported capability is not proof of malicious behavior or a vulnerability. PackageSurface supports Windows, Linux, and macOS for SDK-style PackageReference restore outputs; hosted CI validates the command contract on all three platforms.
+PackageSurface supports SDK-style `PackageReference` projects with existing restore output. It does not restore packages, evaluate MSBuild, load dependency assemblies, run package code, or query a feed. A reported capability is not proof of malicious behavior or a vulnerability.
 
 ## Privacy
 
@@ -33,7 +33,8 @@ Analysis is local and does not upload its inputs or results. Optional activation
 
 ## Documentation
 
-- [Full command, baseline, and limitation reference](https://github.com/KeelMatrix/PackageSurface/blob/main/README.md)
+- [Consumer command examples and product scope](https://github.com/KeelMatrix/PackageSurface/blob/main/README.md)
+- [Detailed restore and baseline safety reference](https://github.com/KeelMatrix/PackageSurface/blob/main/docs/restore-and-baseline-safety.md)
 - [Developer validation guide](https://github.com/KeelMatrix/PackageSurface/blob/main/docs/DEV.md)
 - [Product privacy details](https://github.com/KeelMatrix/PackageSurface/blob/main/PRIVACY.md)
 - [Security reporting](https://github.com/KeelMatrix/PackageSurface/blob/main/SECURITY.md)

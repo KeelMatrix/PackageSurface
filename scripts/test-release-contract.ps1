@@ -2826,7 +2826,10 @@ jobs:
         'README.md',
         'CHANGELOG.md',
         'SECURITY.md',
+        'PRIVACY.md',
+        'LICENSE',
         'docs/DEV.md',
+        'docs/restore-and-baseline-safety.md',
         'src/KeelMatrix.PackageSurface.Cli/README.md',
         'src/KeelMatrix.PackageSurface.Cli/CommandLine.cs'
     )) {

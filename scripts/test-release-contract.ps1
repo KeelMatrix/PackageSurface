@@ -2434,10 +2434,7 @@ try {
     $versionMatch = [regex]::Match($projectText, '<Version>\s*(?<version>[^<]+?)\s*</Version>', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
     if (-not $versionMatch.Success) { throw 'The real packable project has no explicit package version.' }
     $version = $versionMatch.Groups['version'].Value.Trim()
-    $realChangelogText = Get-Content -LiteralPath $realChangelog -Raw
-    $releaseHeader = [regex]::Match($realChangelogText, "(?m)^##\s+\[$([regex]::Escape($version))\]\s+-\s+(?<date>\d{4}-\d{2}-\d{2})\s*$")
-    if (-not $releaseHeader.Success) { throw 'The real changelog has no dated entry for the package version.' }
-    $releaseDate = $releaseHeader.Groups['date'].Value
+    $releaseDate = [DateTime]::UtcNow.Date.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
 
     if (-not (Test-Path -LiteralPath $ciWorkflowPath -PathType Leaf)) { throw 'CI workflow is missing.' }
     if (-not (Test-Path -LiteralPath $releaseWorkflowPath -PathType Leaf)) { throw 'Release workflow is missing.' }
@@ -2776,9 +2773,9 @@ jobs:
     $wrongCaseDirectory = New-ArtifactSetDirectory 'artifact-set-wrong-case' @("keelmatrix.packagesurface.$version.nupkg", $artifactNames[1])
     Assert-ValidationRejects 'artifact filename case mismatch' (Invoke-ArtifactSetValidation -Version $version -Directory $wrongCaseDirectory)
 
-    # The finalized repository changelog must pass both candidate and first-release tag validation.
-    Assert-ValidationPass 'real finalized candidate' (Invoke-ReleaseValidation -Version $version -ChangelogPath $realChangelog)
-    Assert-ValidationPass 'real finalized first-release tag gate' (Invoke-ReleaseValidation -Version $version -ChangelogPath $realChangelog -RequireFinalized -FirstRelease)
+    # The repository candidate remains unreleased; finalized tag cases use explicit fixtures below.
+    Assert-ValidationPass 'real unreleased candidate' (Invoke-ReleaseValidation -Version $version -ChangelogPath $realChangelog)
+    Assert-ValidationRejects 'real unreleased candidate cannot pass first-release tag validation' (Invoke-ReleaseValidation -Version $version -ChangelogPath $realChangelog -RequireFinalized -FirstRelease)
     Assert-ValidationRejects 'local gate empty expected version' (Invoke-LocalGateVersionValidation -Version '')
     Assert-ValidationRejects 'local gate whitespace expected version' (Invoke-LocalGateVersionValidation -Version ' ')
     Assert-ValidationRejects 'local gate mismatched expected version' (Invoke-LocalGateVersionValidation -Version '9.9.9')

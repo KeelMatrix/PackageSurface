@@ -4,8 +4,6 @@ PackageSurface release history.
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-10-25
-
 ### Added
 
 - Provides `package-surface scan`, `baseline`, and `check` for already-restored SDK-style `PackageReference` projects, with text, JSON, and SARIF reports, stable `PS001`–`PS007` diagnostics, and exit codes `0`, `1`, and `2` for success, surface differences, and invalid or incomplete analysis.

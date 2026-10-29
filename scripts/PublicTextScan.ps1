@@ -1,7 +1,8 @@
 # Bounded text expansion for static source and package inspection. This does not run or
 # interpret candidate code. It handles Unicode/hex/percent escapes, numeric character
-# lists and casts, standard/URL-safe Base64 text, and quoted string literals joined
-# with +, -join, or string.Concat. Dynamic programs and arbitrary codecs are out of scope.
+# lists and casts, UTF-8/UTF-16LE/UTF-16BE standard or URL-safe Base64 text, and quoted
+# string literals joined with +, -join, or string.Concat. Dynamic programs and arbitrary
+# codecs are out of scope.
 
 function Convert-PublicTextEscapes([string] $Text) {
     $pattern = '\\u(?<unicode>[0-9A-Fa-f]{4})|\\U(?<unicode32>[0-9A-Fa-f]{8})|\\x(?<hex>[0-9A-Fa-f]{2,4})|&#(?<decimal>[0-9]{1,7});|&#x(?<htmlhex>[0-9A-Fa-f]{1,6});|%(?<percent>[0-9A-Fa-f]{2})'
@@ -37,7 +38,7 @@ function Convert-PublicTextNumericLists([string] $Text) {
         return $builder.ToString()
     }
     $result = [regex]::Replace($Text, $pattern, $evaluator)
-    $castPattern = '(?i)(?:(?:\[(?:System\.)?char\]|\((?:System\.)?char\))\s*(?<code>0[xX][0-9A-F]{1,6}|[0-9]{1,7})\s*(?:\+\s*)?){4,}'
+    $castPattern = '(?i)(?:(?:\[(?:System\.)?char\]|\((?:System\.)?char\))\s*(?<code>0[xX][0-9A-F]{1,6}|[0-9]{1,7})\s*(?:[+,]\s*)?){4,}'
     $castEvaluator = [System.Text.RegularExpressions.MatchEvaluator] {
         param([System.Text.RegularExpressions.Match] $match)
         $builder = [Text.StringBuilder]::new()
@@ -60,6 +61,12 @@ function Test-PublicTextIsReadable([string] $Text) {
     return -not [regex]::IsMatch($Text, '[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]')
 }
 
+function Get-PublicTextAsciiScore([string] $Text) {
+    if (-not (Test-PublicTextIsReadable $Text)) { return -1.0 }
+    $printableAsciiCount = [regex]::Matches($Text, '[\x20-\x7E]').Count
+    return [double]$printableAsciiCount / $Text.Length
+}
+
 function Convert-PublicTextBase64([string] $Text) {
     $pattern = '(?<![-A-Za-z0-9+/_])(?<value>[-A-Za-z0-9+/_]{8,}={0,2})(?![-A-Za-z0-9+/_=])'
     $evaluator = [System.Text.RegularExpressions.MatchEvaluator] {
@@ -72,12 +79,24 @@ function Convert-PublicTextBase64([string] $Text) {
         }
         try {
             $bytes = [Convert]::FromBase64String($value)
-            $decoded = [Text.UTF8Encoding]::new($false, $true).GetString($bytes)
-            if (Test-PublicTextIsReadable $decoded) { return $decoded }
-            if (($bytes.Length % 2) -eq 0) {
-                $decoded = [Text.Encoding]::Unicode.GetString($bytes)
-                if (Test-PublicTextIsReadable $decoded) { return $decoded }
+            $encodings = @(
+                [Text.UTF8Encoding]::new($false, $true),
+                [Text.UnicodeEncoding]::new($false, $false, $true),
+                [Text.UnicodeEncoding]::new($true, $false, $true)
+            )
+            # A wrong-endian decode can still be printable Unicode; score every supported decoder.
+            $bestDecoded = $null
+            $bestScore = -1.0
+            foreach ($encoding in $encodings) {
+                try { $decoded = $encoding.GetString($bytes) }
+                catch { continue }
+                $score = Get-PublicTextAsciiScore $decoded
+                if ($score -gt $bestScore) {
+                    $bestDecoded = $decoded
+                    $bestScore = $score
+                }
             }
+            if ($null -ne $bestDecoded) { return $bestDecoded }
         }
         catch { }
         return $match.Value

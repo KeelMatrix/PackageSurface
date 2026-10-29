@@ -74,7 +74,7 @@ try {
     $profileDirectory = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
     $profilePathPattern = '(?!)'
     if (-not [string]::IsNullOrWhiteSpace($profileDirectory)) {
-        $normalizedProfile = $profileDirectory.TrimEnd([char[]]@('\\', '/'))
+        $normalizedProfile = $profileDirectory.TrimEnd([char[]]@('\', '/'))
         if (-not [string]::IsNullOrWhiteSpace($normalizedProfile)) {
             $profilePathPattern = [regex]::Escape($normalizedProfile).Replace('\\', '[\\/]')
         }

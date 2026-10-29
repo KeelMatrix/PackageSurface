@@ -147,6 +147,9 @@ try {
     Invoke-GateStep 'documentation route and support contract' {
         Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-documentation-contract.ps1') -RepositoryRoot $root
     }
+    Invoke-GateStep 'public text representation regressions' {
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-public-text-scan.ps1') -SelfTest -RepositoryRoot $root
+    }
     Invoke-GateStep 'no-code-execution proof' {
         Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/verify-no-execution.ps1')
     }

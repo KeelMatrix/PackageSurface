@@ -71,8 +71,15 @@ try {
     $pdbBytes = Read-ZipBytes $package 'tools/net8.0/any/KeelMatrix.PackageSurface.Core.pdb'
     $pdbText = [Text.Encoding]::UTF8.GetString($pdbBytes)
     if ($pdbText -notmatch 'https://raw\.githubusercontent\.com/KeelMatrix/PackageSurface/') { throw 'Shipping PDB has no SourceLink metadata.' }
-    $privatePathMarker = -join (@(112,97,112,101,114,99,108,105,112) | ForEach-Object { [char]$_ })
-    if ($pdbText -match "(?i)((?<![A-Za-z])[A-Za-z]:[\\/]|/(?:Users|home)/|$privatePathMarker|AppData|(?:^|[\\/])(?:obj|bin)[\\/])") { throw 'Shipping PDB contains a local filesystem path.' }
+    $profileDirectory = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
+    $profilePathPattern = '(?!)'
+    if (-not [string]::IsNullOrWhiteSpace($profileDirectory)) {
+        $normalizedProfile = $profileDirectory.TrimEnd([char[]]@('\\', '/'))
+        if (-not [string]::IsNullOrWhiteSpace($normalizedProfile)) {
+            $profilePathPattern = [regex]::Escape($normalizedProfile).Replace('\\', '[\\/]')
+        }
+    }
+    if ($pdbText -match "(?i)((?<![A-Za-z])[A-Za-z]:[\\/]|/(?:Users|home)/|$profilePathPattern|AppData|(?:^|[\\/])(?:obj|bin)[\\/])") { throw 'Shipping PDB contains a local filesystem path.' }
 }
 finally { $package.Dispose() }
 

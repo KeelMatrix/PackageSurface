@@ -18,6 +18,42 @@ if (-not $rootReadme.Contains($platformContract, [StringComparison]::Ordinal) -o
     throw 'Root and packed README files do not state the same evidenced platform contract.'
 }
 
+$consumerCommands = @(
+    'dotnet tool install --global KeelMatrix.PackageSurface',
+    'dotnet tool update --global KeelMatrix.PackageSurface',
+    'dotnet tool uninstall --global KeelMatrix.PackageSurface',
+    'dotnet restore',
+    'package-surface scan MySolution.sln',
+    'package-surface baseline MySolution.sln --output package-surface.json',
+    'package-surface check MySolution.sln --baseline package-surface.json'
+)
+foreach ($command in $consumerCommands) {
+    if (-not $rootReadme.Contains($command, [StringComparison]::Ordinal) -or
+        -not $packedReadme.Contains($command, [StringComparison]::Ordinal)) {
+        throw "Root and packed README files must keep this consumer command in sync: '$command'."
+    }
+}
+
+foreach ($section in @('## Install', '## Quick start', '## Limitations', '## Privacy', '## Documentation')) {
+    if (-not $packedReadme.Contains($section, [StringComparison]::Ordinal)) {
+        throw "Packed README is missing its consumer section '$section'."
+    }
+}
+foreach ($target in @(
+    'https://github.com/KeelMatrix/PackageSurface/blob/main/README.md',
+    'https://github.com/KeelMatrix/PackageSurface/blob/main/docs/DEV.md',
+    'https://github.com/KeelMatrix/PackageSurface/blob/main/PRIVACY.md',
+    'https://github.com/KeelMatrix/PackageSurface/blob/main/SECURITY.md'
+)) {
+    if (-not $packedReadme.Contains($target, [StringComparison]::Ordinal)) {
+        throw "Packed README is missing a canonical documentation link: '$target'."
+    }
+}
+if (-not $packedReadme.Contains('--no-telemetry', [StringComparison]::Ordinal) -or
+    -not $packedReadme.Contains('does not restore packages, evaluate MSBuild, load dependency assemblies', [StringComparison]::Ordinal)) {
+    throw 'Packed README must state the privacy option and key analysis limitations.'
+}
+
 $securityPath = Join-Path $RepositoryRoot 'SECURITY.md'
 $security = Get-Content -Raw $securityPath
 if ($security.Contains("conduct-reporting route", [StringComparison]::OrdinalIgnoreCase)) {

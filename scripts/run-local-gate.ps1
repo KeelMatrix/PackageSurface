@@ -106,7 +106,7 @@ try {
     Invoke-GateStep 'shipping restore' {
         & dotnet restore $solution --configfile $nugetConfig --packages $shippingPackages --no-cache --force
     }
-    $phase0Evidence = Join-Path $root 'evidence/phase0.md'
+    $phase0Evidence = Join-Path $root 'artifacts/phase0.md'
     $phase0EvidenceCopy = Join-Path $scratch 'phase0.md'
     $hadPhase0Evidence = Test-Path -LiteralPath $phase0Evidence -PathType Leaf
     if ($hadPhase0Evidence) {

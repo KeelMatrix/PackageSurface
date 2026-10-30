@@ -153,9 +153,9 @@ try {
     Invoke-GateStep 'no-code-execution proof' {
         Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/verify-no-execution.ps1')
     }
-    $cliTests = Join-Path $root 'tests/KeelMatrix.PackageSurface.Cli.Tests/KeelMatrix.PackageSurface.Cli.Tests.csproj'
-    Invoke-GateStep 'CLI contract and resource tests' {
-        & dotnet run --project $cliTests --configuration Release --no-build
+    $testDiscoveryScript = Join-Path $root 'scripts/test-discovered-tests.ps1'
+    Invoke-GateStep 'discovered CLI and probe tests with negative controls' {
+        Invoke-NestedPwsh -NoLogo -NoProfile -File $testDiscoveryScript -ResultsDirectory (Join-Path $root 'artifacts/test-results') -RunNegativeControls
     }
     Invoke-GateStep 'release contract regressions' {
         Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-release-contract.ps1')
@@ -260,6 +260,7 @@ try {
         (Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/KeelMatrix.PackageSurface.Cli.csproj'),
         (Join-Path $root 'tests/KeelMatrix.PackageSurface.Probe.Tests/KeelMatrix.PackageSurface.Probe.Tests.csproj'),
         (Join-Path $root 'tests/KeelMatrix.PackageSurface.Cli.Tests/KeelMatrix.PackageSurface.Cli.Tests.csproj'),
+        (Join-Path $root 'tools/ProbeFixtureVerifier/ProbeFixtureVerifier.csproj'),
         (Join-Path $root 'tools/NoExecutionProof/NoExecutionProof.csproj')
     )
     $coverageFile = Join-Path $scratch 'package-graph-report.json'

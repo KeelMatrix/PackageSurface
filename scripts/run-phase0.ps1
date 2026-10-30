@@ -93,8 +93,8 @@ Invoke-Recorded "dotnet restore $projectReferenceProject --configfile $root/NuGe
 $languageConventionScript = Join-Path $root 'scripts/test-language-conventions.ps1'
 Invoke-Recorded "pwsh -NoProfile -File $languageConventionScript" { Invoke-NestedPwsh -NoProfile -File $languageConventionScript }
 
-$testProject = Join-Path $root 'tests/KeelMatrix.PackageSurface.Probe.Tests/KeelMatrix.PackageSurface.Probe.Tests.csproj'
-Invoke-Recorded "dotnet build $testProject --configuration Release" { dotnet build $testProject --configuration Release }
+$fixtureVerifierProject = Join-Path $root 'tools/ProbeFixtureVerifier/ProbeFixtureVerifier.csproj'
+Invoke-Recorded "dotnet build $fixtureVerifierProject --configuration Release" { dotnet build $fixtureVerifierProject --configuration Release }
 $testCapabilities = @{
     SingleTarget = 'BuildProps,BuildTargets,BuildTransitive,BuildMultiTargeting,CompilerExtension,CompileSourceInjection,NativeRuntime,ToolOrScriptPresent'
     MultiTarget = 'BuildProps,BuildTargets,BuildTransitive,BuildMultiTargeting,CompilerExtension,CompileSourceInjection,NativeRuntime,ToolOrScriptPresent'
@@ -107,7 +107,7 @@ foreach ($consumer in $consumers) {
     $jsonPath = Join-Path $generated "$consumer.json"
     $probeOutput = Invoke-Recorded "dotnet run --project $probe --configuration Release --no-build -- $assets $consumerRoot $compilerApiVersion" { dotnet run --project $probe --configuration Release --no-build -- $assets $consumerRoot $compilerApiVersion }
     [IO.File]::WriteAllText($jsonPath, $probeOutput.Output.Trim() + [Environment]::NewLine)
-    Invoke-Recorded "dotnet run --project $testProject --configuration Release --no-build -- $assets $($testCapabilities[$consumer]) $compilerApiVersion" { dotnet run --project $testProject --configuration Release --no-build -- $assets $($testCapabilities[$consumer]) $compilerApiVersion }
+    Invoke-Recorded "dotnet run --project $fixtureVerifierProject --configuration Release --no-build -- $assets $($testCapabilities[$consumer]) $compilerApiVersion" { dotnet run --project $fixtureVerifierProject --configuration Release --no-build -- $assets $($testCapabilities[$consumer]) $compilerApiVersion }
 }
 foreach ($consumer in $exclusionConsumers) {
     $assets = Join-Path $root "fixtures/consumer/$consumer/obj/project.assets.json"

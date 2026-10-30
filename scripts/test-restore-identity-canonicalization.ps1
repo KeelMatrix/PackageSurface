@@ -10,8 +10,10 @@ else {
     $RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot).Path
 }
 
-$classifierPath = Join-Path $RepositoryRoot 'src/KeelMatrix.PackageSurface.Probe/ResolvedGraphClassifier.cs'
-$classifier = Get-Content -Raw -LiteralPath $classifierPath
+$metadataReaderPath = Join-Path $RepositoryRoot 'src/KeelMatrix.PackageSurface.Probe/RestoreMetadataReader.cs'
+$metadataReader = Get-Content -Raw -LiteralPath $metadataReaderPath
+$probeSource = (Get-ChildItem -LiteralPath (Join-Path $RepositoryRoot 'src/KeelMatrix.PackageSurface.Probe') -Filter '*.cs' -File |
+    ForEach-Object { Get-Content -Raw -LiteralPath $_.FullName }) -join "`n"
 
 $forbidden = @(
     'SplitPackageKey\(',
@@ -20,20 +22,20 @@ $forbidden = @(
     'FrameworksMatch\(SplitTarget'
 )
 foreach ($pattern in $forbidden) {
-    if ([regex]::IsMatch($classifier, $pattern)) {
+    if ([regex]::IsMatch($probeSource, $pattern)) {
         throw "Independent restore-identity resolution site remains: $pattern"
     }
 }
 
-$libraryLookups = @([regex]::Matches($classifier, 'TryGetPropertyIgnoreCase\(libraries'))
+$libraryLookups = @([regex]::Matches($metadataReader, 'TryGetPropertyIgnoreCase\(libraries'))
 if ($libraryLookups.Count -ne 2) {
     throw "Expected exactly two library lookups, both owned by RestoreIdentityIndex; found $($libraryLookups.Count)."
 }
 
-if (-not $classifier.Contains('TryGetLibrary(JsonElement libraries', [StringComparison]::Ordinal) -or
-    -not $classifier.Contains('TryGetLibraryByCanonicalKey(JsonElement libraries', [StringComparison]::Ordinal) -or
-    -not $classifier.Contains('TryGetPackageByRoot', [StringComparison]::Ordinal) -or
-    -not $classifier.Contains('TryGetPackageByImportSuffix', [StringComparison]::Ordinal)) {
+if (-not $metadataReader.Contains('TryGetLibrary(JsonElement libraries', [StringComparison]::Ordinal) -or
+    -not $metadataReader.Contains('TryGetLibraryByCanonicalKey(JsonElement libraries', [StringComparison]::Ordinal) -or
+    -not $metadataReader.Contains('TryGetPackageByRoot', [StringComparison]::Ordinal) -or
+    -not $metadataReader.Contains('TryGetPackageByImportSuffix', [StringComparison]::Ordinal)) {
     throw 'The canonical restore-identity index is missing a required resolution boundary.'
 }
 

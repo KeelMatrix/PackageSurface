@@ -86,3 +86,11 @@ jobs:
           $ErrorActionPreference = 'Stop'
           & pwsh -NoLogo -NoProfile -File ./scripts/run-local-gate.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Retain discovered test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.os }}
+          path: artifacts/test-results/**/*.trx
+          if-no-files-found: warn

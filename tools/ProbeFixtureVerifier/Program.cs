@@ -7,7 +7,7 @@ using KeelMatrix.PackageSurface.Probe;
 
 if (args.Length < 2 || args.Length > 3)
 {
-    Console.Error.WriteLine("Usage: probe-tests <project.assets.json> <capabilities> [compiler-api-version]");
+    Console.Error.WriteLine("Usage: probe-fixture-verifier <project.assets.json> <capabilities> [compiler-api-version]");
     return 2;
 }
 

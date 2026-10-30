@@ -2806,6 +2806,16 @@ jobs:
     [IO.File]::WriteAllText($nestedReleaseChangelog, $nestedReleaseFirstRelease, [Text.UTF8Encoding]::new($false))
     Assert-ValidationRejects 'first-release entry nested under Unreleased' (Invoke-ReleaseValidation -Version $version -ChangelogPath $nestedReleaseChangelog -RequireFinalized -FirstRelease)
 
+    $plainUnreleasedChangelog = Join-Path $scratch 'CHANGELOG.unreleased-plain-note.md'
+    $plainUnreleasedFirstRelease = "# Changelog`n`n## [Unreleased]`n`n- A pending capability improvement.`n`n## [$version] - $releaseDate`n`n### Added`n`n- Initial release capability review.`n"
+    [IO.File]::WriteAllText($plainUnreleasedChangelog, $plainUnreleasedFirstRelease, [Text.UTF8Encoding]::new($false))
+    Assert-ValidationRejects 'first-release plain note under Unreleased' (Invoke-ReleaseValidation -Version $version -ChangelogPath $plainUnreleasedChangelog -RequireFinalized -FirstRelease)
+
+    $categorizedUnreleasedChangelog = Join-Path $scratch 'CHANGELOG.unreleased-categorized-note.md'
+    $categorizedUnreleasedFirstRelease = "# Changelog`n`n## [Unreleased]`n`n### Added`n`n- A pending capability improvement.`n`n## [$version] - $releaseDate`n`n### Added`n`n- Initial release capability review.`n"
+    [IO.File]::WriteAllText($categorizedUnreleasedChangelog, $categorizedUnreleasedFirstRelease, [Text.UTF8Encoding]::new($false))
+    Assert-ValidationRejects 'first-release categorized note under Unreleased' (Invoke-ReleaseValidation -Version $version -ChangelogPath $categorizedUnreleasedChangelog -RequireFinalized -FirstRelease)
+
     $candidateChangelog = Join-Path $scratch 'CHANGELOG.finalized.md'
     $candidateFirstRelease = "# Changelog`n`n## [Unreleased]`n`n## [$version] - $releaseDate`n`n### Added`n`n- Initial release capability review.`n"
     [IO.File]::WriteAllText($candidateChangelog, $candidateFirstRelease, [Text.UTF8Encoding]::new($false))

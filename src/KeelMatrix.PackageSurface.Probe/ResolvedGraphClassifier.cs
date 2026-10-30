@@ -28,6 +28,7 @@ public static class ResolvedGraphClassifier
     private const int MaxXmlDepth = 64;
     private const string JsonExtensionPrefix = "x-";
     private const string XmlExtensionNamespace = "urn:keelmatrix:packagesurface:extension";
+    private const string MsBuildXmlNamespace = "http://schemas.microsoft.com/developer/msbuild/2003";
 
     private static readonly Regex PropertyComparison = new(
         "^\\s*['\\\"]?\\$\\(\\s*(?<property>[A-Za-z_][A-Za-z0-9_.-]*)\\s*\\)['\\\"]?\\s*(?<operator>==|!=)\\s*['\\\"](?<value>[^'\\\"]*)['\\\"]\\s*$",
@@ -3325,60 +3326,60 @@ public static class ResolvedGraphClassifier
                     IgnoreWhitespace = true
                 };
                 using var reader = XmlReader.Create(file, settings);
-                var conditionStack = new List<ConditionClause>();
+                var xmlContext = new MsBuildXmlContext();
                 var exceededDepth = false;
                 while (reader.Read())
                 {
-                    if (reader.NodeType == XmlNodeType.Element)
+                    if (reader.NodeType == XmlNodeType.EndElement)
                     {
-                        if (reader.Depth > MaxXmlDepth)
-                        {
-                            exceededDepth = true;
-                            break;
-                        }
-
-                        if (HasCaseInsensitiveDuplicateXmlAttributes(reader))
-                        {
-                            incomplete.Add($"Generated import file {Path.GetFileName(file)} contains duplicate or case-variant attributes.");
-                        }
-
-                        var elementName = reader.LocalName;
-                        ValidateConsumedXmlElementSpelling(
-                            reader,
-                            GeneratedImportElementNames,
-                            $"generated import file {Path.GetFileName(file)}",
-                            incomplete);
-                        ValidateConsumedXmlAttributeSpellings(
-                            reader,
-                            GeneratedImportAttributeNames,
-                            $"generated import file {Path.GetFileName(file)}",
-                            incomplete);
-                        var condition = reader.GetAttribute("Condition");
-                        if (elementName.Equals("Import", StringComparison.Ordinal) && reader.GetAttribute("Project") is string project)
-                        {
-                            budget.AddImportedEdge();
-                            var conditions = conditionStack
-                                .Append(new ConditionClause(elementName, condition))
-                                .Where(clause => !string.IsNullOrWhiteSpace(clause.Expression))
-                                .ToArray();
-                            var applicability = DetermineApplicability(conditions, project, restoreIdentities, packageRoots, out var reason);
-                            if (!applicability.IsKnown)
-                            {
-                                incomplete.Add($"Generated import file {Path.GetFileName(file)} has an unsupported condition on {reason!.Owner}: {reason.Message}.");
-                            }
-
-                            result.Add(new GeneratedImport(Path.GetFileName(file), project, applicability));
-                        }
-
-                        if (!reader.IsEmptyElement)
-                        {
-                            conditionStack.Add(new ConditionClause(elementName, condition));
-                        }
+                        xmlContext.Exit(reader);
+                        continue;
                     }
-                    else if (reader.NodeType == XmlNodeType.EndElement && conditionStack.Count > 0)
+
+                    if (reader.NodeType != XmlNodeType.Element) continue;
+                    if (reader.Depth > MaxXmlDepth)
                     {
-                        conditionStack.RemoveAt(conditionStack.Count - 1);
+                        exceededDepth = true;
+                        break;
                     }
+
+                    var description = $"Generated import file {Path.GetFileName(file)}";
+                    if (!xmlContext.TryEnter(reader, description, incomplete)) continue;
+                    if (HasCaseInsensitiveDuplicateXmlAttributes(reader))
+                    {
+                        incomplete.Add($"{description} contains duplicate or case-variant attributes.");
+                    }
+
+                    var elementName = reader.LocalName;
+                    ValidateConsumedXmlElementSpelling(reader, GeneratedImportElementNames, description, incomplete);
+                    ValidateConsumedXmlAttributeSpellings(reader, GeneratedImportAttributeNames, description, incomplete);
+                    if (elementName.Equals("ImportGroup", StringComparison.Ordinal) && !IsDirectProjectChild(xmlContext))
+                    {
+                        RejectMsBuildContext(reader, xmlContext, incomplete, description);
+                        continue;
+                    }
+
+                    if (!elementName.Equals("Import", StringComparison.Ordinal)) continue;
+                    if (!IsSupportedImportLocation(xmlContext) || reader.GetAttribute("Project") is not string project)
+                    {
+                        RejectMsBuildContext(reader, xmlContext, incomplete, description);
+                        continue;
+                    }
+
+                    budget.AddImportedEdge();
+                    var conditions = xmlContext.Elements
+                        .Where(element => element.Name is "Project" or "ImportGroup")
+                        .Select(element => new ConditionClause(element.Name, element.Condition))
+                        .Append(new ConditionClause(elementName, reader.GetAttribute("Condition")))
+                        .Where(clause => !string.IsNullOrWhiteSpace(clause.Expression))
+                        .ToArray();
+                    var applicability = DetermineApplicability(conditions, project, restoreIdentities, packageRoots, out var reason);
+                    if (!applicability.IsKnown)
+                    {
+                        incomplete.Add($"{description} has an unsupported condition on {reason!.Owner}: {reason.Message}.");
+                    }
+
+                    result.Add(new GeneratedImport(Path.GetFileName(file), project, applicability));
                 }
 
                 if (exceededDepth)
@@ -3490,7 +3491,7 @@ public static class ResolvedGraphClassifier
                     IgnoreWhitespace = true
                 };
                 using var reader = XmlReader.Create(currentFile, settings);
-                var conditionStack = new List<ConditionClause>();
+                var xmlContext = new MsBuildXmlContext();
                 var nestedWork = new List<(string File, string PackageRoot, string SourceFile, ConditionNode? Condition, int Depth)>();
                 while (reader.Read())
                 {
@@ -3500,90 +3501,89 @@ public static class ResolvedGraphClassifier
                         break;
                     }
 
-                    if (reader.NodeType == XmlNodeType.Element)
+                    if (reader.NodeType == XmlNodeType.EndElement)
                     {
-                        if (HasCaseInsensitiveDuplicateXmlAttributes(reader))
+                        xmlContext.Exit(reader);
+                        continue;
+                    }
+
+                    if (reader.NodeType != XmlNodeType.Element) continue;
+                    var description = "Nested package import";
+                    if (!xmlContext.TryEnter(reader, description, incomplete)) continue;
+                    if (HasCaseInsensitiveDuplicateXmlAttributes(reader))
+                    {
+                        incomplete.Add("A nested package import contains duplicate or case-variant attributes.");
+                    }
+
+                    ValidateConsumedXmlElementSpelling(reader, PackageMsBuildElementNames, description, incomplete, PackageMsBuildStandardElementNames);
+                    ValidateConsumedXmlAttributeSpellings(reader, PackageMsBuildAttributeNames, description, incomplete, rejectUnknown: false);
+                    var elementName = reader.LocalName;
+                    if (elementName.Equals("ImportGroup", StringComparison.Ordinal) && !IsDirectProjectChild(xmlContext))
+                    {
+                        RejectMsBuildContext(reader, xmlContext, incomplete, description);
+                        continue;
+                    }
+
+                    if (!elementName.Equals("Import", StringComparison.Ordinal)) continue;
+                    if (!IsSupportedImportLocation(xmlContext) || reader.GetAttribute("Project") is not string project)
+                    {
+                        RejectMsBuildContext(reader, xmlContext, incomplete, description);
+                        continue;
+                    }
+
+                    budget.AddImportedEdge();
+                    var clauses = xmlContext.Elements
+                        .Where(element => element.Name is "Project" or "ImportGroup")
+                        .Select(element => new ConditionClause(element.Name, element.Condition))
+                        .Append(new ConditionClause(elementName, reader.GetAttribute("Condition")))
+                        .Where(clause => !string.IsNullOrWhiteSpace(clause.Expression))
+                        .ToArray();
+                    var applicability = DetermineApplicability(clauses, project, restoreIdentities, packageRoots, out var failure);
+                    if (!applicability.IsKnown)
+                    {
+                        incomplete.Add($"Nested package import contains an unsupported condition on {failure!.Owner}: {failure.Message}.");
+                    }
+
+                    string? resolutionReason = null;
+                    var resolved = TryResolveStaticPackageImport(project, currentFile, restoreIdentities, packageRoots, out var nestedPath, out var nestedRoot, out resolutionReason);
+                    var combined = applicability.IsKnown
+                        ? ImportApplicability.Known(CombineConditionNodes(current.Condition, applicability.Condition))
+                        : applicability;
+                    var couldApply = rootCapability == CapabilityKind.BuildMultiTargeting
+                        ? combined.AppliesTo(SurfaceContextKind.Project, string.Empty)
+                        : targetFrameworkContexts.Any(targetFramework => combined.AppliesTo(SurfaceContextKind.Target, targetFramework));
+                    result.Add(new GeneratedImport(current.SourceFile, resolved ? nestedPath : project, combined, true,
+                        resolved ? nestedRoot : null,
+                        resolved ? Path.GetRelativePath(nestedRoot, nestedPath).Replace(Path.DirectorySeparatorChar, '/') : null,
+                        rootCapability,
+                        rootAssetPath));
+                    if (!couldApply)
+                    {
+                        continue;
+                    }
+
+                    if (combined.IsKnown && resolved)
+                    {
+                        var nestedRelativePath = Path.GetRelativePath(nestedRoot, nestedPath).Replace(Path.DirectorySeparatorChar, '/');
+                        if (!IsDeclaredPackageFile(nestedRoot, nestedRelativePath, packageInventories))
                         {
-                            incomplete.Add("A nested package import contains duplicate or case-variant attributes.");
+                            incomplete.Add("Nested package import refers to a file absent from the resolved package inventory.");
                         }
-
-                        ValidateConsumedXmlElementSpelling(
-                            reader,
-                            PackageMsBuildElementNames,
-                            "nested package import",
-                            incomplete,
-                            PackageMsBuildStandardElementNames);
-                        ValidateConsumedXmlAttributeSpellings(
-                            reader,
-                            PackageMsBuildAttributeNames,
-                            "nested package import",
-                            incomplete,
-                            rejectUnknown: false);
-                        var condition = reader.GetAttribute("Condition");
-                        if (reader.LocalName.Equals("Import", StringComparison.Ordinal) && reader.GetAttribute("Project") is string project)
+                        else
                         {
-                            budget.AddImportedEdge();
-                            var clauses = conditionStack
-                                .Append(new ConditionClause(reader.LocalName, condition))
-                                .Where(clause => !string.IsNullOrWhiteSpace(clause.Expression))
-                                .ToArray();
-                            var applicability = DetermineApplicability(clauses, project, restoreIdentities, packageRoots, out var failure);
-                            if (!applicability.IsKnown)
-                            {
-                                incomplete.Add($"Nested package import contains an unsupported condition on {failure!.Owner}: {failure.Message}.");
-                            }
-
-                            string? resolutionReason = null;
-                            var resolved = TryResolveStaticPackageImport(project, currentFile, restoreIdentities, packageRoots, out var nestedPath, out var nestedRoot, out resolutionReason);
-                            var combined = applicability.IsKnown
-                                ? ImportApplicability.Known(CombineConditionNodes(current.Condition, applicability.Condition))
-                                : applicability;
-                            var couldApply = rootCapability == CapabilityKind.BuildMultiTargeting
-                                ? combined.AppliesTo(SurfaceContextKind.Project, string.Empty)
-                                : targetFrameworkContexts.Any(targetFramework => combined.AppliesTo(SurfaceContextKind.Target, targetFramework));
-                            result.Add(new GeneratedImport(current.SourceFile, resolved ? nestedPath : project, combined, true,
-                                resolved ? nestedRoot : null,
-                                resolved ? Path.GetRelativePath(nestedRoot, nestedPath).Replace(Path.DirectorySeparatorChar, '/') : null,
-                                rootCapability,
-                                rootAssetPath));
-                            if (!couldApply)
-                            {
-                                continue;
-                            }
-
-                            if (combined.IsKnown && resolved)
-                            {
-                                var nestedRelativePath = Path.GetRelativePath(nestedRoot, nestedPath).Replace(Path.DirectorySeparatorChar, '/');
-                                if (!IsDeclaredPackageFile(nestedRoot, nestedRelativePath, packageInventories))
-                                {
-                                    incomplete.Add("Nested package import refers to a file absent from the resolved package inventory.");
-                                }
-                                else
-                                {
-                                    nestedWork.Add((nestedPath, nestedRoot, current.SourceFile, combined.Condition, current.Depth + 1));
-                                }
-                            }
-                            else if (resolutionReason is not null && !resolutionReason.Equals("not a package import", StringComparison.Ordinal))
-                            {
-                                incomplete.Add("Nested package import contains an unsupported static import target.");
-                            }
-                            else if (resolutionReason is "not a package import" &&
-                                     (Path.IsPathRooted(project) ||
-                                      (!project.Contains("$(", StringComparison.Ordinal) &&
-                                       !IsRelativeImportUnderAnyPackageRoot(currentFile, project, packageRoots.Values))))
-                            {
-                                incomplete.Add("Nested package import is outside the resolved package root or is missing from the package inventory.");
-                            }
-                        }
-
-                        if (!reader.IsEmptyElement)
-                        {
-                            conditionStack.Add(new ConditionClause(reader.LocalName, condition));
+                            nestedWork.Add((nestedPath, nestedRoot, current.SourceFile, combined.Condition, current.Depth + 1));
                         }
                     }
-                    else if (reader.NodeType == XmlNodeType.EndElement && conditionStack.Count > 0)
+                    else if (resolutionReason is not null && !resolutionReason.Equals("not a package import", StringComparison.Ordinal))
                     {
-                        conditionStack.RemoveAt(conditionStack.Count - 1);
+                        incomplete.Add("Nested package import contains an unsupported static import target.");
+                    }
+                    else if (resolutionReason is "not a package import" &&
+                             (Path.IsPathRooted(project) ||
+                              (!project.Contains("$(", StringComparison.Ordinal) &&
+                               !IsRelativeImportUnderAnyPackageRoot(currentFile, project, packageRoots.Values))))
+                    {
+                        incomplete.Add("Nested package import is outside the resolved package root or is missing from the package inventory.");
                     }
                 }
 
@@ -4881,21 +4881,26 @@ public static class ResolvedGraphClassifier
         };
 
         using var reader = XmlReader.Create(path, settings);
+        var xmlContext = new MsBuildXmlContext();
         while (reader.Read())
         {
             if (reader.Depth > MaxXmlDepth) throw new InvalidOperationException("XML depth exceeds the supported limit.");
-            if (reader.NodeType == XmlNodeType.EndElement && reader.LocalName.Equals("UsingTask", StringComparison.Ordinal))
+            if (reader.NodeType == XmlNodeType.EndElement)
             {
-                if (inlineTasks.Count > 0)
+                if (!xmlContext.IsIgnoring && reader.LocalName.Equals("UsingTask", StringComparison.Ordinal) &&
+                    IsSupportedMsBuildNamespace(reader.NamespaceURI) && inlineTasks.Count > 0 &&
+                    inlineTasks.Peek().Depth == reader.Depth)
                 {
                     var task = inlineTasks.Pop();
                     if (task.IsInlineFactory && task.HasCodeElement) observations.Add("InlineTaskFactory");
                 }
 
+                xmlContext.Exit(reader);
                 continue;
             }
 
             if (reader.NodeType != XmlNodeType.Element) continue;
+            if (!xmlContext.TryEnter(reader, "package MSBuild XML", incomplete: null)) continue;
             ValidateConsumedXmlElementSpelling(
                 reader,
                 PackageMsBuildElementNames,
@@ -4908,9 +4913,19 @@ public static class ResolvedGraphClassifier
                 "package MSBuild XML",
                 null,
                 rejectUnknown: false);
-            switch (reader.LocalName)
+            var elementName = reader.LocalName;
+            if (elementName.Equals("ImportGroup", StringComparison.Ordinal) && !IsDirectProjectChild(xmlContext))
+            {
+                RejectMsBuildContext(reader, xmlContext, incomplete: null, "package MSBuild XML");
+            }
+
+            switch (elementName)
             {
                 case "UsingTask":
+                    if (!IsDirectProjectChild(xmlContext))
+                    {
+                        RejectMsBuildContext(reader, xmlContext, incomplete: null, "package MSBuild XML");
+                    }
                     observations.Add("UsingTask");
                     var factory = reader.GetAttribute("TaskFactory");
                     if (!reader.IsEmptyElement)
@@ -4919,14 +4934,26 @@ public static class ResolvedGraphClassifier
                             factory is not null && (factory.Equals("CodeTaskFactory", StringComparison.OrdinalIgnoreCase) || factory.Equals("RoslynCodeTaskFactory", StringComparison.OrdinalIgnoreCase)), false));
                     }
                     break;
-                case "Code" when inlineTasks.Count > 0 && reader.Depth > inlineTasks.Peek().Depth:
+                case "Code":
+                    if (!IsSupportedInlineCodeLocation(xmlContext) || inlineTasks.Count == 0 || reader.Depth <= inlineTasks.Peek().Depth)
+                    {
+                        RejectMsBuildContext(reader, xmlContext, incomplete: null, "package MSBuild XML");
+                    }
                     var task = inlineTasks.Pop();
                     inlineTasks.Push(task with { HasCodeElement = true });
                     break;
                 case "Exec":
+                    if (!IsSupportedExecLocation(xmlContext))
+                    {
+                        RejectMsBuildContext(reader, xmlContext, incomplete: null, "package MSBuild XML");
+                    }
                     observations.Add("Exec");
                     break;
                 case "Import":
+                    if (!IsSupportedImportLocation(xmlContext) || reader.GetAttribute("Project") is null)
+                    {
+                        RejectMsBuildContext(reader, xmlContext, incomplete: null, "package MSBuild XML");
+                    }
                     observations.Add("Import");
                     break;
             }
@@ -4936,6 +4963,140 @@ public static class ResolvedGraphClassifier
     }
 
     private sealed record InlineTaskState(int Depth, bool IsInlineFactory, bool HasCodeElement);
+
+    private static bool IsSupportedMsBuildNamespace(string namespaceUri) =>
+        namespaceUri.Length == 0 || namespaceUri.Equals(MsBuildXmlNamespace, StringComparison.Ordinal);
+
+    private static bool IsDirectProjectChild(MsBuildXmlContext context) =>
+        context.Parent is { Name: "Project", Depth: 0 };
+
+    private static bool IsSupportedImportLocation(MsBuildXmlContext context) =>
+        IsDirectProjectChild(context) ||
+        (context.Parent is { Name: "ImportGroup", Depth: 1 } && context.Grandparent is { Name: "Project", Depth: 0 });
+
+    private static bool IsSupportedExecLocation(MsBuildXmlContext context) =>
+        context.Parent is { Name: "Target", Depth: 1 } && context.Grandparent is { Name: "Project", Depth: 0 };
+
+    private static bool IsSupportedInlineCodeLocation(MsBuildXmlContext context) =>
+        context.Parent is { Name: "Task", Depth: 2 } &&
+        context.Grandparent is { Name: "UsingTask", Depth: 1 } &&
+        context.GreatGrandparent is { Name: "Project", Depth: 0 };
+
+    private static void RejectMsBuildContext(XmlReader reader, MsBuildXmlContext context, List<string>? incomplete, string description)
+    {
+        var message = $"{description} contains an unsupported MSBuild XML context.";
+        if (incomplete is null) throw new InvalidOperationException(message);
+        incomplete.Add(message);
+        context.IgnoreCurrent(reader);
+    }
+
+    private sealed record MsBuildXmlElement(string Name, int Depth, string? Condition);
+
+    private sealed class MsBuildXmlContext
+    {
+        private readonly List<MsBuildXmlElement> elements = new();
+        private int ignoredDepth = -1;
+
+        public bool IsIgnoring => ignoredDepth >= 0;
+        public IReadOnlyList<MsBuildXmlElement> Elements => elements;
+        public MsBuildXmlElement? Parent { get; private set; }
+        public MsBuildXmlElement? Grandparent { get; private set; }
+        public MsBuildXmlElement? GreatGrandparent { get; private set; }
+
+        public bool TryEnter(XmlReader reader, string description, List<string>? incomplete)
+        {
+            if (IsIgnoring) return false;
+            PruneToDepth(reader.Depth);
+
+            Parent = elements.Count == 0 ? null : elements[^1];
+            Grandparent = elements.Count < 2 ? null : elements[^2];
+            GreatGrandparent = elements.Count < 3 ? null : elements[^3];
+
+            var name = reader.LocalName;
+            var namespaceUri = reader.NamespaceURI;
+            if (Parent is null)
+            {
+                if (!name.Equals("Project", StringComparison.Ordinal) || !IsSupportedMsBuildNamespace(namespaceUri))
+                {
+                    return Reject(reader, description, incomplete);
+                }
+            }
+            else if (name.Equals("ProjectExtensions", StringComparison.Ordinal))
+            {
+                if (Parent.Name.Equals("Project", StringComparison.Ordinal) && Parent.Depth == 0 &&
+                    IsSupportedMsBuildNamespace(namespaceUri))
+                {
+                    Ignore(reader);
+                    return false;
+                }
+
+                if (!namespaceUri.Equals(XmlExtensionNamespace, StringComparison.Ordinal))
+                {
+                    return Reject(reader, description, incomplete);
+                }
+
+                Ignore(reader);
+                return false;
+            }
+            else if (namespaceUri.Equals(XmlExtensionNamespace, StringComparison.Ordinal))
+            {
+                Ignore(reader);
+                return false;
+            }
+            else if (!IsSupportedMsBuildNamespace(namespaceUri))
+            {
+                return Reject(reader, description, incomplete);
+            }
+
+            if (!reader.IsEmptyElement)
+            {
+                elements.Add(new MsBuildXmlElement(name, reader.Depth, reader.GetAttribute("Condition")));
+            }
+
+            return true;
+        }
+
+        public void Exit(XmlReader reader)
+        {
+            if (IsIgnoring)
+            {
+                if (reader.Depth == ignoredDepth) ignoredDepth = -1;
+                return;
+            }
+
+            PruneToDepth(reader.Depth);
+            Parent = Grandparent = GreatGrandparent = null;
+        }
+
+        public void IgnoreCurrent(XmlReader reader)
+        {
+            PruneToDepth(reader.Depth);
+            Parent = Grandparent = GreatGrandparent = null;
+            Ignore(reader);
+        }
+
+        private bool Reject(XmlReader reader, string description, List<string>? incomplete)
+        {
+            var message = $"{description} contains an unsupported MSBuild XML context.";
+            if (incomplete is null) throw new InvalidOperationException(message);
+            incomplete.Add(message);
+            Ignore(reader);
+            return false;
+        }
+
+        private void Ignore(XmlReader reader)
+        {
+            if (!reader.IsEmptyElement) ignoredDepth = reader.Depth;
+        }
+
+        private void PruneToDepth(int depth)
+        {
+            while (elements.Count > 0 && elements[^1].Depth >= depth)
+            {
+                elements.RemoveAt(elements.Count - 1);
+            }
+        }
+    }
 
     private static string ComputeSha256(string path, AnalysisBudget budget)
     {

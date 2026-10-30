@@ -33,9 +33,7 @@ function Invoke-ExpectedValidatorFailure([string] $Name, [string] $TestRoot, [st
     Write-Output "COMMAND_EXIT_CODE=$exitCode"
     $output | ForEach-Object { Write-Output ([string]$_) }
     Write-Output 'RAW_RESULT_END'
-    if ($exitCode -eq 0) {
-        throw "Documentation validator unexpectedly accepted negative control '$Name'."
-    }
+    if ($exitCode -eq 0) { throw "Documentation validator unexpectedly accepted negative control '$Name'." }
 }
 
 try {
@@ -45,19 +43,17 @@ try {
     $goodHelpText = $goodHelp -join [Environment]::NewLine
     Write-Utf8 $goodHelpPath $goodHelpText
 
-    $brokenHelpPath = Join-Path $scratch 'help-missing-tfm-rid.txt'
-    $brokenHelpText = [regex]::Replace($goodHelpText, 'every\s+TFM/RID(?:,\s*)?', '')
-    if ($brokenHelpText -eq $goodHelpText) { throw 'The built-help negative control did not remove its required clause.' }
+    $brokenHelpPath = Join-Path $scratch 'help-missing-option.txt'
+    $brokenHelpText = $goodHelpText.Replace('--strict-content', '')
+    if ($brokenHelpText -eq $goodHelpText) { throw 'The built-help negative control did not remove its required option.' }
     Write-Utf8 $brokenHelpPath $brokenHelpText
-    Invoke-ExpectedValidatorFailure 'built-help-missing-clause' $root $brokenHelpPath
-    if ($script:LastValidatorFailureOutput -notmatch 'TFM and RID coverage') { throw 'The built-help negative control did not report the missing clause class.' }
+    Invoke-ExpectedValidatorFailure 'built-help-missing-option' $root $brokenHelpPath
+    if ($script:LastValidatorFailureOutput -notmatch '--strict-content') { throw 'The help negative control did not report the missing option.' }
 
-    $markdownRoot = Join-Path $scratch 'markdown-missing-clause'
+    $markdownRoot = Join-Path $scratch 'markdown-missing-reference-detail'
     $relativeFiles = @(
-        'README.md',
-        'CHANGELOG.md',
-        'SECURITY.md',
-        'docs/DEV.md',
+        'README.md', 'CHANGELOG.md', 'SECURITY.md', 'PRIVACY.md', 'CONTRIBUTING.md',
+        'docs/DEV.md', 'docs/restore-and-baseline-safety.md',
         'src/KeelMatrix.PackageSurface.Cli/README.md',
         'src/KeelMatrix.PackageSurface.Cli/CommandLine.cs'
     )
@@ -66,17 +62,15 @@ try {
         New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
         Copy-Item -LiteralPath (Join-Path $root $relativeFile) -Destination $destination
     }
-    $developerDocs = Join-Path $markdownRoot 'docs/DEV.md'
-    $developerText = (Get-Content -Raw $developerDocs).Replace('every TFM/RID, ', '')
-    if ($developerText -eq (Get-Content -Raw $developerDocs)) { throw 'The Markdown negative control did not remove its required clause.' }
-    Write-Utf8 $developerDocs $developerText
-    Invoke-ExpectedValidatorFailure 'markdown-missing-clause' $markdownRoot $goodHelpPath
-    if ($script:LastValidatorFailureOutput -notmatch 'TFM and RID coverage') { throw 'The Markdown negative control did not report the missing clause class.' }
+    $referencePath = Join-Path $markdownRoot 'docs/restore-and-baseline-safety.md'
+    $referenceText = (Get-Content -Raw $referencePath).Replace('canonical restore-identity index', 'restore index')
+    if ($referenceText -eq (Get-Content -Raw $referencePath)) { throw 'The Markdown negative control did not remove its required reference clause.' }
+    Write-Utf8 $referencePath $referenceText
+    Invoke-ExpectedValidatorFailure 'canonical-reference-missing-restore-rule' $markdownRoot $goodHelpPath
+    if ($script:LastValidatorFailureOutput -notmatch 'canonical safety reference') { throw 'The reference negative control did not report the missing safety rule.' }
 
-    Write-Output 'CLI_DOCUMENTATION_REGRESSIONS=PASS built-help and Markdown omissions are rejected.'
+    Write-Output 'CLI_DOCUMENTATION_REGRESSIONS=PASS built-help option and canonical-reference omissions are rejected.'
 }
 finally {
-    if (Test-Path -LiteralPath $scratch) {
-        Remove-Item -LiteralPath $scratch -Recurse -Force
-    }
+    if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force }
 }

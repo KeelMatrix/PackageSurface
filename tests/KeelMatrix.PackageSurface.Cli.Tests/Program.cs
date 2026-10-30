@@ -40,31 +40,25 @@ if (incomplete.Diagnostics.Count != 1 || incomplete.Diagnostics[0].Id != "PS007"
 
 var requiredHelpClauses = new[]
 {
-    "PackageSurface requests activation only",
-    "https://github.com/KeelMatrix/Telemetry/blob/main/PRIVACY.md",
-    "Generated top-level and nested imports",
-    "never replaces a baseline",
-    "every reachable package-inventory file resolved from packageFolders",
-    "global and fallback roots",
-    "direct and transitive packages",
-    "every TFM/RID",
-    "nested static imports",
-    "all inventory categories",
-    "Lexical . and .. aliases",
-    "single and multiple hardlinks",
-    "direct, interior, and ancestor reparse/symlink aliases",
-    "PS007 and controlled exit code 2 before any mutation",
-    "preserves existing output and input bytes",
-    "genuinely distinct outputs are accepted",
-    "unknown members",
-    "standard unconsumed MSBuild elements and attributes",
-    "native SDK shape",
-    "malformed nested",
-    "compilerApiVersion",
-    "non-canonical spellings of consumed JSON/XML members",
-    "x- prefix",
-    "urn:keelmatrix:packagesurface:extension",
-    "NuGet.Versioning 7.9.0 parser/comparer"
+    "package-surface scan <path> [options]",
+    "package-surface baseline <path> --output <baseline> [options]",
+    "package-surface check <path> --baseline <baseline> [options]",
+    "--format text|json|sarif",
+    "(default: text)",
+    "--output <baseline>",
+    "--baseline <baseline>",
+    "--strict-content",
+    "(default: off)",
+    "--compiler-api-version <v>",
+    "--project <path>",
+    "--no-telemetry",
+    "0 Scan/baseline succeeded",
+    "1 Check found a surface or policy difference",
+    "2 Invalid invocation",
+    "https://github.com/KeelMatrix/PackageSurface/blob/main/docs/restore-and-baseline-safety.md",
+    "https://github.com/KeelMatrix/PackageSurface/blob/main/PRIVACY.md",
+    "PS007 means analysis is incomplete",
+    "baseline files are not replaced"
 };
 var normalizedHelpText = Regex.Replace(Options.HelpText, @"\s+", " ");
 var missingHelpClauses = requiredHelpClauses
@@ -157,6 +151,8 @@ static void RunClassifierHardeningTests()
         RunDiagnosticPathLeakRegression(scratch);
         RunApplicabilityHardeningRegressions(scratch);
         RunNestedImportRegression(scratch);
+        RunProjectExtensionsRegression(scratch);
+        RunInvalidMsBuildContextRegression(scratch);
         RunGeneratedImportReachabilityRegression(scratch);
         RunImportEdgeBudgetRegression(scratch);
         RunInvocationStructuralBudgetRegression(scratch);
@@ -1116,7 +1112,8 @@ static void RunNestedImportRegression(string scratch)
     document["targets"]!["net8.0"]![packageKey]!["build"] = new JsonObject { [packageTargets] = new JsonObject() };
     File.WriteAllText(assets, document.ToJsonString());
     File.WriteAllText(Path.Combine(packageRoot, packageTargets.Replace('/', Path.DirectorySeparatorChar)), "<Project><Import Project=\"../helpers/Helper.targets\" /></Project>");
-    File.WriteAllText(Path.Combine(packageRoot, helperTargets.Replace('/', Path.DirectorySeparatorChar)), "<Project><Import Project=\"Grandchild.props\" /></Project>");
+    File.WriteAllText(Path.Combine(packageRoot, helperTargets.Replace('/', Path.DirectorySeparatorChar)),
+        "<Project><ImportGroup Condition=\"'$(TargetFramework)' == 'net8.0'\"><Import Project=\"Grandchild.props\" /></ImportGroup></Project>");
     File.WriteAllText(Path.Combine(packageRoot, grandchildProps.Replace('/', Path.DirectorySeparatorChar)), "<Project><PropertyGroup><NestedValue>1</NestedValue></PropertyGroup></Project>");
     File.WriteAllText(Path.Combine(obj, "Test.csproj.nuget.g.targets"), $"<Project><Import Project=\"$(NuGetPackageRoot)/Nested.Package/1.0.0/{packageTargets}\" /></Project>");
 
@@ -1151,6 +1148,170 @@ static void RunNestedImportRegression(string scratch)
     RunPackageXmlSchemaRegression(scratch);
 }
 
+static void RunProjectExtensionsRegression(string scratch)
+{
+    var generatedRoot = Path.Combine(scratch, "project-extensions-generated");
+    var generatedCache = Path.Combine(generatedRoot, "cache");
+    var generatedObj = Path.Combine(generatedRoot, "obj");
+    Directory.CreateDirectory(generatedObj);
+    var generatedAssets = Path.Combine(generatedObj, "project.assets.json");
+    WriteAssets(generatedAssets, generatedCache, "Reachable.Package", Array.Empty<string>());
+    var generatedDocument = JsonNode.Parse(File.ReadAllText(generatedAssets))!.AsObject();
+    AddUnreachableImportPackage(generatedDocument, generatedCache, "Ignored.Package", "build/ignored.targets");
+    File.WriteAllText(generatedAssets, generatedDocument.ToJsonString());
+
+    var ignoredGeneratedImport = "<Project><ProjectExtensions><Import Project=\"$(NuGetPackageRoot)/Ignored.Package/1.0.0/build/ignored.targets\" /></ProjectExtensions></Project>";
+    File.WriteAllText(Path.Combine(generatedObj, "Test.csproj.nuget.g.props"), ignoredGeneratedImport);
+    File.WriteAllText(Path.Combine(generatedObj, "Test.csproj.nuget.g.targets"), ignoredGeneratedImport);
+    var generatedResult = ResolvedGraphClassifier.Analyze(generatedAssets, generatedRoot, strictContent: false);
+    Require(generatedResult.IsComplete && generatedResult.Entries.Count == 0,
+        $"Ignored generated ProjectExtensions imports changed graph reachability: complete={generatedResult.IsComplete}; reasons={string.Join(" | ", generatedResult.IncompleteReasons)}");
+
+    var validNamespaceRoot = Path.Combine(scratch, "valid-namespaced-generated-import");
+    var validNamespaceCache = Path.Combine(validNamespaceRoot, "cache");
+    var validNamespaceObj = Path.Combine(validNamespaceRoot, "obj");
+    Directory.CreateDirectory(validNamespaceObj);
+    var validNamespaceAssets = Path.Combine(validNamespaceObj, "project.assets.json");
+    var validNamespacePackage = "Valid.Namespace.Package";
+    var validNamespacePath = "build/valid.targets";
+    WriteAssets(validNamespaceAssets, validNamespaceCache, validNamespacePackage, new[] { validNamespacePath }, createFiles: true);
+    var validNamespaceDocument = JsonNode.Parse(File.ReadAllText(validNamespaceAssets))!.AsObject();
+    validNamespaceDocument["targets"]!["net8.0"]![validNamespacePackage + "/1.0.0"]!["build"] = new JsonObject
+    {
+        [validNamespacePath] = new JsonObject()
+    };
+    File.WriteAllText(validNamespaceAssets, validNamespaceDocument.ToJsonString());
+    File.WriteAllText(Path.Combine(validNamespaceCache, validNamespacePackage, "1.0.0", validNamespacePath.Replace('/', Path.DirectorySeparatorChar)), "<Project />");
+    File.WriteAllText(Path.Combine(validNamespaceObj, "Test.csproj.nuget.g.targets"),
+        $"<Project xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\"><Import Project=\"$(NuGetPackageRoot)/{validNamespacePackage}/1.0.0/{validNamespacePath}\" /></Project>");
+    var validNamespaceResult = ResolvedGraphClassifier.Analyze(validNamespaceAssets, validNamespaceRoot, strictContent: false);
+    Require(validNamespaceResult.IsComplete && validNamespaceResult.Entries.Any(entry => entry.PackageId == validNamespacePackage && entry.Active),
+        $"A valid root import in the standard MSBuild namespace was rejected: complete={validNamespaceResult.IsComplete}; reasons={string.Join(" | ", validNamespaceResult.IncompleteReasons)}");
+
+    var packageRoot = Path.Combine(scratch, "project-extensions-package");
+    var packageCache = Path.Combine(packageRoot, "cache");
+    var packageObj = Path.Combine(packageRoot, "obj");
+    Directory.CreateDirectory(packageObj);
+    var packageAssets = Path.Combine(packageObj, "project.assets.json");
+    var packageId = "Extensions.Package";
+    var outerPath = "build/outer.targets";
+    var helperPath = "helpers/hidden.targets";
+    WriteAssets(packageAssets, packageCache, packageId, new[] { outerPath, helperPath }, createFiles: true);
+    var packageDocument = JsonNode.Parse(File.ReadAllText(packageAssets))!.AsObject();
+    packageDocument["targets"]!["net8.0"]![packageId + "/1.0.0"]!["build"] = new JsonObject { [outerPath] = new JsonObject() };
+    File.WriteAllText(packageAssets, packageDocument.ToJsonString());
+
+    var physicalOuter = Path.Combine(packageCache, packageId, "1.0.0", outerPath.Replace('/', Path.DirectorySeparatorChar));
+    File.WriteAllText(physicalOuter, """
+<Project>
+  <ProjectExtensions>
+    <Import Project="helpers/hidden.targets" />
+    <Exec Command="must-not-count" />
+    <UsingTask TaskName="Ignored" TaskFactory="CodeTaskFactory"><Task><Code>must-not-count</Code></Task></UsingTask>
+  </ProjectExtensions>
+</Project>
+""");
+    File.WriteAllText(Path.Combine(packageCache, packageId, "1.0.0", helperPath.Replace('/', Path.DirectorySeparatorChar)), "<Project />");
+    File.WriteAllText(Path.Combine(packageObj, "Test.csproj.nuget.g.targets"),
+        $"<Project><Import Project=\"$(NuGetPackageRoot)/{packageId}/1.0.0/{outerPath}\" /></Project>");
+
+    var packageResult = ResolvedGraphClassifier.Analyze(packageAssets, packageRoot, strictContent: false);
+    var outer = packageResult.Entries.SingleOrDefault(entry => entry.PackageId == packageId && entry.PackageRelativePath == outerPath);
+    Require(packageResult.IsComplete && outer is { Active: true } && (outer.ObservedPrimitives?.Count ?? 0) == 0 &&
+            !packageResult.Entries.Any(entry => entry.PackageRelativePath == helperPath && entry.Active),
+        $"Package ProjectExtensions content activated, recursed, or counted MSBuild primitives: complete={packageResult.IsComplete}; outer={outer?.Active}; primitives={string.Join(',', outer?.ObservedPrimitives ?? Array.Empty<string>())}; reasons={string.Join(" | ", packageResult.IncompleteReasons)}");
+}
+
+static void RunInvalidMsBuildContextRegression(string scratch)
+{
+    var invalidGeneratedImports = new[]
+    {
+        ("target parent", "<Project><Target Name=\"Invalid\"><Import Project=\"$(NuGetPackageRoot)/Generated.Context/1.0.0/build/context.targets\" /></Target></Project>"),
+        ("unknown parent", "<Project><UnknownGroup><Import Project=\"$(NuGetPackageRoot)/Generated.Context/1.0.0/build/context.targets\" /></UnknownGroup></Project>"),
+        ("unknown namespace", "<Project xmlns:x=\"urn:unrecognized\"><x:Import Project=\"$(NuGetPackageRoot)/Generated.Context/1.0.0/build/context.targets\" /></Project>")
+    };
+
+    foreach (var (name, xml) in invalidGeneratedImports)
+    {
+        var root = Path.Combine(scratch, "invalid-generated-context-" + name.Replace(' ', '-'));
+        var cache = Path.Combine(root, "cache");
+        var obj = Path.Combine(root, "obj");
+        Directory.CreateDirectory(obj);
+        var assets = Path.Combine(obj, "project.assets.json");
+        var packageId = "Generated.Context";
+        var assetPath = "build/context.targets";
+        WriteAssets(assets, cache, packageId, new[] { assetPath }, createFiles: true);
+        var document = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
+        document["targets"]!["net8.0"]![packageId + "/1.0.0"]!["build"] = new JsonObject { [assetPath] = new JsonObject() };
+        File.WriteAllText(assets, document.ToJsonString());
+        File.WriteAllText(Path.Combine(obj, "Test.csproj.nuget.g.targets"), xml);
+
+        var result = ResolvedGraphClassifier.Analyze(assets, root, strictContent: false);
+        Require(!result.IsComplete && result.Entries.Count == 0,
+            $"Generated import in {name} was accepted instead of failing closed: complete={result.IsComplete}; entries={result.Entries.Count}; reasons={string.Join(" | ", result.IncompleteReasons)}");
+    }
+
+    var invalidPackageImports = new[]
+    {
+        ("target parent", "<Project><Target Name=\"Invalid\"><Import Project=\"helpers/child.targets\" /></Target></Project>"),
+        ("unknown parent", "<Project><UnknownGroup><Import Project=\"helpers/child.targets\" /></UnknownGroup></Project>"),
+        ("unknown namespace", "<Project xmlns:x=\"urn:unrecognized\"><x:Import Project=\"helpers/child.targets\" /></Project>")
+    };
+
+    foreach (var (name, xml) in invalidPackageImports)
+    {
+        var root = Path.Combine(scratch, "invalid-package-context-" + name.Replace(' ', '-'));
+        var cache = Path.Combine(root, "cache");
+        var obj = Path.Combine(root, "obj");
+        Directory.CreateDirectory(obj);
+        var assets = Path.Combine(obj, "project.assets.json");
+        var packageId = "Nested.Context";
+        var outerPath = "build/outer.targets";
+        var childPath = "helpers/child.targets";
+        WriteAssets(assets, cache, packageId, new[] { outerPath, childPath }, createFiles: true);
+        var document = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
+        document["targets"]!["net8.0"]![packageId + "/1.0.0"]!["build"] = new JsonObject { [outerPath] = new JsonObject() };
+        File.WriteAllText(assets, document.ToJsonString());
+        File.WriteAllText(Path.Combine(cache, packageId, "1.0.0", outerPath.Replace('/', Path.DirectorySeparatorChar)), xml);
+        File.WriteAllText(Path.Combine(obj, "Test.csproj.nuget.g.targets"),
+            $"<Project><Import Project=\"$(NuGetPackageRoot)/{packageId}/1.0.0/{outerPath}\" /></Project>");
+
+        var result = ResolvedGraphClassifier.Analyze(assets, root, strictContent: false);
+        Require(!result.IsComplete && result.Entries.Count == 0,
+            $"Nested import in {name} was accepted instead of failing closed: complete={result.IsComplete}; entries={result.Entries.Count}; reasons={string.Join(" | ", result.IncompleteReasons)}");
+    }
+
+    var invalidPrimitiveContexts = new[]
+    {
+        ("Exec at Project root", "<Project><Exec Command=\"not-a-target-task\" /></Project>"),
+        ("UsingTask under Target", "<Project><Target Name=\"Invalid\"><UsingTask TaskName=\"Invalid\" AssemblyFile=\"task.dll\" /></Target></Project>"),
+        ("Code outside Task", "<Project><Code>not-inline-task-code</Code></Project>")
+    };
+    foreach (var (name, xml) in invalidPrimitiveContexts)
+    {
+        var root = Path.Combine(scratch, "invalid-primitive-context-" + name.Replace(' ', '-'));
+        var cache = Path.Combine(root, "cache");
+        var obj = Path.Combine(root, "obj");
+        Directory.CreateDirectory(obj);
+        var assets = Path.Combine(obj, "project.assets.json");
+        var packageId = "Primitive.Context";
+        var packagePath = "build/primitive.targets";
+        WriteAssets(assets, cache, packageId, new[] { packagePath }, createFiles: true);
+        var document = JsonNode.Parse(File.ReadAllText(assets))!.AsObject();
+        document["targets"]!["net8.0"]![packageId + "/1.0.0"]!["build"] = new JsonObject { [packagePath] = new JsonObject() };
+        File.WriteAllText(assets, document.ToJsonString());
+        File.WriteAllText(Path.Combine(cache, packageId, "1.0.0", packagePath.Replace('/', Path.DirectorySeparatorChar)), xml);
+        File.WriteAllText(Path.Combine(obj, "Test.csproj.nuget.g.targets"),
+            $"<Project><Import Project=\"$(NuGetPackageRoot)/{packageId}/1.0.0/{packagePath}\" /></Project>");
+
+        var result = ResolvedGraphClassifier.Analyze(assets, root, strictContent: false);
+        var scan = CaptureCommand("scan", assets, "--format", "text", "--no-telemetry");
+        Require(!result.IsComplete && scan.ExitCode == 2 && scan.Output.Contains("PS007", StringComparison.Ordinal) &&
+                !scan.Output.Contains("BuildTargets", StringComparison.Ordinal),
+            $"A package MSBuild primitive in {name} was accepted or emitted a partial surface: complete={result.IsComplete}; exit={scan.ExitCode}; output={scan.Output}; reasons={string.Join(" | ", result.IncompleteReasons)}");
+    }
+}
+
 static void RunPackageXmlSchemaRegression(string scratch)
 {
     var root = Path.Combine(scratch, "package-xml-schema");
@@ -1182,7 +1343,9 @@ static void RunPackageXmlSchemaRegression(string scratch)
       <Code Type="Fragment" Language="cs">Log.LogMessage("never executed");</Code>
     </Task>
   </UsingTask>
-  <Exec Command="echo never-executed" Condition="'$(TargetFramework)' == 'never'" />
+  <Target Name="NeverExecuted">
+    <Exec Command="echo never-executed" Condition="'$(TargetFramework)' == 'never'" />
+  </Target>
   <ImportGroup Label="standard">
     <Import Project="helpers/Helper.targets" Condition="'$(TargetFramework)' == 'never'" Label="standard" />
   </ImportGroup>

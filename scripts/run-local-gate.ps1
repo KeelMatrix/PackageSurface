@@ -106,7 +106,7 @@ try {
     Invoke-GateStep 'shipping restore' {
         & dotnet restore $solution --configfile $nugetConfig --packages $shippingPackages --no-cache --force
     }
-    $phase0Evidence = Join-Path $root 'evidence/phase0.md'
+    $phase0Evidence = Join-Path $root 'artifacts/phase0.md'
     $phase0EvidenceCopy = Join-Path $scratch 'phase0.md'
     $hadPhase0Evidence = Test-Path -LiteralPath $phase0Evidence -PathType Leaf
     if ($hadPhase0Evidence) {
@@ -146,6 +146,9 @@ try {
     }
     Invoke-GateStep 'documentation route and support contract' {
         Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-documentation-contract.ps1') -RepositoryRoot $root
+    }
+    Invoke-GateStep 'public text representation regressions' {
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-public-text-scan.ps1') -SelfTest -RepositoryRoot $root
     }
     Invoke-GateStep 'no-code-execution proof' {
         Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/verify-no-execution.ps1')

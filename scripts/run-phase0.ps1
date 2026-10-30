@@ -4,7 +4,7 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Set-Location $root
 $env:NUGET_PACKAGES = Join-Path $root '.phase0/packages'
 $feed = Join-Path $root '.phase0/feed'
-$generated = Join-Path $root 'evidence/generated'
+$generated = Join-Path $root 'artifacts/generated'
 if (Test-Path (Join-Path $root '.phase0')) { Remove-Item -LiteralPath (Join-Path $root '.phase0') -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $env:NUGET_PACKAGES, $feed, $generated | Out-Null
 $sdkBasePath = ((& dotnet --info | Select-String 'Base Path').ToString().Split(':', 2)[1]).Trim()
@@ -375,6 +375,6 @@ foreach ($line in @(
     '', '## Residual uncertainty', '',
     'This is a bounded Phase 0 fixture, not a complete NuGet/MSBuild semantic implementation. The active rules are proven for the SDK-style PackageReference graphs represented by this corpus; the hostile-input, no-execution, and resource gates are enforced by the permanent local gate. Cross-platform coverage outside the current machine remains an explicit verification assumption.'
 )) { $report.Add([string]$line) }
-Write-Utf8LfLines (Join-Path $root 'evidence/phase0.md') $report
-Write-Output "Phase 0 complete. Report: $(Join-Path $root 'evidence/phase0.md')"
+Write-Utf8LfLines (Join-Path $root 'artifacts/phase0.md') $report
+Write-Output "Phase 0 complete. Report: $(Join-Path $root 'artifacts/phase0.md')"
 if ($disagreements.Count -ne 0 -or -not $allComplete) { throw 'Phase 0 comparison failed.' }

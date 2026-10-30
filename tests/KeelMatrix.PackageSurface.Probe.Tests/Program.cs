@@ -188,10 +188,10 @@ static void RunGeneratedImportConditionRegression(string baselineAssets)
         AssertTarget("case-sensitive no-slash wrong-case Exists guard", CreateImports(buildPropsImport, null, $"Exists('{noSlashWrongCaseMacroPath}')"), true, null, string.Empty, FileSystemCaseSensitivity.Sensitive);
         AssertTarget("case-insensitive no-slash wrong-case Exists guard", CreateImports(buildPropsImport, null, $"Exists('{noSlashWrongCaseMacroPath}')"), true, null, allTargetFrameworks, FileSystemCaseSensitivity.Insensitive);
         AssertTarget("ImportGroup and Import conditions", CreateImports(buildPropsImport, "'$(ExcludeRestorePackageImports)' != 'true'", "'$(TargetFramework)' == 'net8.0'"), true, null, "net8.0");
-        AssertTarget("nested groups", CreateImports(buildPropsImport, "'$(TargetFramework)' == 'net8.0'", "'$(ExcludeRestorePackageImports)' != 'true'", nested: true), true, null, "net8.0");
+        AssertTarget("nested ImportGroup context", CreateImports(buildPropsImport, "'$(TargetFramework)' == 'net8.0'", "'$(ExcludeRestorePackageImports)' != 'true'", nested: true), false, "unsupported MSBuild XML context", string.Empty);
         AssertTarget("arbitrary property", CreateImports(buildPropsImport, "'$(Configuration)' == 'Debug'", null), false, "unsupported property", string.Empty);
         AssertTarget("additional arbitrary clause", CreateImports(buildPropsImport, "'$(TargetFramework)' == 'net8.0' AND '$(Configuration)' == 'Debug'", null), false, "unsupported property", string.Empty);
-        AssertTarget("nested arbitrary condition", CreateImports(buildPropsImport, "'$(Configuration)' == 'Debug'", null, nested: true), false, "unsupported property", string.Empty);
+        AssertTarget("nested arbitrary condition", CreateImports(buildPropsImport, "'$(Configuration)' == 'Debug'", null, nested: true), false, "unsupported MSBuild XML context", string.Empty);
         AssertTarget("unproven Exists", CreateImports(buildPropsImport, null, "Exists('$(SomeRoot)/unknown.props')"), false, "Exists expression", string.Empty);
 
         File.WriteAllText(Path.Combine(scratch, "obj", generatedPropsFileName), baselineGeneratedProps);

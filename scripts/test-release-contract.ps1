@@ -2434,10 +2434,7 @@ try {
     $versionMatch = [regex]::Match($projectText, '<Version>\s*(?<version>[^<]+?)\s*</Version>', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
     if (-not $versionMatch.Success) { throw 'The real packable project has no explicit package version.' }
     $version = $versionMatch.Groups['version'].Value.Trim()
-    $realChangelogText = Get-Content -LiteralPath $realChangelog -Raw
-    $releaseHeader = [regex]::Match($realChangelogText, "(?m)^##\s+\[$([regex]::Escape($version))\]\s+-\s+(?<date>\d{4}-\d{2}-\d{2})\s*$")
-    if (-not $releaseHeader.Success) { throw 'The real changelog has no dated entry for the package version.' }
-    $releaseDate = $releaseHeader.Groups['date'].Value
+    $releaseDate = [DateTime]::UtcNow.Date.ToString('yyyy-MM-dd', [Globalization.CultureInfo]::InvariantCulture)
 
     if (-not (Test-Path -LiteralPath $ciWorkflowPath -PathType Leaf)) { throw 'CI workflow is missing.' }
     if (-not (Test-Path -LiteralPath $releaseWorkflowPath -PathType Leaf)) { throw 'Release workflow is missing.' }
@@ -2776,9 +2773,9 @@ jobs:
     $wrongCaseDirectory = New-ArtifactSetDirectory 'artifact-set-wrong-case' @("keelmatrix.packagesurface.$version.nupkg", $artifactNames[1])
     Assert-ValidationRejects 'artifact filename case mismatch' (Invoke-ArtifactSetValidation -Version $version -Directory $wrongCaseDirectory)
 
-    # The finalized repository changelog must pass both candidate and first-release tag validation.
+    # The repository carries the finalized first release; unreleased state is covered by explicit fixtures.
     Assert-ValidationPass 'real finalized candidate' (Invoke-ReleaseValidation -Version $version -ChangelogPath $realChangelog)
-    Assert-ValidationPass 'real finalized first-release tag gate' (Invoke-ReleaseValidation -Version $version -ChangelogPath $realChangelog -RequireFinalized -FirstRelease)
+    Assert-ValidationPass 'real finalized candidate passes first-release tag validation' (Invoke-ReleaseValidation -Version $version -ChangelogPath $realChangelog -RequireFinalized -FirstRelease)
     Assert-ValidationRejects 'local gate empty expected version' (Invoke-LocalGateVersionValidation -Version '')
     Assert-ValidationRejects 'local gate whitespace expected version' (Invoke-LocalGateVersionValidation -Version ' ')
     Assert-ValidationRejects 'local gate mismatched expected version' (Invoke-LocalGateVersionValidation -Version '9.9.9')
@@ -2809,6 +2806,16 @@ jobs:
     [IO.File]::WriteAllText($nestedReleaseChangelog, $nestedReleaseFirstRelease, [Text.UTF8Encoding]::new($false))
     Assert-ValidationRejects 'first-release entry nested under Unreleased' (Invoke-ReleaseValidation -Version $version -ChangelogPath $nestedReleaseChangelog -RequireFinalized -FirstRelease)
 
+    $plainUnreleasedChangelog = Join-Path $scratch 'CHANGELOG.unreleased-plain-note.md'
+    $plainUnreleasedFirstRelease = "# Changelog`n`n## [Unreleased]`n`n- A pending capability improvement.`n`n## [$version] - $releaseDate`n`n### Added`n`n- Initial release capability review.`n"
+    [IO.File]::WriteAllText($plainUnreleasedChangelog, $plainUnreleasedFirstRelease, [Text.UTF8Encoding]::new($false))
+    Assert-ValidationRejects 'first-release plain note under Unreleased' (Invoke-ReleaseValidation -Version $version -ChangelogPath $plainUnreleasedChangelog -RequireFinalized -FirstRelease)
+
+    $categorizedUnreleasedChangelog = Join-Path $scratch 'CHANGELOG.unreleased-categorized-note.md'
+    $categorizedUnreleasedFirstRelease = "# Changelog`n`n## [Unreleased]`n`n### Added`n`n- A pending capability improvement.`n`n## [$version] - $releaseDate`n`n### Added`n`n- Initial release capability review.`n"
+    [IO.File]::WriteAllText($categorizedUnreleasedChangelog, $categorizedUnreleasedFirstRelease, [Text.UTF8Encoding]::new($false))
+    Assert-ValidationRejects 'first-release categorized note under Unreleased' (Invoke-ReleaseValidation -Version $version -ChangelogPath $categorizedUnreleasedChangelog -RequireFinalized -FirstRelease)
+
     $candidateChangelog = Join-Path $scratch 'CHANGELOG.finalized.md'
     $candidateFirstRelease = "# Changelog`n`n## [Unreleased]`n`n## [$version] - $releaseDate`n`n### Added`n`n- Initial release capability review.`n"
     [IO.File]::WriteAllText($candidateChangelog, $candidateFirstRelease, [Text.UTF8Encoding]::new($false))
@@ -2829,7 +2836,10 @@ jobs:
         'README.md',
         'CHANGELOG.md',
         'SECURITY.md',
+        'PRIVACY.md',
+        'LICENSE',
         'docs/DEV.md',
+        'docs/restore-and-baseline-safety.md',
         'src/KeelMatrix.PackageSurface.Cli/README.md',
         'src/KeelMatrix.PackageSurface.Cli/CommandLine.cs'
     )) {

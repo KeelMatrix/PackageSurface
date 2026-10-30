@@ -84,7 +84,7 @@ Assert-Contains 'canonical safety reference' $reference @(
     'canonical restore-identity index', 'every reachable package-inventory file'
 )
 Assert-Contains 'changelog' $changelog @(
-    '### Fixed', 'ProjectExtensions', 'supported MSBuild contexts'
+    '### Added', 'root-level MSBuild `ProjectExtensions` content as extension data'
 )
 
 foreach ($target in @(

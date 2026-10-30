@@ -78,6 +78,19 @@ The `RunSymlinkPackageAliasCase` and `RunDirectorySymlinkPackageAliasCase` helpe
 | Filesystem containment behavior | `ProbeModuleTests.FilesystemSafetyChecksContainmentAtTheModuleSeam` | Direct internal-module seam test. |
 | Deterministic incomplete-reason normalization | `ProbeModuleTests.IncompleteAnalysisNormalizesReasonsDeterministically` | Direct internal-module seam test. |
 | Valid empty graph, malformed restore documents, missing assets, traversal path, missing asset, and oversized restore input | `ProbeAnalysisTests` | Separate discovered cases; malformed documents are three theory data cases. |
+| Composed multi-target and RID result assembly, direct relationship, and active/inactive native assets | `ProbeAnalysisTests.ComposedTargetResultsPreserveFrameworkRidAndActiveState` | Exercises the public classifier through restore identity, graph provenance, package inventory, asset applicability, and target result construction. Strict-content eligibility remains covered by `ReportsTests.StrictContentEligibilityMatrix`. |
+| Build-import condition applicability through target aliases | `ProbeAnalysisTests.BuildImportConditionsUseTargetAliasesForEachFramework` | Exercises a multi-target package with an OR condition and a target alias that differs from the canonical framework key. |
+
+## Classifier decomposition component coverage
+
+| Policy boundary | Focused discovered coverage | Composed or adjacent coverage |
+| --- | --- | --- |
+| Restore identity and graph provenance | `ProbeModuleTests.RestoreGraphComponentsPreserveTargetPackageProvenance`; `GraphIdentityTests.RestoreIdentitiesReconcileAcrossMetadataSources`; `GraphIdentityTests.ReachabilityClosureIncludesOnlyResolvedPackages` | `ProbeAnalysisTests.ComposedTargetResultsPreserveFrameworkRidAndActiveState` |
+| Generated imports and MSBuild metadata | `ProbeModuleTests.GeneratedImportAnalysisOwnsExpectedSourceAndImportEvidence`; `ProbeAnalysisTests.BuildImportConditionsUseTargetAliasesForEachFramework`; `GeneratedImportTests.PackageMsbuildXmlMustMatchTheSupportedSchema` | `GeneratedImportTests.NestedImportsAreAnalyzed`; `GeneratedImportTests.NestedImportPhasesRemainDistinct` |
+| Asset applicability, capability, and active state | `ProbeModuleTests.CapabilityClassifierOwnsAssetContextAndApplicability`; `AssetClassificationTests.ApplicabilityAndPresentStateAreConservative` | Composed target/RID case above and Phase 0 fixture verifier matrix |
+| Filesystem identity, containment, and presence | `ProbeModuleTests.FilesystemSafetyChecksContainmentAtTheModuleSeam`; `ProbeModuleTests.FilesystemComponentOwnsPresenceAndResolvedPathEvidence` | `FilesystemSafetyTests.ReachablePackageAliasesAreRejected`; `FilesystemSafetyTests.MixedFilesystemIdentityIsConsistent` |
+| Incomplete analysis and resource limits | `ProbeModuleTests.IncompleteAnalysisOwnsBudgetFailureConversion`; `HostileInputTests.LargeReachableGraphStaysWithinTheResourceBudget` | `ProbeAnalysisTests.OversizedRestoreFileFailsClosed`; malformed metadata and I/O diagnostic scenarios remain in the existing CLI corpus |
+| Target and project result construction | `AssetClassificationTests.ProjectLevelAssetsAreAggregated` | `ProbeAnalysisTests.ComposedTargetResultsPreserveFrameworkRidAndActiveState`; nested-import phase and aggregation scenarios above |
 
 ## Retained repository gates
 

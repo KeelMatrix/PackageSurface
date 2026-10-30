@@ -1,5 +1,3 @@
-using System.Reflection.Metadata;
-using System.Reflection.PortableExecutable;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -19,6 +17,13 @@ namespace KeelMatrix.PackageSurface.Probe;
 internal static class PackageFileSystemSafety
 {
 
+    internal sealed record PackageInventorySnapshot(
+        Dictionary<string, string> PackageRoots,
+        Dictionary<string, HashSet<string>> PackageInventories);
+
+
+    internal sealed record PackageAssetPresence(bool Present, string PhysicalPath, string? Reason);
+
 
     // Containment compares canonical identities. Production uses Path.GetFullPath;
     // the test harness injects a deterministic canonicalization function through this
@@ -29,6 +34,109 @@ internal static class PackageFileSystemSafety
 
     internal static bool PathsEqual(string left, string right) =>
         FileSystemPathsEqual(left, right);
+
+
+    internal static PackageInventorySnapshot PreparePackageInventory(
+        RestoreGraphMetadata metadata,
+        RestoreGraphSnapshot graph,
+        string projectRoot,
+        string? projectContext,
+        string? selectedProjectPath,
+        List<string> incomplete,
+        AnalysisBudget budget)
+    {
+        FileSystemComparisonContext.Current.RegisterProjectPath(
+            projectContext,
+            selectedProjectPath ?? ReadProjectPath(metadata.Root) ?? projectRoot);
+        var reachablePackageKeys = graph.ReachablePackagesByTarget.Values
+            .SelectMany(value => value.ReachablePackageKeys)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var packageRoots = ResolvePackageRoots(
+            metadata.Identities,
+            metadata.Libraries,
+            metadata.PackageFolders,
+            incomplete,
+            reachablePackageKeys);
+        FileSystemComparisonContext.Current.RegisterPackageRoots(projectContext, packageRoots);
+        var packageInventories = BuildPackageInventories(
+            packageRoots,
+            metadata.Identities,
+            metadata.Libraries,
+            incomplete,
+            budget);
+        return new PackageInventorySnapshot(packageRoots, packageInventories);
+    }
+
+
+    internal static IReadOnlyList<string> GetPackageAssetFiles(
+        string packageRoot,
+        string libraryKey,
+        JsonElement library,
+        IReadOnlyDictionary<string, HashSet<string>> packageInventories,
+        List<string> incomplete,
+        AnalysisBudget budget) =>
+        packageInventories.TryGetValue(Path.GetFullPath(packageRoot), out var inventory)
+            ? inventory.Order(StringComparer.Ordinal).ToArray()
+            : ReadLibraryFiles(library, libraryKey, incomplete, budget).ToArray();
+
+
+    internal static PackageAssetPresence InspectAssetPresence(
+        string packageRoot,
+        string relativePath,
+        string libraryKey,
+        List<string> incomplete,
+        AnalysisBudget budget)
+    {
+        var physicalPath = Path.Combine(packageRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        var resolved = TryResolveExistingFilePath(physicalPath, out var actualPath);
+        var safePath = resolved && IsSafeResolvedFile(packageRoot, actualPath);
+        var present = safePath;
+        if (present)
+        {
+            physicalPath = actualPath;
+        }
+
+        var reason = present ? null : safePath
+            ? $"Reachable asset is missing from resolved package contents: {relativePath}."
+            : $"Reachable asset resolves through an unsafe package path: {relativePath}.";
+        if (!present)
+        {
+            incomplete.Add($"{libraryKey}: {reason}");
+        }
+        else
+        {
+            budget.Add(FileLength(physicalPath), "package asset");
+        }
+
+        return new PackageAssetPresence(present, physicalPath, reason);
+    }
+
+
+    internal static bool TryResolveNestedImportAsset(
+        string packageRoot,
+        string relativePath,
+        IReadOnlyDictionary<string, HashSet<string>> packageInventories,
+        List<string> incomplete,
+        out string physicalPath)
+    {
+        var candidatePath = Path.Combine(packageRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        if (!TryResolveExistingFilePath(candidatePath, out physicalPath) || !IsSafeResolvedFile(packageRoot, physicalPath))
+        {
+            incomplete.Add("A statically imported package build file is missing or outside its resolved package root.");
+            physicalPath = string.Empty;
+            return false;
+        }
+
+        var actualRelativePath = Path.GetRelativePath(packageRoot, physicalPath).Replace(Path.DirectorySeparatorChar, '/');
+        if (!IsDeclaredPackageFile(packageRoot, actualRelativePath, packageInventories))
+        {
+            incomplete.Add("A statically imported package build file is absent from the resolved package inventory.");
+            physicalPath = string.Empty;
+            return false;
+        }
+
+        return true;
+    }
 
 
 
@@ -343,32 +451,6 @@ internal static class PackageFileSystemSafety
         return false;
     }
 
-
-
-    internal static bool ValidateCompilerMetadata(string path, out string reason)
-    {
-        reason = string.Empty;
-        try
-        {
-            EnsureFileWithinLimit(path, MaxMetadataFileBytes, "compiler extension");
-            using var stream = File.OpenRead(path);
-            using var peReader = new PEReader(stream, PEStreamOptions.LeaveOpen);
-            if (!peReader.HasMetadata)
-            {
-                reason = "the file does not contain managed metadata";
-                return false;
-            }
-
-            MetadataReader metadata = peReader.GetMetadataReader();
-            _ = metadata.GetString(metadata.GetAssemblyDefinition().Name);
-            return true;
-        }
-        catch (Exception ex) when (ex is BadImageFormatException or InvalidOperationException or IOException or UnauthorizedAccessException)
-        {
-            reason = "the compiler-extension metadata could not be read";
-            return false;
-        }
-    }
 
 
 }

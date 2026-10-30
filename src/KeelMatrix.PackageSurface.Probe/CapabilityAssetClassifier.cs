@@ -19,6 +19,106 @@ namespace KeelMatrix.PackageSurface.Probe;
 internal static class CapabilityAssetClassifier
 {
 
+    internal sealed record ProjectCapabilityContext(
+        ProjectLanguage Language,
+        string? CompilerApiVersion,
+        bool IsMultiTargeting);
+
+
+    internal sealed record CapabilityAssetPath(CapabilityKind Capability, SurfaceContextKind Context);
+
+
+    internal static ProjectCapabilityContext ReadProjectCapabilityContext(
+        JsonElement root,
+        string projectRoot,
+        string? selectedProjectPath,
+        RestoreIdentityIndex restoreIdentities,
+        string? compilerApiVersion,
+        List<string> incomplete) =>
+        new(
+            ReadProjectLanguage(root, projectRoot, selectedProjectPath, incomplete),
+            compilerApiVersion ?? ReadCompilerApiVersion(root),
+            restoreIdentities.IsMultiTargeting);
+
+
+    internal static bool TryClassifyAssetPath(string path, out CapabilityAssetPath asset)
+    {
+        if (!TryGetCapability(path, out var capability))
+        {
+            asset = null!;
+            return false;
+        }
+
+        asset = new CapabilityAssetPath(
+            capability,
+            capability == CapabilityKind.BuildMultiTargeting ? SurfaceContextKind.Project : SurfaceContextKind.Target);
+        return true;
+    }
+
+
+    internal static bool TryClassifyResolvedAsset(
+        string path,
+        AnalysisBudget budget,
+        out CapabilityAssetPath asset)
+    {
+        budget.AddOperation("resolved asset");
+        return TryClassifyAssetPath(path, out asset);
+    }
+
+
+    internal static bool IsStrictContentHashEligible(CapabilityKind capability, bool present, bool active) =>
+        CapabilityPolicy.IsStrictContentEligible(capability, present, active);
+
+
+    internal static void ValidateCompilerExtensionMetadata(
+        CapabilityKind capability,
+        bool present,
+        string physicalPath,
+        string relativePath,
+        string libraryKey,
+        List<string> incomplete,
+        ref string? reason)
+    {
+        if (!present || capability != CapabilityKind.CompilerExtension)
+        {
+            return;
+        }
+
+        if (ValidateCompilerMetadata(physicalPath, out var metadataReason))
+        {
+            return;
+        }
+
+        incomplete.Add($"{libraryKey}: analyzer metadata is invalid for {relativePath}: {metadataReason}");
+        reason = $"Compiler extension metadata is invalid: {relativePath}.";
+    }
+
+
+    internal static bool ValidateCompilerMetadata(string path, out string reason)
+    {
+        reason = string.Empty;
+        try
+        {
+            EnsureFileWithinLimit(path, MaxMetadataFileBytes, "compiler extension");
+            using var stream = File.OpenRead(path);
+            using var peReader = new PEReader(stream, PEStreamOptions.LeaveOpen);
+            if (!peReader.HasMetadata)
+            {
+                reason = "the file does not contain managed metadata";
+                return false;
+            }
+
+            MetadataReader metadata = peReader.GetMetadataReader();
+            _ = metadata.GetString(metadata.GetAssemblyDefinition().Name);
+            return true;
+        }
+        catch (Exception ex) when (ex is BadImageFormatException or InvalidOperationException or IOException or UnauthorizedAccessException)
+        {
+            reason = "the compiler-extension metadata could not be read";
+            return false;
+        }
+    }
+
 
     internal static ProjectLanguage ReadProjectLanguage(JsonElement root, string projectRoot, string? selectedProjectPath, List<string> incomplete)
     {
@@ -255,6 +355,78 @@ internal static class CapabilityAssetClassifier
         }
 
         return selectedAnalyzers.Contains(path);
+    }
+
+
+    internal static bool IsActive(
+        CapabilityKind capability,
+        string relativePath,
+        PackageIdentity packageIdentity,
+        HashSet<string> analyzerPackages,
+        IReadOnlySet<string> selectedAnalyzers,
+        string packageRoot,
+        JsonElement targetAssets,
+        SurfaceContextKind context,
+        string targetFramework,
+        IReadOnlyList<GeneratedImport> generatedImports,
+        IReadOnlySet<string> expectedGeneratedImportSources,
+        bool isMultiTargetingProject,
+        ProjectLanguage projectLanguage,
+        ref string? reason,
+        List<string> incomplete,
+        string libraryKey)
+    {
+        if (capability == CapabilityKind.ToolOrScriptPresent)
+        {
+            return false;
+        }
+
+        if (capability is CapabilityKind.BuildProps or CapabilityKind.BuildTargets or CapabilityKind.BuildTransitive or CapabilityKind.BuildMultiTargeting)
+        {
+            var reachableBuildAsset = ContainsBuildAsset(targetAssets, capability, relativePath, incomplete, libraryKey);
+            var fullAsset = NormalizeText(Path.Combine(packageRoot, relativePath.Replace('/', Path.DirectorySeparatorChar)));
+            var hasMatchingImport = generatedImports.Any(import =>
+            {
+                var normalizedImport = NormalizeText(import.Project);
+                var referencesAsset = FileSystemPathsEqual(normalizedImport, fullAsset) ||
+                    PackageRootImportEquals(normalizedImport, packageIdentity, relativePath);
+                return IsNestedOrExpectedGeneratedImportSource(import, relativePath, expectedGeneratedImportSources) && referencesAsset;
+            });
+            var imported = generatedImports.Any(import =>
+            {
+                var normalizedImport = NormalizeText(import.Project);
+                var referencesAsset = FileSystemPathsEqual(normalizedImport, fullAsset) ||
+                    PackageRootImportEquals(normalizedImport, packageIdentity, relativePath);
+                return IsNestedOrExpectedGeneratedImportSource(import, relativePath, expectedGeneratedImportSources) &&
+                       referencesAsset &&
+                       import.AppliesTo(context, targetFramework, capability == CapabilityKind.BuildMultiTargeting);
+            });
+            var hasWrongPhaseImport = generatedImports.Any(import =>
+            {
+                var normalizedImport = NormalizeText(import.Project);
+                var referencesAsset = FileSystemPathsEqual(normalizedImport, fullAsset) ||
+                    PackageRootImportEquals(normalizedImport, packageIdentity, relativePath);
+                return !import.IsNested && referencesAsset && !IsExpectedGeneratedImportSource(import.SourceFile, relativePath, expectedGeneratedImportSources);
+            });
+            if (!imported &&
+                (hasWrongPhaseImport ||
+                 (reachableBuildAsset && !hasMatchingImport && RequiresGeneratedImportEvidence(capability, relativePath, isMultiTargetingProject))))
+            {
+                reason = $"Required generated NuGet import evidence is missing or phase-mismatched: {relativePath}.";
+                incomplete.Add($"{libraryKey}: {reason}");
+            }
+
+            return imported;
+        }
+
+        var assetName = relativePath.Replace('\\', '/');
+        return capability switch
+        {
+            CapabilityKind.CompilerExtension => IsCompilerExtensionActive(assetName, projectLanguage, analyzerPackages, selectedAnalyzers, packageIdentity.CanonicalKey, incomplete, libraryKey),
+            CapabilityKind.CompileSourceInjection => IsCompileContentFile(targetAssets, assetName, projectLanguage, incomplete, libraryKey),
+            CapabilityKind.NativeRuntime => ContainsAsset(targetAssets, "native", assetName, incomplete, libraryKey) || ContainsAsset(targetAssets, "runtime", assetName, incomplete, libraryKey),
+            _ => false
+        };
     }
 
 

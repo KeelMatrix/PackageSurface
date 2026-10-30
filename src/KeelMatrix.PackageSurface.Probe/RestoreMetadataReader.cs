@@ -182,6 +182,8 @@ internal static class RestoreMetadataReader
         public Dictionary<string, string> PackageRoots { get; } = new(StringComparer.OrdinalIgnoreCase);
 
         public IReadOnlySet<string> FrameworkContexts => Frameworks.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        public bool IsMultiTargeting => Targets.Values.Select(target => target.FrameworkKey)
+            .Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1;
 
         public bool TryGetFramework(string sourceKey, out RestoreFrameworkIdentity identity)
         {
@@ -301,6 +303,69 @@ internal static class RestoreMetadataReader
             canonicalKey = string.Empty;
             return false;
         }
+    }
+
+
+    internal sealed record RestoreGraphMetadata(
+        JsonElement Root,
+        JsonElement Libraries,
+        JsonElement Targets,
+        string[] PackageFolders,
+        RestoreIdentityIndex Identities);
+
+
+    internal static JsonDocument ReadAssetsDocument(string assetsFile, AnalysisBudget budget)
+    {
+        EnsureFileWithinLimit(assetsFile, MaxMetadataFileBytes, "project.assets.json");
+        budget.Add(FileLength(assetsFile), "metadata");
+        using var stream = File.OpenRead(assetsFile);
+        return JsonDocument.Parse(stream, new JsonDocumentOptions { MaxDepth = MaxJsonDepth });
+    }
+
+
+    internal static RestoreGraphMetadata? ReadGraphMetadata(
+        JsonElement root,
+        List<string> incomplete,
+        AnalysisBudget budget)
+    {
+        ValidateRestoreJsonStructure(root, incomplete);
+        if (incomplete.Count > 0)
+        {
+            return null;
+        }
+
+        _ = ValidateAssetsFormat(root, incomplete);
+        var packageFolders = ReadPackageFolders(root, incomplete);
+        var libraries = root.TryGetProperty("libraries", out var librariesElement)
+            ? librariesElement
+            : throw new InvalidDataException("project.assets.json has no libraries object.");
+        if (libraries.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidDataException("project.assets.json has an invalid libraries object.");
+        }
+
+        foreach (var _ in libraries.EnumerateObject())
+        {
+            budget.AddLibrary();
+        }
+
+        if (!root.TryGetProperty("targets", out var targets))
+        {
+            throw new InvalidDataException("project.assets.json has no targets object.");
+        }
+
+        if (targets.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidDataException("project.assets.json has an invalid targets object.");
+        }
+
+        foreach (var _ in targets.EnumerateObject())
+        {
+            budget.AddTargetGraph();
+        }
+
+        var identities = BuildRestoreIdentityIndex(root, libraries, targets, incomplete);
+        return new RestoreGraphMetadata(root, libraries, targets, packageFolders, identities);
     }
 
 

@@ -19,6 +19,20 @@ namespace KeelMatrix.PackageSurface.Probe;
 internal static class GeneratedImportAnalyzer
 {
 
+    internal sealed record GeneratedImportSnapshot(
+        List<GeneratedImport> Imports,
+        HashSet<string> ExpectedGeneratedImportSources);
+
+
+    internal sealed record NestedImportAsset(
+        PackageIdentity Package,
+        string PackageRoot,
+        string RelativePath,
+        CapabilityKind Capability,
+        SurfaceContextKind Context,
+        string TargetFramework,
+        string? RuntimeIdentifier);
+
 
     internal static readonly Regex PropertyComparison = new(
         "^\\s*['\\\"]?\\$\\(\\s*(?<property>[A-Za-z_][A-Za-z0-9_.-]*)\\s*\\)['\\\"]?\\s*(?<operator>==|!=)\\s*['\\\"](?<value>[^'\\\"]*)['\\\"]\\s*$",
@@ -106,19 +120,50 @@ internal static class GeneratedImportAnalyzer
     };
 
 
+    internal static GeneratedImportSnapshot ReadAndValidate(
+        RestoreGraphMetadata metadata,
+        string assetsFile,
+        string projectRoot,
+        string? selectedProjectPath,
+        PackageInventorySnapshot packageInventory,
+        RestoreGraphSnapshot graph,
+        List<string> incomplete,
+        AnalysisBudget budget)
+    {
+        var expectedSources = new HashSet<string>(ProjectPathStringComparer);
+        var imports = ReadGeneratedImports(
+            metadata.Root,
+            assetsFile,
+            projectRoot,
+            selectedProjectPath,
+            metadata.Identities,
+            packageInventory.PackageRoots,
+            packageInventory.PackageInventories,
+            metadata.Libraries,
+            metadata.Identities.FrameworkContexts,
+            incomplete,
+            budget,
+            expectedSources);
+        ValidateGeneratedImportEvidence(
+            imports,
+            metadata.Targets,
+            metadata.Identities,
+            graph.ReachablePackagesByTarget,
+            packageInventory.PackageRoots,
+            packageInventory.PackageInventories,
+            metadata.Libraries,
+            incomplete,
+            budget);
+        return new GeneratedImportSnapshot(imports, expectedSources);
+    }
 
-    internal static IEnumerable<SurfaceEntry> CreateNestedImportEntries(
+
+    internal static IEnumerable<NestedImportAsset> FindNestedImportAssets(
         IReadOnlyList<GeneratedImport> generatedImports,
         RestoreIdentityIndex restoreIdentities,
-        IReadOnlyDictionary<string, string> packageRoots,
-        Dictionary<string, HashSet<string>> packageInventories,
         JsonElement libraries,
         string targetFramework,
         string? runtimeIdentifier,
-        HashSet<string> directPackages,
-        string? projectContext,
-        bool strictContent,
-        AnalysisBudget budget,
         List<string> incomplete)
     {
         foreach (var import in generatedImports.Where(value => value.IsNested && value.PackageRoot is not null && value.PackageRelativePath is not null))
@@ -143,57 +188,72 @@ internal static class GeneratedImportAnalyzer
                 continue;
             }
 
-            var packageId = packageIdentity.Id;
-            var version = packageIdentity.Version;
-            var physicalPath = Path.Combine(import.PackageRoot!, import.PackageRelativePath!.Replace('/', Path.DirectorySeparatorChar));
-            if (!TryResolveExistingFilePath(physicalPath, out var actualPath) ||
-                !IsSafeResolvedFile(import.PackageRoot!, actualPath))
-            {
-                incomplete.Add("A statically imported package build file is missing or outside its resolved package root.");
-                continue;
-            }
-            physicalPath = actualPath;
-            var actualRelativePath = Path.GetRelativePath(import.PackageRoot!, physicalPath).Replace(Path.DirectorySeparatorChar, '/');
-            if (!IsDeclaredPackageFile(import.PackageRoot!, actualRelativePath, packageInventories))
-            {
-                incomplete.Add("A statically imported package build file is absent from the resolved package inventory.");
-                continue;
-            }
-
-            budget.AddOperation("nested surface entry");
-            IReadOnlyList<string>? observedPrimitives = null;
-            try
-            {
-                observedPrimitives = InspectMsBuildXml(physicalPath);
-            }
-            catch (XmlException)
-            {
-                incomplete.Add($"{packageIdentity.CanonicalKey}: nested package MSBuild file {import.PackageRelativePath} is malformed.");
-            }
-            catch (InvalidOperationException)
-            {
-                incomplete.Add($"{packageIdentity.CanonicalKey}: nested package MSBuild file {import.PackageRelativePath} is unsupported.");
-            }
-
-            var sha = strictContent && CapabilityPolicy.IsStrictContentEligible(import.Capability.Value, true, true)
-                ? ComputeSha256(physicalPath, budget)
-                : null;
-            yield return new SurfaceEntry(
-                context == SurfaceContextKind.Project ? null : targetFramework,
-                context == SurfaceContextKind.Project ? null : runtimeIdentifier,
-                context,
-                packageId,
-                version,
-                directPackages.Contains(packageIdentity.Identity.CanonicalKey) ? "direct" : "transitive",
+            yield return new NestedImportAsset(
+                packageIdentity.Identity,
+                import.PackageRoot!,
+                import.PackageRelativePath!,
                 import.Capability.Value,
-                import.PackageRelativePath,
-                true,
-                true,
-                sha,
-                false,
-                null,
-                projectContext,
-                observedPrimitives);
+                context,
+                targetFramework,
+                runtimeIdentifier);
+        }
+    }
+
+
+    internal static IReadOnlyList<string>? InspectPackageBuildMetadata(
+        CapabilityKind capability,
+        bool present,
+        string physicalPath,
+        string relativePath,
+        string libraryKey,
+        List<string> incomplete,
+        ref string? reason)
+    {
+        if (!present || !IsBuildCapability(capability))
+        {
+            return null;
+        }
+
+        try
+        {
+            return InspectMsBuildXml(physicalPath);
+        }
+        catch (XmlException)
+        {
+            incomplete.Add($"{libraryKey}: package MSBuild file {relativePath} is malformed.");
+            reason = $"Package MSBuild XML is malformed: {relativePath}.";
+            return null;
+        }
+        catch (InvalidOperationException)
+        {
+            incomplete.Add($"{libraryKey}: package MSBuild file {relativePath} is unsupported.");
+            reason = $"Package MSBuild XML is unsupported: {relativePath}.";
+            return null;
+        }
+    }
+
+
+    internal static IReadOnlyList<string>? InspectNestedBuildMetadata(
+        string physicalPath,
+        string libraryKey,
+        string relativePath,
+        AnalysisBudget budget,
+        List<string> incomplete)
+    {
+        budget.AddOperation("nested surface entry");
+        try
+        {
+            return InspectMsBuildXml(physicalPath);
+        }
+        catch (XmlException)
+        {
+            incomplete.Add($"{libraryKey}: nested package MSBuild file {relativePath} is malformed.");
+            return null;
+        }
+        catch (InvalidOperationException)
+        {
+            incomplete.Add($"{libraryKey}: nested package MSBuild file {relativePath} is unsupported.");
+            return null;
         }
     }
 
@@ -752,79 +812,6 @@ internal static class GeneratedImportAnalyzer
 
         reason = sawSafeRoot ? "missing package import (relative reference; safe-root)" : "not a package import";
         return false;
-    }
-
-
-
-    internal static bool IsActive(
-        CapabilityKind capability,
-        string relativePath,
-        PackageIdentity packageIdentity,
-        HashSet<string> analyzerPackages,
-        IReadOnlySet<string> selectedAnalyzers,
-        string packageRoot,
-        JsonElement targetAssets,
-        SurfaceContextKind context,
-        string targetFramework,
-        IReadOnlyList<GeneratedImport> generatedImports,
-        IReadOnlySet<string> expectedGeneratedImportSources,
-        bool isMultiTargetingProject,
-        ProjectLanguage projectLanguage,
-        ref string? reason,
-        List<string> incomplete,
-        string libraryKey)
-    {
-        if (capability == CapabilityKind.ToolOrScriptPresent)
-        {
-            return false;
-        }
-
-        if (capability is CapabilityKind.BuildProps or CapabilityKind.BuildTargets or CapabilityKind.BuildTransitive or CapabilityKind.BuildMultiTargeting)
-        {
-            var reachableBuildAsset = ContainsBuildAsset(targetAssets, capability, relativePath, incomplete, libraryKey);
-            var fullAsset = NormalizeText(Path.Combine(packageRoot, relativePath.Replace('/', Path.DirectorySeparatorChar)));
-            var hasMatchingImport = generatedImports.Any(import =>
-            {
-                var normalizedImport = NormalizeText(import.Project);
-                var referencesAsset = FileSystemPathsEqual(normalizedImport, fullAsset) ||
-                    PackageRootImportEquals(normalizedImport, packageIdentity, relativePath);
-                return IsNestedOrExpectedGeneratedImportSource(import, relativePath, expectedGeneratedImportSources) && referencesAsset;
-            });
-            var imported = generatedImports.Any(import =>
-            {
-                var normalizedImport = NormalizeText(import.Project);
-                var referencesAsset = FileSystemPathsEqual(normalizedImport, fullAsset) ||
-                    PackageRootImportEquals(normalizedImport, packageIdentity, relativePath);
-                return IsNestedOrExpectedGeneratedImportSource(import, relativePath, expectedGeneratedImportSources) &&
-                       referencesAsset &&
-                       import.AppliesTo(context, targetFramework, capability == CapabilityKind.BuildMultiTargeting);
-            });
-            var hasWrongPhaseImport = generatedImports.Any(import =>
-            {
-                var normalizedImport = NormalizeText(import.Project);
-                var referencesAsset = FileSystemPathsEqual(normalizedImport, fullAsset) ||
-                    PackageRootImportEquals(normalizedImport, packageIdentity, relativePath);
-                return !import.IsNested && referencesAsset && !IsExpectedGeneratedImportSource(import.SourceFile, relativePath, expectedGeneratedImportSources);
-            });
-            if (!imported &&
-                (hasWrongPhaseImport ||
-                 (reachableBuildAsset && !hasMatchingImport && RequiresGeneratedImportEvidence(capability, relativePath, isMultiTargetingProject))))
-            {
-                reason = $"Required generated NuGet import evidence is missing or phase-mismatched: {relativePath}.";
-                incomplete.Add($"{libraryKey}: {reason}");
-            }
-
-            return imported;
-        }
-
-        var assetName = relativePath.Replace('\\', '/');
-        return capability switch
-        {
-            CapabilityKind.CompilerExtension => IsCompilerExtensionActive(assetName, projectLanguage, analyzerPackages, selectedAnalyzers, packageIdentity.CanonicalKey, incomplete, libraryKey),
-            CapabilityKind.CompileSourceInjection => IsCompileContentFile(targetAssets, assetName, projectLanguage, incomplete, libraryKey),
-            CapabilityKind.NativeRuntime => ContainsAsset(targetAssets, "native", assetName, incomplete, libraryKey) || ContainsAsset(targetAssets, "runtime", assetName, incomplete, libraryKey),
-            _ => false
-        };
     }
 
 

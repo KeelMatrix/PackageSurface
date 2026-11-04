@@ -4,7 +4,7 @@ PackageSurface release history.
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-10-30
+## [0.1.0] - 2026-11-04
 
 ### Added
 

@@ -94,11 +94,13 @@ jobs:
               "KeelMatrix.PackageSurface.$version.snupkg"
           )
           $entries = @(Get-ChildItem -LiteralPath artifacts/release -Force)
-          if (@($entries | Where-Object PSIsContainer).Count -gt 0) {
-              throw 'Downloaded release artifact directory contains a subdirectory.'
+          foreach ($entry in $entries) {
+              if ($entry.PSIsContainer -or (($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
+                  throw "Downloaded release artifact directory contains a non-regular artifact entry: $($entry.Name)"
+              }
           }
           $actual = @($entries | Select-Object -ExpandProperty Name | Sort-Object)
-          if (@(Compare-Object -CaseSensitive ($expected | Sort-Object) $actual).Count -ne 0) {
+          if ($entries.Count -ne 2 -or @(Compare-Object -CaseSensitive ($expected | Sort-Object) $actual).Count -ne 0) {
               throw "Downloaded release artifact set is not exact: $($actual -join ', ')"
           }
       - name: Authenticate to NuGet.org
@@ -159,6 +161,12 @@ jobs:
             printf 'Downloaded release artifact set is not exact: %s\n' "${actual[*]}" >&2
             exit 1
           fi
+          for path in "artifacts/release/$expected_package" "artifacts/release/$expected_symbols"; do
+            if [[ ! -f "$path" || -L "$path" ]]; then
+              printf 'Downloaded release artifact is not a regular non-link file: %s\n' "$path" >&2
+              exit 1
+            fi
+          done
           gh release create \
             --repo "$RELEASE_REPOSITORY" \
             "$RELEASE_TAG" \

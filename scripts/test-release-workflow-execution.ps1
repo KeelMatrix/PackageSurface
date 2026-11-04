@@ -126,6 +126,64 @@ function Assert-Stopped($Result, [string] $Name, [string] $Forbidden = 'AFTER_BL
     Assert-Case ($Result.Exit -ne 0 -and $Result.Messages -notmatch $Forbidden) "$Name did not stop the step: $($Result.Messages)"
 }
 
+function New-ArtifactMember([string] $Path, [string] $Kind) {
+    switch ($Kind) {
+        'regular' { Write-Fixture $Path 'offline artifact' }
+        'directory' { [void][IO.Directory]::CreateDirectory($Path) }
+        { $_ -in @('file-link', 'directory-link', 'dangling-link') } {
+            $target = Join-Path $scratch "targets/$Kind"
+            $null = New-Item -ItemType SymbolicLink -Path $Path -Target $target -Force -ErrorAction Stop
+        }
+        default { throw "Unknown member kind: $Kind." }
+    }
+    $entry = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+    $isLink = ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+    Assert-Case ($isLink -eq $Kind.EndsWith('-link', [StringComparison]::Ordinal)) "Fixture did not create the requested link metadata: $Kind."
+    Assert-Case ($entry.PSIsContainer -eq ($Kind -in @('directory', 'directory-link'))) "Fixture has the wrong container type: $Kind."
+    if ($Kind -eq 'dangling-link') {
+        Assert-Case (-not (Test-Path -LiteralPath $target)) 'Dangling link target unexpectedly exists.'
+    }
+    Write-Host "MEMBER=$($entry.Name) KIND=$Kind ATTRIBUTES=$($entry.Attributes) LINK_TYPE=$($entry.LinkType)"
+}
+
+function Reset-ArtifactFixture([string] $PackageKind = 'regular', [string] $SymbolsKind = 'regular', [switch] $Reverse) {
+    if (Test-Path -LiteralPath $artifactDirectory) { Remove-Item -LiteralPath $artifactDirectory -Recurse -Force }
+    [void][IO.Directory]::CreateDirectory($artifactDirectory)
+    $slots = if ($Reverse) { @(1, 0) } else { @(0, 1) }
+    foreach ($slot in $slots) {
+        $kind = if ($slot -eq 0) { $PackageKind } else { $SymbolsKind }
+        New-ArtifactMember (Join-Path $artifactDirectory $artifactNames[$slot]) $kind
+    }
+    $entries = @(Get-ChildItem -LiteralPath $artifactDirectory -Force)
+    Assert-Case ($entries.Count -eq 2 -and @(Compare-Object -CaseSensitive $artifactNames @($entries.Name | Sort-Object)).Count -eq 0) 'Type fixture must retain exactly the two expected names.'
+}
+
+function Assert-DownloadedResult($Result, [bool] $Valid, [string] $Name) {
+    if ($Valid) { Assert-Case ($Result.Exit -eq 0) "$Name rejected regular artifacts: $($Result.Messages)" }
+    else { Assert-Case ($Result.Exit -ne 0 -and $Result.Calls.Length -eq 0) "$Name reached an external substitute: $($Result.Calls) $($Result.Messages)" }
+}
+
+function Test-DownloadedFixture([string] $Name, [bool] $Valid) {
+    Write-Host "DOWNLOADED_FIXTURE=$Name VALID=$Valid"
+    $uploaded = Invoke-Case ('& pwsh -NoLogo -NoProfile -File ./scripts/validate-release-artifact-set.ps1 -Version $env:RELEASE_VERSION -ArtifactDirectory artifacts/release')
+    Assert-DownloadedResult $uploaded $Valid "$Name upload validator"
+    if ($Valid) { Assert-Case ($uploaded.Messages.Contains("RELEASE_ARTIFACT_SET=PASS VERSION=$version")) 'Real upload validator did not report success.' }
+    $checked = Invoke-Case ($preflight.Step.RunText + "`n" + $authenticateAndPush)
+    Assert-DownloadedResult $checked $Valid "$Name preflight"
+    if ($Valid) {
+        $expectedCalls = "AUTH_SUBSTITUTE`nNATIVE nuget|push|artifacts/release/$($artifactNames[0])|--api-key|offline-placeholder|--source|https://api.nuget.org/v3/index.json`n"
+        Assert-Case ($checked.Calls -ceq $expectedCalls) 'Valid preflight did not authenticate and push the exact package/version.'
+    }
+    if ($runReleaseBash) {
+        $released = Invoke-Case $createRelease.Step.RunText -Bash
+        Assert-DownloadedResult $released $Valid "$Name release"
+        if ($Valid) {
+            $expectedCalls = "GH|release|create|--repo|example/offline|v$version|artifacts/release/$($artifactNames[0])|artifacts/release/$($artifactNames[1])|--verify-tag|--generate-notes|--title|v$version`n"
+            Assert-Case ($released.Calls -ceq $expectedCalls) 'Valid release did not consume the exact filenames/version.'
+        }
+    }
+}
+
 try {
     $release = [IO.File]::ReadAllText((Join-Path $root '.github/workflows/release.yml'))
     $ci = [IO.File]::ReadAllText((Join-Path $root '.github/workflows/ci.yml'))
@@ -180,10 +238,12 @@ exit 0
     Write-Fixture (Join-Path $fixture 'scripts/run-local-gate.ps1') $gateFixture
     Write-Fixture $nativeFixture @'
 [IO.File]::AppendAllText($env:FIXTURE_LOG, "NATIVE $($args -join '|')`n")
+if ($env:FIXTURE_NATIVE_EXIT -eq 'throw') { throw 'Deliberate native substitute failure.' }
 exit ([int]$env:FIXTURE_NATIVE_EXIT)
 '@
     Write-Fixture $authFixture @'
 [IO.File]::AppendAllText($env:FIXTURE_LOG, "AUTH_SUBSTITUTE`n")
+if ($env:FIXTURE_AUTH_EXIT -eq 'throw') { throw 'Deliberate authentication substitute failure.' }
 exit ([int]$env:FIXTURE_AUTH_EXIT)
 '@
     Write-Fixture (Join-Path $shimDirectory 'gh') @'
@@ -198,6 +258,88 @@ exit "$FIXTURE_NATIVE_EXIT"
         Assert-Case ($LASTEXITCODE -eq 0) 'Cannot prepare the offline gh executable.'
     }
     else { Write-Output 'BASH_RELEASE_EXECUTION=NOT_RUN (Ubuntu job; GNU Bash/find required)' }
+
+    # Vary member types while names/count stay exact. Targets are outside the set.
+    $artifactDirectory = Join-Path $fixture 'artifacts/release'
+    Assert-Case ([IO.Path]::GetFullPath($artifactDirectory).StartsWith($scratch + [IO.Path]::DirectorySeparatorChar, [StringComparison]::Ordinal)) 'Artifact fixture escapes its temporary root.'
+    $artifactNames = @("KeelMatrix.PackageSurface.$version.nupkg", "KeelMatrix.PackageSurface.$version.snupkg")
+    Write-Fixture (Join-Path $scratch 'targets/file-link') 'link target'
+    [void][IO.Directory]::CreateDirectory((Join-Path $scratch 'targets/directory-link'))
+    $authenticate = 'Invoke-NestedPwsh -NoLogo -NoProfile -File ' + (Quote-Pwsh $authFixture)
+    $authenticateAndPush = $authenticate + "`n" +
+        'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }' + "`n" + $push.Step.RunText
+    $kinds = @('regular', 'directory', 'file-link', 'directory-link', 'dangling-link')
+    foreach ($packageKind in $kinds) {
+        foreach ($symbolsKind in $kinds) {
+            Reset-ArtifactFixture $packageKind $symbolsKind
+            Test-DownloadedFixture "$packageKind/$symbolsKind" ($packageKind -eq 'regular' -and $symbolsKind -eq 'regular')
+        }
+    }
+    Write-Host 'ARTIFACT_TYPE_MATRIX=PASS PAIRS=25 VALID=1 INVALID=24'
+
+    # Membership and type are separate axes; never filter invalid extra entries.
+    foreach ($set in @('empty', 'missing-package', 'missing-symbols', 'wrong-names', 'wrong-version', 'extra-file', 'extra-directory', 'dot-file', 'dot-directory', 'dot-link', 'case-package', 'case-symbols', 'case-both', 'nonempty-directory', 'reverse-order', 'absent-directory')) {
+        Reset-ArtifactFixture -Reverse:($set -eq 'reverse-order')
+        switch ($set) {
+            'empty' { Get-ChildItem -LiteralPath $artifactDirectory -Force | Remove-Item -Force }
+            'missing-package' { Remove-Item -LiteralPath (Join-Path $artifactDirectory $artifactNames[0]) }
+            'missing-symbols' { Remove-Item -LiteralPath (Join-Path $artifactDirectory $artifactNames[1]) }
+            'wrong-names' { foreach ($name in $artifactNames) { Rename-Item -LiteralPath (Join-Path $artifactDirectory $name) -NewName "wrong-$name" } }
+            'wrong-version' { foreach ($name in $artifactNames) { [IO.File]::Move((Join-Path $artifactDirectory $name), (Join-Path $artifactDirectory $name.Replace($version, '9.9.9'))) } }
+            'extra-file' { New-ArtifactMember (Join-Path $artifactDirectory 'unexpected') 'regular' }
+            'extra-directory' { New-ArtifactMember (Join-Path $artifactDirectory 'unexpected') 'directory' }
+            'dot-file' { New-ArtifactMember (Join-Path $artifactDirectory '.unexpected') 'regular' }
+            'dot-directory' { New-ArtifactMember (Join-Path $artifactDirectory '.unexpected') 'directory' }
+            'dot-link' { New-ArtifactMember (Join-Path $artifactDirectory '.unexpected') 'file-link' }
+            { $_ -in @('case-package', 'case-symbols', 'case-both') } {
+                $slots = if ($set -eq 'case-package') { @(0) } elseif ($set -eq 'case-symbols') { @(1) } else { @(0, 1) }
+                foreach ($slot in $slots) {
+                    Remove-Item -LiteralPath (Join-Path $artifactDirectory $artifactNames[$slot])
+                    New-ArtifactMember (Join-Path $artifactDirectory $artifactNames[$slot].ToLowerInvariant()) 'regular'
+                }
+            }
+            'nonempty-directory' {
+                Remove-Item -LiteralPath (Join-Path $artifactDirectory $artifactNames[0])
+                Write-Fixture (Join-Path $artifactDirectory "$($artifactNames[0])/child.txt") 'nonempty'
+            }
+            'absent-directory' { Remove-Item -LiteralPath $artifactDirectory -Recurse -Force }
+        }
+        $entries = if (Test-Path -LiteralPath $artifactDirectory) { @(Get-ChildItem -LiteralPath $artifactDirectory -Force) } else { @() }
+        Write-Host "MEMBERSHIP=$set COUNT=$($entries.Count) NAMES=$($entries.Name -join '|')"
+        Test-DownloadedFixture $set ($set -eq 'reverse-order')
+    }
+    if ($IsWindows) {
+        foreach ($set in @('hidden-extra', 'hidden-extra-directory', 'hidden-extra-link', 'hidden-package', 'hidden-symbols', 'hidden-both')) {
+            Reset-ArtifactFixture
+            $paths = if ($set.StartsWith('hidden-extra', [StringComparison]::Ordinal)) {
+                    $path = Join-Path $artifactDirectory 'unexpected'
+                    $kind = if ($set -eq 'hidden-extra-directory') { 'directory' } elseif ($set -eq 'hidden-extra-link') { 'file-link' } else { 'regular' }
+                    New-ArtifactMember $path $kind
+                    @($path)
+                }
+                elseif ($set -eq 'hidden-package') { @(Join-Path $artifactDirectory $artifactNames[0]) }
+                elseif ($set -eq 'hidden-symbols') { @(Join-Path $artifactDirectory $artifactNames[1]) }
+                else { @($artifactNames | ForEach-Object { Join-Path $artifactDirectory $_ }) }
+            foreach ($path in $paths) {
+                [IO.File]::SetAttributes($path, [IO.File]::GetAttributes($path) -bor [IO.FileAttributes]::Hidden)
+                Assert-Case (([IO.File]::GetAttributes($path) -band [IO.FileAttributes]::Hidden) -ne 0) 'Hidden fixture attribute was not set.'
+            }
+            Test-DownloadedFixture $set (-not $set.StartsWith('hidden-extra', [StringComparison]::Ordinal))
+        }
+    }
+    # Probe case sensitivity on this filesystem; do not assume it from the OS.
+    $caseProbe = Join-Path $scratch 'case-probe'
+    Write-Fixture $caseProbe 'case'
+    if (-not (Test-Path -LiteralPath (Join-Path $scratch 'CASE-PROBE'))) {
+        foreach ($slot in @(0, 1)) {
+            Reset-ArtifactFixture
+            New-ArtifactMember (Join-Path $artifactDirectory $artifactNames[$slot].ToLowerInvariant()) 'regular'
+            Assert-Case (@(Get-ChildItem -LiteralPath $artifactDirectory -Force).Count -eq 3) 'Case-sensitive sibling was not created.'
+            Test-DownloadedFixture "case-sibling-$slot" $false
+        }
+        Write-Host 'CASE_SENSITIVE_SIBLINGS=PASS'
+    }
+    else { Write-Host 'CASE_SENSITIVE_SIBLINGS=NOT_APPLICABLE (case-insensitive fixture filesystem)' }
 
     # Run the real validator through the exact Actions block in all ambient states.
     foreach ($state in @('unset', 'zero', 'nonzero')) {
@@ -327,8 +469,11 @@ exit "$FIXTURE_NATIVE_EXIT"
             Assert-Case ($released.Exit -ne 0 -and $released.Calls.Length -eq 0) 'Invalid version reached release.'
         }
     }
-    $authFailure = Invoke-Case ('Invoke-NestedPwsh -NoLogo -NoProfile -File ' + (Quote-Pwsh $authFixture) + "`n" + 'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }' + "`n" + $push.Step.RunText) @{ FIXTURE_AUTH_EXIT = '59' }
-    Assert-Case ($authFailure.Exit -ne 0 -and $authFailure.Calls.Contains('AUTH_SUBSTITUTE') -and -not $authFailure.Calls.Contains('NATIVE')) 'Failed authentication reached push.'
+    foreach ($failure in @('59', 'throw')) {
+        $authFailure = Invoke-Case $authenticateAndPush @{ FIXTURE_AUTH_EXIT = $failure }
+        Assert-Case ($authFailure.Exit -ne 0 -and $authFailure.Calls.Contains('AUTH_SUBSTITUTE') -and -not $authFailure.Calls.Contains('NATIVE')) 'Failed authentication reached push.'
+    }
+    Assert-Stopped (Invoke-Case ($push.Step.RunText + "`n'AFTER_BLOCK'") @{ FIXTURE_NATIVE_EXIT = 'throw' }) 'Throwing push substitute'
     foreach ($text in @($preflight.Step.RunText, $push.Step.RunText)) {
         $bad = Invoke-Case $text @{ RELEASE_TAG = 'v9.9.9' }
         Assert-Case ($bad.Exit -ne 0 -and $bad.Calls.Length -eq 0) 'Mismatched tag reached auth/push.'
@@ -412,6 +557,35 @@ exit 0
     $withoutAppend = ($contract.Step.RunText -split "`n" | Where-Object { $_ -notmatch 'AppendAllText' }) -join "`n"
     $result = Invoke-Case $withoutAppend
     Assert-Rejected { Resolve-StepVersion $jobExpression $contract $result.Output } 'omitted output append'
+
+    # Small discrimination controls: removing either type predicate must be caught.
+    Reset-ArtifactFixture 'file-link' 'regular'
+    $withoutLink = $preflight.Step.RunText.Replace(' -or (($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)', '')
+    Assert-Case ($withoutLink -cne $preflight.Step.RunText) 'Cannot remove the preflight link check.'
+    $result = Invoke-Case ($withoutLink + "`n" + $authenticate)
+    Assert-Case ($result.Exit -eq 0 -and $result.Calls.Contains('AUTH_SUBSTITUTE')) 'Preflight link control did not reach its sentinel.'
+    Assert-Rejected { Assert-DownloadedResult $result $false 'omitted preflight link check' } 'preflight link assertion'
+    Reset-ArtifactFixture 'directory' 'regular'
+    $withoutDirectory = $preflight.Step.RunText.Replace('$entry.PSIsContainer -or ', '')
+    Assert-Case ($withoutDirectory -cne $preflight.Step.RunText) 'Cannot remove the preflight directory check.'
+    $result = Invoke-Case ($withoutDirectory + "`n" + $authenticate)
+    Assert-Case ($result.Exit -eq 0 -and $result.Calls.Contains('AUTH_SUBSTITUTE')) 'Preflight directory control did not reach its sentinel.'
+    Assert-Rejected { Assert-DownloadedResult $result $false 'omitted preflight directory check' } 'preflight directory assertion'
+    if ($runReleaseBash) {
+        foreach ($kind in @('directory', 'file-link', 'dangling-link')) {
+            Reset-ArtifactFixture $kind 'regular'
+            $weakened = if ($kind -eq 'directory') { $createRelease.Step.RunText.Replace('! -f "$path" || ', '') }
+                else { $createRelease.Step.RunText.Replace(' || -L "$path"', '') }
+            Assert-Case ($weakened -cne $createRelease.Step.RunText) 'Cannot remove the Bash type predicate.'
+            $result = Invoke-Case $weakened -Bash
+            # -f still rejects dangling links even without -L; file links isolate -L.
+            if ($kind -eq 'dangling-link') { Assert-DownloadedResult $result $false 'Bash regular-file predicate on dangling link' }
+            else {
+                Assert-Case ($result.Exit -eq 0 -and $result.Calls.Contains('GH|release|create')) 'Bash type control did not reach its sentinel.'
+                Assert-Rejected { Assert-DownloadedResult $result $false "omitted Bash $kind check" } "Bash $kind assertion"
+            }
+        }
+    }
     Write-Output "RELEASE_WORKFLOW_EXECUTION=PASS CASES=$caseCount"
 }
 finally {

@@ -4,6 +4,8 @@ using static KeelMatrix.PackageSurface.Probe.GeneratedImportAnalyzer;
 using static KeelMatrix.PackageSurface.Probe.IncompleteAnalysis;
 using static KeelMatrix.PackageSurface.Probe.PackageFileSystemSafety;
 using static KeelMatrix.PackageSurface.Probe.PackageGraphAnalyzer;
+using static KeelMatrix.PackageSurface.Probe.ResolvedPackageResolver;
+using static KeelMatrix.PackageSurface.Probe.RestoreConsistencyValidator;
 using static KeelMatrix.PackageSurface.Probe.RestoreMetadataReader;
 
 namespace KeelMatrix.PackageSurface.Probe;

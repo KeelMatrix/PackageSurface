@@ -17,5 +17,5 @@ public static class ResolvedGraphClassifier
         RestoreMetadataReader.ReadRestoreProjectPath(assetsFile);
 
     public static IReadOnlyList<string> GetReachablePackageInputPaths(string assetsFile) =>
-        PackageGraphAnalyzer.GetReachablePackageInputPaths(assetsFile);
+        ReachablePackageInputs.GetReachablePackageInputPaths(assetsFile);
 }

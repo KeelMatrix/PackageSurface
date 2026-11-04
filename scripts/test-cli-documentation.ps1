@@ -48,7 +48,7 @@ $packedReadme = Get-Content -Raw $packedReadmePath
 $security = Get-Content -Raw $securityPath
 $developer = Get-Content -Raw $developerPath
 $reference = Get-Content -Raw $referencePath
-$cliSource = Get-Content -Raw (Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/CommandLine.cs')
+$cliSource = Get-Content -Raw (Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/Options.cs')
 
 if (-not [string]::IsNullOrWhiteSpace($BuiltHelpTextPath)) {
     if (-not [string]::IsNullOrWhiteSpace($BuiltHelpPath)) { throw 'Specify either BuiltHelpPath or BuiltHelpTextPath, not both.' }

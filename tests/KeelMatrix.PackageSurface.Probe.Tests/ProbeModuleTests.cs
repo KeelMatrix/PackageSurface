@@ -23,7 +23,7 @@ public sealed class ProbeModuleTests
     {
         using var workspace = new ProbeScenarioWorkspace(ReachableToolFile, createFiles: true);
 
-        var inputs = PackageGraphAnalyzer.GetReachablePackageInputPaths(workspace.AssetsPath);
+        var inputs = ReachablePackageInputs.GetReachablePackageInputPaths(workspace.AssetsPath);
 
         Assert.Equal(new[] { Path.Combine(workspace.Cache, "Example.Package", "1.0.0", "tools", "fixture.ps1") }, inputs);
     }
@@ -31,11 +31,9 @@ public sealed class ProbeModuleTests
     [Fact]
     public void GeneratedImportConditionParserEvaluatesTargetFrameworks()
     {
-        var parsed = GeneratedImportAnalyzer.ParseCondition(
+        var parsed = StaticImportCondition.ParseCondition(
             "'$(TargetFramework)' == 'net8.0'",
-            "Test.props",
-            new RestoreMetadataReader.RestoreIdentityIndex(),
-            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase));
+            _ => throw new InvalidOperationException("A property comparison must not inspect the filesystem."));
 
         Assert.True(parsed.IsKnown, parsed.Reason);
         Assert.True(parsed.Node!.Evaluate(SurfaceContextKind.Target, "net8.0"));
@@ -99,7 +97,7 @@ public sealed class ProbeModuleTests
             selectedProjectPath: null,
             incomplete,
             budget);
-        var targets = PackageGraphAnalyzer.ResolveTargetPackages(metadata, graph, inventory.PackageRoots, incomplete, budget);
+        var targets = ResolvedPackageResolver.ResolveTargetPackages(metadata, graph, inventory.PackageRoots, incomplete, budget);
 
         Assert.Empty(incomplete);
         Assert.Equal("Example.Package/1.0.0", Assert.Single(Assert.Single(targets.Targets).Packages).LibraryKey);
@@ -165,7 +163,7 @@ public sealed class ProbeModuleTests
             targetAssets.RootElement,
             SurfaceContextKind.Target,
             "net8.0",
-            Array.Empty<GeneratedImportAnalyzer.GeneratedImport>(),
+            Array.Empty<GeneratedImport>(),
             new HashSet<string>(StringComparer.OrdinalIgnoreCase),
             isMultiTargetingProject: false,
             CapabilityAssetClassifier.ProjectLanguage.Unknown,

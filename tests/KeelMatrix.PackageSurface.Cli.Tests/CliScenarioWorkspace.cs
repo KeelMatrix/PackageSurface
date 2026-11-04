@@ -12,7 +12,7 @@ internal sealed class CliScenarioWorkspace : IDisposable
         AssetsPath = Path.Combine(Obj, "project.assets.json");
         Directory.CreateDirectory(Cache);
         Directory.CreateDirectory(Obj);
-        ScenarioSupport.WriteAssets(AssetsPath, Cache, "XmlPackage", Array.Empty<string>());
+        RestoreDocumentFixture.WriteAssets(AssetsPath, Cache, "XmlPackage", Array.Empty<string>());
         File.WriteAllText(Path.Combine(Root, "Test.csproj"), "<Project />");
     }
 

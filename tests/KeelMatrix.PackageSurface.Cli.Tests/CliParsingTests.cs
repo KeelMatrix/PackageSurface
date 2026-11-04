@@ -1,7 +1,15 @@
+using System.Diagnostics;
+using System.Globalization;
+using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using KeelMatrix.PackageSurface;
 using KeelMatrix.PackageSurface.Probe;
 using Xunit;
+using static KeelMatrix.PackageSurface.Cli.Tests.SurfaceEntryFixture;
 
 namespace KeelMatrix.PackageSurface.Cli.Tests;
 
@@ -14,12 +22,12 @@ public sealed class CliParsingTests
     {
         var entries = new[]
         {
-            ScenarioSupport.Entry(CapabilityKind.BuildProps, "build/changed.props", "a"),
-            ScenarioSupport.Entry(CapabilityKind.BuildTargets, "build/changed.targets", "d"),
-            ScenarioSupport.Entry(CapabilityKind.CompilerExtension, "analyzers/dotnet/cs/new.dll", "b"),
-            ScenarioSupport.Entry(CapabilityKind.NativeRuntime, "runtimes/win-x64/native/new.dll", "c")
+            Entry(CapabilityKind.BuildProps, "build/changed.props", "a"),
+            Entry(CapabilityKind.BuildTargets, "build/changed.targets", "d"),
+            Entry(CapabilityKind.CompilerExtension, "analyzers/dotnet/cs/new.dll", "b"),
+            Entry(CapabilityKind.NativeRuntime, "runtimes/win-x64/native/new.dll", "c")
         };
-        var baseline = new[] { BaselineEntry.From(ScenarioSupport.Entry(CapabilityKind.BuildProps, "build/changed.props", "old")) };
+        var baseline = new[] { BaselineEntry.From(Entry(CapabilityKind.BuildProps, "build/changed.props", "old")) };
         var actual = DiffEngine.Compare(baseline, entries, strictContent: true).Select(diagnostic => diagnostic.Id).ToHashSet(StringComparer.Ordinal);
 
         Assert.Equal(ExpectedDiagnosticIds, actual.Order(StringComparer.Ordinal));
@@ -46,5 +54,27 @@ public sealed class CliParsingTests
     }
 
     [Fact]
-    public void ParserErrorsAreStableAndActionable() => ScenarioSupport.RunParserMessageRegression();
+    public void ParserErrorsAreStableAndActionable()
+    {
+
+
+        var error = new StringWriter(CultureInfo.InvariantCulture);
+        var priorError = Console.Error;
+        try
+        {
+            Console.SetError(error);
+            var arguments = new[] { "scan", "safe-input", "--format" };
+            Assert.True(CommandLine.Run(arguments) == 2, "Missing option value did not return exit code 2.");
+        }
+        finally
+        {
+            Console.SetError(priorError);
+        }
+
+        var text = error.ToString();
+        Assert.True(text.Contains("--format requires a value", StringComparison.Ordinal) &&
+                !text.Contains("invalid command-line arguments", StringComparison.Ordinal) &&
+                !text.Contains("safe-input", StringComparison.Ordinal),
+            "Missing option value lost its safe specific parser message or echoed input text.");
+    }
 }

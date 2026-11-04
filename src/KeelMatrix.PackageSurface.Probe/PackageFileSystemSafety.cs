@@ -6,10 +6,12 @@ using System.Xml.Linq;
 using NuGet.Versioning;
 using static KeelMatrix.PackageSurface.Probe.AnalysisLimits;
 using static KeelMatrix.PackageSurface.Probe.CapabilityAssetClassifier;
-using static KeelMatrix.PackageSurface.Probe.GeneratedImportAnalyzer;
 using static KeelMatrix.PackageSurface.Probe.IncompleteAnalysis;
 using static KeelMatrix.PackageSurface.Probe.PackageFileSystemSafety;
 using static KeelMatrix.PackageSurface.Probe.PackageGraphAnalyzer;
+using static KeelMatrix.PackageSurface.Probe.RestoreIdentityNormalization;
+using static KeelMatrix.PackageSurface.Probe.RestoreJsonSchema;
+using static KeelMatrix.PackageSurface.Probe.RestoreLibraryMetadata;
 using static KeelMatrix.PackageSurface.Probe.RestoreMetadataReader;
 
 namespace KeelMatrix.PackageSurface.Probe;

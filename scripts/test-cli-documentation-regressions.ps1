@@ -53,9 +53,10 @@ try {
     $markdownRoot = Join-Path $scratch 'markdown-missing-reference-detail'
     $relativeFiles = @(
         'README.md', 'CHANGELOG.md', 'SECURITY.md', 'PRIVACY.md', 'CONTRIBUTING.md',
-        'docs/DEV.md', 'docs/restore-and-baseline-safety.md',
+        'docs/DEV.md', 'docs/restore-and-baseline-safety.md', 'tests/ScenarioCoverage.md',
         'src/KeelMatrix.PackageSurface.Cli/README.md',
-        'src/KeelMatrix.PackageSurface.Cli/CommandLine.cs'
+        'src/KeelMatrix.PackageSurface.Cli/CommandLine.cs',
+        'src/KeelMatrix.PackageSurface.Cli/Options.cs'
     )
     foreach ($relativeFile in $relativeFiles) {
         $destination = Join-Path $markdownRoot $relativeFile

@@ -2840,8 +2840,10 @@ jobs:
         'LICENSE',
         'docs/DEV.md',
         'docs/restore-and-baseline-safety.md',
+        'tests/ScenarioCoverage.md',
         'src/KeelMatrix.PackageSurface.Cli/README.md',
-        'src/KeelMatrix.PackageSurface.Cli/CommandLine.cs'
+        'src/KeelMatrix.PackageSurface.Cli/CommandLine.cs',
+        'src/KeelMatrix.PackageSurface.Cli/Options.cs'
     )) {
         $destination = Join-Path $composedRoot $relative
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null

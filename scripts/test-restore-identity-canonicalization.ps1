@@ -10,7 +10,7 @@ else {
     $RepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot).Path
 }
 
-$metadataReaderPath = Join-Path $RepositoryRoot 'src/KeelMatrix.PackageSurface.Probe/RestoreMetadataReader.cs'
+$metadataReaderPath = Join-Path $RepositoryRoot 'src/KeelMatrix.PackageSurface.Probe/RestoreIdentityNormalization.cs'
 $metadataReader = Get-Content -Raw -LiteralPath $metadataReaderPath
 $probeSource = (Get-ChildItem -LiteralPath (Join-Path $RepositoryRoot 'src/KeelMatrix.PackageSurface.Probe') -Filter '*.cs' -File |
     ForEach-Object { Get-Content -Raw -LiteralPath $_.FullName }) -join "`n"

@@ -2780,17 +2780,6 @@ jobs:
     Assert-ValidationRejects 'local gate whitespace expected version' (Invoke-LocalGateVersionValidation -Version ' ')
     Assert-ValidationRejects 'local gate mismatched expected version' (Invoke-LocalGateVersionValidation -Version '9.9.9')
 
-    $workflowOutputPath = Join-Path $scratch 'github-output'
-    $serializedOutput = 'version=' + $version + [Environment]::NewLine
-    [IO.File]::AppendAllText($workflowOutputPath, $serializedOutput, [Text.UTF8Encoding]::new($false))
-    $workflowOutputBytes = [IO.File]::ReadAllBytes($workflowOutputPath)
-    if ($workflowOutputBytes.Length -ge 3 -and $workflowOutputBytes[0] -eq 239 -and $workflowOutputBytes[1] -eq 187 -and $workflowOutputBytes[2] -eq 191) {
-        throw 'GitHub Actions release output must be written without a UTF-8 byte-order mark.'
-    }
-    if ([IO.File]::ReadAllText($workflowOutputPath) -cne $serializedOutput) {
-        throw 'Release-contract output does not serialize the validated version exactly.'
-    }
-
     $missingUnreleasedChangelog = Join-Path $scratch 'CHANGELOG.missing-unreleased.md'
     $missingUnreleasedFirstRelease = "# Changelog`n`n## [$version] - $releaseDate`n`n### Added`n`n- Initial release capability review.`n"
     [IO.File]::WriteAllText($missingUnreleasedChangelog, $missingUnreleasedFirstRelease, [Text.UTF8Encoding]::new($false))

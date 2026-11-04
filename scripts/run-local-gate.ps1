@@ -19,9 +19,9 @@ Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/validate-re
 $releaseContractExitCode = $LASTEXITCODE
 if ($releaseContractExitCode -ne 0) { throw "Release version validation failed with exit code $releaseContractExitCode." }
 $launchGuard = Join-Path $root 'build/Test-NestedPwshLaunch.ps1'
-& $launchGuard -SelfTest
+Invoke-NestedPwsh -NoLogo -NoProfile -File $launchGuard -SelfTest
 if ($LASTEXITCODE -ne 0) { throw 'Nested PowerShell launch guard self-test failed.' }
-& $launchGuard
+Invoke-NestedPwsh -NoLogo -NoProfile -File $launchGuard
 if ($LASTEXITCODE -ne 0) { throw 'Nested PowerShell launch guard failed.' }
 Set-Location -LiteralPath $root
 $timer = [Diagnostics.Stopwatch]::StartNew()
@@ -159,6 +159,9 @@ try {
     }
     Invoke-GateStep 'release contract regressions' {
         Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-release-contract.ps1')
+    }
+    Invoke-GateStep 'release workflow execution regressions' {
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-release-workflow-execution.ps1')
     }
     Invoke-GateStep 'vulnerability audit regressions' {
         Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-vulnerability-audit.ps1')

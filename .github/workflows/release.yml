@@ -41,7 +41,7 @@ jobs:
               throw 'Release tag must start with v.'
           }
           $version = $env:RELEASE_TAG.Substring(1)
-          & ./scripts/validate-release.ps1 -Version $version -RequireFinalized -FirstRelease
+          & pwsh -NoLogo -NoProfile -File ./scripts/validate-release.ps1 -Version $version -RequireFinalized -FirstRelease
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           [IO.File]::AppendAllText($env:GITHUB_OUTPUT, "version=$version`n", [Text.UTF8Encoding]::new($false))
       - name: Build and validate exact release artifacts
@@ -54,9 +54,9 @@ jobs:
           $version = $env:RELEASE_VERSION
           if ([string]::IsNullOrWhiteSpace($version)) { throw 'The release contract did not provide a version.' }
           if ($env:RELEASE_TAG -cne "v$version") { throw 'The validated release version does not match the release tag.' }
-          & ./scripts/run-local-gate.ps1 -ArtifactDirectory artifacts/release -ExpectedVersion $version
+          & pwsh -NoLogo -NoProfile -File ./scripts/run-local-gate.ps1 -ArtifactDirectory artifacts/release -ExpectedVersion $version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & ./scripts/validate-release-artifact-set.ps1 -Version $env:RELEASE_VERSION -ArtifactDirectory artifacts/release
+          & pwsh -NoLogo -NoProfile -File ./scripts/validate-release-artifact-set.ps1 -Version $env:RELEASE_VERSION -ArtifactDirectory artifacts/release
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload validated release artifacts
         uses: actions/upload-artifact@v4

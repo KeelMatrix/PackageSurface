@@ -1,13 +1,106 @@
 <Project>
   <PropertyGroup>
-    <_WebsiteFixtureDirectory>$(MSBuildThisFileDirectory)fixtures</_WebsiteFixtureDirectory>
+    <_WebsiteRoot>$(MSBuildThisFileDirectory)</_WebsiteRoot>
+    <_WebsiteFixtureDirectory>$(_WebsiteRoot)fixtures</_WebsiteFixtureDirectory>
     <_WebsiteFixturePrefix>$(_WebsiteFixtureDirectory)$([System.IO.Path]::DirectorySeparatorChar)</_WebsiteFixturePrefix>
   </PropertyGroup>
-  <Target Name="ValidateWebsiteMetadata" BeforeTargets="_IntermediatePack"
+
+  <!-- Transfer metadata as data, without shell arguments or delimiter escaping. -->
+  <UsingTask TaskName="WriteWebsitePackMetadata" TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <Packages ParameterType="Microsoft.Build.Framework.ITaskItem[]" Required="true" />
+      <FilePath ParameterType="System.String" Output="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System.Collections" />
+      <Using Namespace="System.IO" />
+      <Using Namespace="System.Xml" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        FilePath = Path.GetTempFileName();
+        using (var writer = XmlWriter.Create(FilePath))
+        {
+            writer.WriteStartElement("Packages");
+            foreach (var package in Packages)
+            {
+                writer.WriteStartElement("Package");
+                foreach (DictionaryEntry field in package.CloneCustomMetadata())
+                {
+                    writer.WriteStartElement("Property");
+                    writer.WriteAttributeString("Name", (string)field.Key);
+                    writer.WriteString((string)field.Value);
+                    writer.WriteEndElement();
+                }
+                writer.WriteEndElement();
+            }
+            writer.WriteEndElement();
+        }
+      ]]></Code>
+    </Task>
+  </UsingTask>
+
+  <Target Name="_GetWebsitePackageMetadata" Returns="@(_WebsitePackageMetadata)"
           Condition="'$(IsPackable)' == 'true' And '$(MSBuildProjectDirectory)' != '$(_WebsiteFixtureDirectory)' And !$([System.String]::Copy('$(MSBuildProjectDirectory)').StartsWith('$(_WebsiteFixturePrefix)'))">
+    <ItemGroup>
+      <_WebsitePackageMetadata Include="$(MSBuildProjectFullPath)">
+        <PackageId>$(PackageId)</PackageId>
+        <PackageTags>$(PackageTags)</PackageTags>
+        <Description>$(PackageDescription)</Description>
+        <Authors>$(Authors)</Authors>
+        <PackageLicenseExpression>$(PackageLicenseExpression)</PackageLicenseExpression>
+        <PackageLicenseFile>$(PackageLicenseFile)</PackageLicenseFile>
+        <PackageReadmeFile>$(PackageReadmeFile)</PackageReadmeFile>
+        <PackageProjectUrl>$(PackageProjectUrl)</PackageProjectUrl>
+        <RepositoryUrl>$(RepositoryUrl)</RepositoryUrl>
+        <RepositoryType>$(RepositoryType)</RepositoryType>
+        <PublishRepositoryUrl>$(PublishRepositoryUrl)</PublishRepositoryUrl>
+        <PackAsTool>$(PackAsTool)</PackAsTool>
+        <ToolCommandName>$(ToolCommandName)</ToolCommandName>
+      </_WebsitePackageMetadata>
+    </ItemGroup>
+  </Target>
+
+  <!-- GenerateNuspec's dependencies prepare the values passed to NuGet's PackTask. -->
+  <Target Name="ValidateWebsiteMetadata" BeforeTargets="GenerateNuspec"
+          Condition="'$(IsPackable)' == 'true' And '$(MSBuildProjectDirectory)' != '$(_WebsiteFixtureDirectory)' And !$([System.String]::Copy('$(MSBuildProjectDirectory)').StartsWith('$(_WebsiteFixturePrefix)'))">
+    <Error Condition="'$(NuspecFile)' != ''" Text="Website metadata validation does not support custom NuspecFile input. Pack using project metadata." />
+    <ItemGroup>
+      <_WebsiteSibling Include="$(_WebsiteRoot)**/*.csproj;$(_WebsiteRoot)**/*.fsproj;$(_WebsiteRoot)**/*.vbproj"
+                       Exclude="$(MSBuildProjectFullPath);$(_WebsiteRoot)fixtures/**;$(_WebsiteRoot)**/bin/**;$(_WebsiteRoot)**/obj/**;$(_WebsiteRoot)artifacts/**;$(_WebsiteRoot)**/.phase0/**;$(_WebsiteRoot)**/.git/**" />
+    </ItemGroup>
+    <!-- Capture here: a sibling scan may already have cached this project's metadata target. -->
+    <ItemGroup>
+      <_WebsitePackMetadata Include="$(MSBuildProjectFullPath)">
+        <PackageId>$(PackageId)</PackageId>
+        <PackageTags>$(PackageTags)</PackageTags>
+        <Description>$(PackageDescription)</Description>
+        <Authors>$(Authors)</Authors>
+        <PackageLicenseExpression>$(PackageLicenseExpression)</PackageLicenseExpression>
+        <PackageLicenseFile>$(PackageLicenseFile)</PackageLicenseFile>
+        <PackageReadmeFile>$(PackageReadmeFile)</PackageReadmeFile>
+        <PackageProjectUrl>$(PackageProjectUrl)</PackageProjectUrl>
+        <RepositoryUrl>$(RepositoryUrl)</RepositoryUrl>
+        <RepositoryType>$(RepositoryType)</RepositoryType>
+        <PublishRepositoryUrl>$(PublishRepositoryUrl)</PublishRepositoryUrl>
+        <PackAsTool>$(PackAsTool)</PackAsTool>
+        <ToolCommandName>$(ToolCommandName)</ToolCommandName>
+      </_WebsitePackMetadata>
+    </ItemGroup>
+    <!-- Child builds inherit all global properties, including package overrides. -->
+    <MSBuild Projects="@(_WebsiteSibling)" Targets="_GetWebsitePackageMetadata" Properties="Configuration=$(Configuration)">
+      <Output TaskParameter="TargetOutputs" ItemName="_WebsitePackMetadata" />
+    </MSBuild>
+    <WriteWebsitePackMetadata Packages="@(_WebsitePackMetadata)">
+      <Output TaskParameter="FilePath" PropertyName="_WebsitePackMetadataFile" />
+    </WriteWebsitePackMetadata>
     <PropertyGroup>
       <_WebsitePwshWindow Condition="'$(OS)' == 'Windows_NT'">-WindowStyle Hidden</_WebsitePwshWindow>
     </PropertyGroup>
-    <Exec Command="pwsh $(_WebsitePwshWindow) -NoLogo -NoProfile -File &quot;$(MSBuildThisFileDirectory)scripts/validate-website-metadata.ps1&quot; -RepositoryRoot &quot;$(MSBuildThisFileDirectory).&quot;" />
+    <Exec Command="pwsh $(_WebsitePwshWindow) -NoLogo -NoProfile -File &quot;$(_WebsiteRoot)scripts/validate-website-metadata.ps1&quot; -RepositoryRoot &quot;$(_WebsiteRoot).&quot; -PackMetadataPath &quot;$(_WebsitePackMetadataFile)&quot;" />
+    <Delete Files="$(_WebsitePackMetadataFile)" />
+    <OnError ExecuteTargets="_CleanWebsitePackMetadata" />
+  </Target>
+  <Target Name="_CleanWebsitePackMetadata">
+    <Delete Files="$(_WebsitePackMetadataFile)" />
   </Target>
 </Project>

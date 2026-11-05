@@ -8,6 +8,10 @@ PackageSurface release history.
 
 - Adds repository website classification for the published tool and matching package-source tags for the next normal release, with validation in local, CI, pack and archive gates.
 
+### Fixed
+
+- Validates the effective shipping pack metadata and family membership with the active configuration and global properties, rejecting contradictory sentinels, package IDs and source URLs before package creation. Custom nuspec input is unsupported.
+
 ## [0.1.0] - 2026-11-04
 
 ### Added

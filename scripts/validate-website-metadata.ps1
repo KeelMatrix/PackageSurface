@@ -1,11 +1,22 @@
-param([string] $RepositoryRoot = (Join-Path $PSScriptRoot '..'))
+param(
+    [string] $RepositoryRoot = (Join-Path $PSScriptRoot '..'),
+    [string] $PackMetadataPath
+)
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'WebsiteMetadata.ps1')
 $root = (Resolve-Path -LiteralPath $RepositoryRoot).Path
 $manifest = Read-WebsiteManifest (Join-Path $root 'keelmatrix.website.json')
 $properties = 'IsPackable,PackageId,Description,PackageTags,Authors,PackageLicenseExpression,PackageLicenseFile,PackageReadmeFile,PackageProjectUrl,RepositoryUrl,RepositoryType,PublishRepositoryUrl,PackAsTool,ToolCommandName'
-$packages = @(
+$packages = @(if ($PackMetadataPath) {
+    $snapshot = [xml][IO.File]::ReadAllText($PackMetadataPath)
+    foreach ($package in $snapshot.SelectNodes('/Packages/Package')) {
+        $metadata = @{}
+        foreach ($property in $package.Property) { $metadata[$property.Name] = $property.InnerText }
+        $metadata
+    }
+}
+else {
     Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object {
         $_.Extension -in @('.csproj', '.fsproj', '.vbproj') -and
         $_.FullName.Substring($root.Length + 1) -notmatch '(^|[\\/])(bin|obj|artifacts|\.phase0|\.git)[\\/]' -and
@@ -17,6 +28,6 @@ $packages = @(
         $metadata = (($output -join [Environment]::NewLine) | ConvertFrom-Json -AsHashtable).Properties
         if ($metadata.IsPackable -ieq 'true') { $metadata }
     }
-)
+})
 Assert-WebsiteMetadata $manifest $packages
 Write-Output "WEBSITE_METADATA=PASS PACKAGES=$($packages.PackageId -join ',')"

@@ -1,0 +1,13 @@
+<Project>
+  <PropertyGroup>
+    <_WebsiteFixtureDirectory>$(MSBuildThisFileDirectory)fixtures</_WebsiteFixtureDirectory>
+    <_WebsiteFixturePrefix>$(_WebsiteFixtureDirectory)$([System.IO.Path]::DirectorySeparatorChar)</_WebsiteFixturePrefix>
+  </PropertyGroup>
+  <Target Name="ValidateWebsiteMetadata" BeforeTargets="_IntermediatePack"
+          Condition="'$(IsPackable)' == 'true' And '$(MSBuildProjectDirectory)' != '$(_WebsiteFixtureDirectory)' And !$([System.String]::Copy('$(MSBuildProjectDirectory)').StartsWith('$(_WebsiteFixturePrefix)'))">
+    <PropertyGroup>
+      <_WebsitePwshWindow Condition="'$(OS)' == 'Windows_NT'">-WindowStyle Hidden</_WebsitePwshWindow>
+    </PropertyGroup>
+    <Exec Command="pwsh $(_WebsitePwshWindow) -NoLogo -NoProfile -File &quot;$(MSBuildThisFileDirectory)scripts/validate-website-metadata.ps1&quot; -RepositoryRoot &quot;$(MSBuildThisFileDirectory).&quot;" />
+  </Target>
+</Project>

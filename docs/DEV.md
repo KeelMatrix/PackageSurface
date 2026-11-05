@@ -14,7 +14,7 @@ This guide describes reproducible local validation for the repository. Consumer 
 pwsh -NoProfile -File scripts/run-local-gate.ps1
 ```
 
-The gate is self-contained. It first restores the shipping solution into a fresh run-owned package cache, then runs the controlled fixture restore, Release build, permanent corpus checks, hostile-input checks, no-code-execution and no-network proofs, package inspection, dependency audit, isolated tool smoke, and telemetry suppression checks. Phase 0 uses its own disposable fixture cache; it cannot delete or redirect the cache used by the shipping build and pack steps. The telemetry check verifies that the CLI makes one argument-free activation call and that [PRIVACY.md](../PRIVACY.md) states the product-specific data boundary; the shared client owns event fields, opt-out, identity, local state, delivery, and retention as documented in its [privacy policy](https://github.com/KeelMatrix/Telemetry/blob/main/PRIVACY.md). Record the exact command, duration, exit code, and result with the validation evidence for each completed candidate.
+The gate is self-contained. It validates website classification, restores the shipping solution into a fresh run-owned package cache, then runs the controlled fixture restore, Release build, permanent corpus checks, hostile-input checks, no-code-execution and no-network proofs, package inspection, dependency audit, isolated tool smoke, and telemetry suppression checks. Phase 0 uses its own disposable fixture cache; it cannot delete or redirect the cache used by the shipping build and pack steps. The telemetry check verifies that the CLI makes one argument-free activation call and that [PRIVACY.md](../PRIVACY.md) states the product-specific data boundary; the shared client owns event fields, opt-out, identity, local state, delivery, and retention as documented in its [privacy policy](https://github.com/KeelMatrix/Telemetry/blob/main/PRIVACY.md). Record the exact command, duration, exit code, and result with the validation evidence for each completed candidate.
 
 To run the release workflow source-guard regressions without the remaining release-contract cases, use:
 
@@ -38,6 +38,21 @@ On Linux/macOS, the gate derives `DOTNET_ROOT` from the `dotnet` executable when
 In the Probe project, `RestoreMetadataReader` assembles bounded document input; `RestoreJsonSchema`, `RestoreIdentityNormalization`, `DependencyRequirements` and `RestoreConsistencyValidator` own schema, identity, version and cross-document rules. `PackageGraphAnalyzer`, `AnalyzerPropagation`, `ResolvedPackageResolver` and `ReachablePackageInputs` separate traversal, asset-flow policy, resolved versions and protected inputs. `GeneratedImportDiscovery`, `NestedImportTraversal`, `StaticImportCondition`, `ImportExistsCondition`, `MsBuildXmlSchema` and `PackageMsBuildXml` separate provenance, traversal, pure conditions, filesystem proof, XML validation and primitive facts.
 
 Tests keep assertions in feature-specific xUnit fixtures. Shared helpers construct restore documents, package files and generated imports, capture CLI output, or apply a reusable assertion contract. [Scenario coverage](../tests/ScenarioCoverage.md) maps the original scenarios and assertion sites to their current tests and retained integration gates.
+
+## Website classification metadata
+
+The root `keelmatrix.website.json` contains schema-version-1 classification for every shipping package. `KeelMatrix.PackageSurface` is a public product and the family's primary artifact. Package-source tags carry the matching `keelmatrix-public-product` and `keelmatrix-primary` sentinels for the next normal release; existing published versions remain unchanged and use the repository manifest for discovery.
+
+Run the focused checks with:
+
+```powershell
+pwsh -NoProfile -File scripts/validate-website-metadata.ps1
+pwsh -NoProfile -File scripts/test-website-metadata.ps1
+```
+
+The validator evaluates Release MSBuild properties, including imported metadata, for repository projects outside the controlled `fixtures` tree. Only packable projects belong in the manifest; tests, probes and helper tools are non-packable. Fixture packages are generated for the local test feed and are never published. The check rejects malformed or duplicate manifest fields, missing or extra package entries, invalid or repeated sentinels, classification disagreement, invalid primary cardinality, and noncanonical project/repository metadata. Descriptions, authors, license, README and tool-command metadata must be present.
+
+The shared local/CI gate validates classification before restore. `Directory.Build.targets` applies the same check before shipping pack operations, and final archive inspection checks the actual nuspec classification and URLs. Focused regressions exercise valid public/component/internal classifications, inherited and overridden properties, and missing, malformed and contradictory metadata through the real local gate, CI shell block and `dotnet pack`. Classification maintenance does not require a package release.
 
 ## Packaging invariant
 

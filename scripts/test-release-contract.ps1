@@ -2773,9 +2773,8 @@ jobs:
     $wrongCaseDirectory = New-ArtifactSetDirectory 'artifact-set-wrong-case' @("keelmatrix.packagesurface.$version.nupkg", $artifactNames[1])
     Assert-ValidationRejects 'artifact filename case mismatch' (Invoke-ArtifactSetValidation -Version $version -Directory $wrongCaseDirectory)
 
-    # The repository carries the finalized first release; unreleased state is covered by explicit fixtures.
-    Assert-ValidationPass 'real finalized candidate' (Invoke-ReleaseValidation -Version $version -ChangelogPath $realChangelog)
-    Assert-ValidationPass 'real finalized candidate passes first-release tag validation' (Invoke-ReleaseValidation -Version $version -ChangelogPath $realChangelog -RequireFinalized -FirstRelease)
+    # Maintenance can add pending notes; finalized tag validation uses the explicit fixtures below.
+    Assert-ValidationPass 'repository candidate changelog' (Invoke-ReleaseValidation -Version $version -ChangelogPath $realChangelog)
     Assert-ValidationRejects 'local gate empty expected version' (Invoke-LocalGateVersionValidation -Version '')
     Assert-ValidationRejects 'local gate whitespace expected version' (Invoke-LocalGateVersionValidation -Version ' ')
     Assert-ValidationRejects 'local gate mismatched expected version' (Invoke-LocalGateVersionValidation -Version '9.9.9')

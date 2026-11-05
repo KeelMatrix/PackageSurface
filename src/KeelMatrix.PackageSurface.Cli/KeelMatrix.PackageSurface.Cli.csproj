@@ -11,7 +11,7 @@
     <Version>0.1.0</Version>
     <Authors>KeelMatrix</Authors>
     <Description>Baselines the execution-capable surface of resolved NuGet dependencies. Detects new or changed MSBuild, compiler-extension, source/content, and native package assets.</Description>
-    <PackageTags>nuget;supply-chain;msbuild;buildTransitive;analyzers;source-generators;package-security;dependencies;ci;dotnet-tool</PackageTags>
+    <PackageTags>nuget;supply-chain;msbuild;buildTransitive;analyzers;source-generators;package-security;dependencies;ci;dotnet-tool;keelmatrix-public-product;keelmatrix-primary</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageProjectUrl>https://github.com/KeelMatrix/PackageSurface</PackageProjectUrl>

@@ -11,6 +11,8 @@ if ([string]::IsNullOrWhiteSpace($ExpectedVersion) -or $ExpectedVersion -notmatc
 }
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+. (Join-Path $root 'scripts/WebsiteMetadata.ps1')
+$websiteManifest = Read-WebsiteManifest (Join-Path $root 'keelmatrix.website.json')
 if ([string]::IsNullOrWhiteSpace($ExpectedCommit)) { $ExpectedCommit = (& git -C $root rev-parse HEAD).Trim() }
 
 function Open-Zip([string] $path) { return [IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $path).Path) }
@@ -56,7 +58,15 @@ try {
     $metadata = $nuspec.SelectSingleNode("/*[local-name()='package']/*[local-name()='metadata']")
     if ($metadata.id -ne 'KeelMatrix.PackageSurface' -or $metadata.version -ne $ExpectedVersion -or $metadata.authors -ne 'KeelMatrix') { throw 'Package identity, version, or authors are incorrect.' }
     if ($metadata.description -ne 'Baselines the execution-capable surface of resolved NuGet dependencies. Detects new or changed MSBuild, compiler-extension, source/content, and native package assets.') { throw 'Package description is incorrect.' }
-    if ($metadata.tags -ne 'nuget supply-chain msbuild buildTransitive analyzers source-generators package-security dependencies ci dotnet-tool') { throw 'Package tags are incorrect.' }
+    if ($metadata.tags -cne 'nuget supply-chain msbuild buildTransitive analyzers source-generators package-security dependencies ci dotnet-tool keelmatrix-public-product keelmatrix-primary') { throw 'Package tags are incorrect.' }
+    Assert-WebsitePackageMetadata $websiteManifest @{
+        PackageId = [string]$metadata.id; PackageTags = [string]$metadata.tags
+        PackageProjectUrl = [string]$metadata.projectUrl; RepositoryUrl = [string]$metadata.repository.url
+        RepositoryType = [string]$metadata.repository.type; PublishRepositoryUrl = 'true'
+        Description = [string]$metadata.description; Authors = [string]$metadata.authors
+        PackageReadmeFile = [string]$metadata.readme; PackageLicenseExpression = [string]$metadata.license.'#text'
+        PackAsTool = 'true'; ToolCommandName = 'package-surface'
+    }
     if ($metadata.packageTypes.packageType.name -ne 'DotnetTool' -or $metadata.readme -ne 'README.md' -or $metadata.icon -ne 'icon.png') { throw 'Package tool/readme/icon metadata is incorrect.' }
     if ($metadata.repository.url -ne 'https://github.com/KeelMatrix/PackageSurface' -or $metadata.repository.type -ne 'git' -or $metadata.repository.commit -ne $ExpectedCommit) { throw 'Repository metadata or commit is incorrect.' }
     if ($null -ne $metadata.dependencies -or $metadata.OuterXml -match '(?i)KeelMatrix\.PackageSurface\.Core') { throw 'Shipping package contains an accidental project dependency.' }

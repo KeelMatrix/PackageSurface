@@ -4,6 +4,10 @@ PackageSurface release history.
 
 ## [Unreleased]
 
+### Added
+
+- Adds repository website classification for the published tool and matching package-source tags for the next normal release, with validation in local, CI, pack and archive gates.
+
 ## [0.1.0] - 2026-11-04
 
 ### Added

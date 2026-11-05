@@ -211,6 +211,8 @@ try {
     $runReleaseBash = $IsLinux -or $IsWindows
     $changelogPath = Join-Path $fixture 'CHANGELOG.md'
     $changelog = [IO.File]::ReadAllText((Join-Path $root 'CHANGELOG.md'))
+    # A tagged-release fixture has no pending notes; maintenance may add them in the repository.
+    $changelog = [regex]::Replace($changelog, '(?ms)^## \[Unreleased\].*?(?=^## |\z)', "## [Unreleased]`n`n")
     Write-Fixture $changelogPath $changelog
     Write-Fixture (Join-Path $fixture 'src/KeelMatrix.PackageSurface.Cli/KeelMatrix.PackageSurface.Cli.csproj') "<Project><PropertyGroup><Version>$version</Version></PropertyGroup></Project>"
     foreach ($script in @('validate-release.ps1', 'validate-release-artifact-set.ps1')) {
@@ -493,6 +495,7 @@ exit "$FIXTURE_NATIVE_EXIT"
     $startupPath = Join-Path $fixture 'scripts/startup.ps1'
     Write-Fixture $startupPath ($gateText.Substring(0, $startupEnd) + "`n'STARTUP_COMPLETE'")
     Write-Fixture (Join-Path $fixture 'build/Invoke-NestedPwsh.ps1') ([IO.File]::ReadAllText((Join-Path $root 'build/Invoke-NestedPwsh.ps1')))
+    Write-Fixture (Join-Path $fixture 'scripts/validate-website-metadata.ps1') 'exit 0'
     Write-Fixture (Join-Path $fixture 'build/Test-NestedPwshLaunch.ps1') @'
 param([switch] $SelfTest)
 [IO.File]::AppendAllText($env:FIXTURE_LOG, "GUARD self=$SelfTest`n")

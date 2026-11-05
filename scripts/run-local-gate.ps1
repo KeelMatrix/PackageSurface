@@ -7,6 +7,8 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../build/Invoke-NestedPwsh.ps1')
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/validate-website-metadata.ps1')
+if ($LASTEXITCODE -ne 0) { throw 'Website metadata validation failed.' }
 $cliProject = Join-Path $root 'src/KeelMatrix.PackageSurface.Cli/KeelMatrix.PackageSurface.Cli.csproj'
 if (-not $PSBoundParameters.ContainsKey('ExpectedVersion')) {
     $projectText = Get-Content -LiteralPath $cliProject -Raw
@@ -134,6 +136,9 @@ try {
     }
     Invoke-GateStep 'packability graph audit' {
         Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-packability.ps1')
+    }
+    Invoke-GateStep 'website metadata regressions and gate propagation' {
+        Invoke-NestedPwsh -NoLogo -NoProfile -File (Join-Path $root 'scripts/test-website-metadata.ps1')
     }
     Invoke-GateStep 'Release build' {
         & dotnet build $solution --configuration Release --no-restore
